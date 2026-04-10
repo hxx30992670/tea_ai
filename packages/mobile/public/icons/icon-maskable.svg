@@ -1,0 +1,22 @@
+<!-- maskable 图标：内容缩小至中央 80% 安全区内，四周为背景色 -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" fill="#0A0E1A"/>
+  <!-- steam（缩放至安全区） -->
+  <path d="M218 190 Q227 172 218 154 Q209 136 218 118" stroke="#D4A853" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <path d="M256 182 Q265 164 256 146 Q247 128 256 110" stroke="#D4A853" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <path d="M294 190 Q303 172 294 154 Q285 136 294 118" stroke="#D4A853" stroke-width="10" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <!-- cup body -->
+  <path d="M170 210 L342 210 L318 358 L194 358 Z" fill="url(#cupGradM)"/>
+  <!-- tea surface -->
+  <ellipse cx="256" cy="217" rx="86" ry="10" fill="#B8892F" opacity="0.4"/>
+  <!-- handle -->
+  <path d="M342 234 Q390 234 390 278 Q390 322 342 322" stroke="#D4A853" stroke-width="16" fill="none" stroke-linecap="round"/>
+  <!-- saucer -->
+  <ellipse cx="256" cy="365" rx="100" ry="12" fill="#D4A853" opacity="0.5"/>
+  <defs>
+    <linearGradient id="cupGradM" x1="170" y1="210" x2="342" y2="358" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#D4A853"/>
+      <stop offset="100%" stop-color="#B8892F"/>
+    </linearGradient>
+  </defs>
+</svg>

@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="112" fill="#0A0E1A"/>
+  <!-- steam -->
+  <path d="M200 168 Q212 144 200 120 Q188 96 200 72" stroke="#D4A853" stroke-width="12" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <path d="M256 158 Q268 134 256 110 Q244 86 256 62" stroke="#D4A853" stroke-width="12" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <path d="M312 168 Q324 144 312 120 Q300 96 312 72" stroke="#D4A853" stroke-width="12" fill="none" stroke-linecap="round" opacity="0.7"/>
+  <!-- cup body -->
+  <path d="M152 200 L360 200 L332 370 L180 370 Z" fill="url(#cupGrad)"/>
+  <!-- tea surface -->
+  <ellipse cx="256" cy="208" rx="104" ry="12" fill="#B8892F" opacity="0.4"/>
+  <!-- handle -->
+  <path d="M360 228 Q418 228 418 284 Q418 340 360 340" stroke="#D4A853" stroke-width="20" fill="none" stroke-linecap="round"/>
+  <!-- saucer -->
+  <ellipse cx="256" cy="378" rx="120" ry="14" fill="#D4A853" opacity="0.5"/>
+  <defs>
+    <linearGradient id="cupGrad" x1="152" y1="200" x2="360" y2="370" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#D4A853"/>
+      <stop offset="100%" stop-color="#B8892F"/>
+    </linearGradient>
+  </defs>
+</svg>

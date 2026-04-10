@@ -1,0 +1,21 @@
+{
+  "name": "smartstock",
+  "private": true,
+  "packageManager": "pnpm@10.26.0",
+  "scripts": {
+    "dev:prompt-center": "pnpm --filter prompt-center start:dev",
+    "dev:server": "pnpm --filter server start:dev",
+    "dev:web": "pnpm --filter web dev",
+    "dev:mobile": "pnpm --filter mobile dev",
+    "dev": "concurrently \"pnpm dev:server\" \"pnpm dev:web\"",
+    "dev:all": "concurrently \"pnpm dev:server\" \"pnpm dev:web\" \"pnpm dev:mobile\"",
+    "build:server": "pnpm --filter server build",
+    "build:prompt-center": "pnpm --filter prompt-center build",
+    "build:web": "pnpm --filter web build",
+    "build:mobile": "pnpm --filter mobile build",
+    "export:markdown": "pnpm --filter server export:markdown",
+    "export:openapi": "pnpm --filter server export:openapi",
+    "start:server": "pnpm --filter server start",
+    "start:prompt-center": "pnpm --filter prompt-center start"
+  }
+}

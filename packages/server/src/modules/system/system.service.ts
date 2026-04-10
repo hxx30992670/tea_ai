@@ -1,0 +1,233 @@
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import * as bcrypt from 'bcryptjs';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
+import { getRoleProfile, isAppRole, ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF } from '../../common/constants/roles';
+import { SystemSettingEntity } from '../../entities/system-setting.entity';
+import { SysUserEntity } from '../../entities/sys-user.entity';
+import { AuthUser } from '../../common/types/auth-user.type';
+import { OperationLogService } from './operation-log.service';
+import { CreateUserDto } from './dto/create-user.dto';
+import { OperationLogQueryDto } from './dto/operation-log-query.dto';
+import { UpdateSystemSettingsDto } from './dto/system-settings.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
+import { UpdateUserStatusDto } from './dto/update-user-status.dto';
+import { UserQueryDto } from './dto/user-query.dto';
+
+const SYSTEM_SETTING_KEYS = [
+  'shopName',
+  'aiApiKey',
+  'aiProvider',
+  'aiModelApiKey',
+  'aiModelName',
+  'aiModelBaseUrl',
+  'aiPromptServiceUrl',
+  'aiIndustry',
+] as const;
+
+@Injectable()
+export class SystemService {
+  constructor(
+    @InjectRepository(SystemSettingEntity)
+    private readonly systemSettingRepository: Repository<SystemSettingEntity>,
+    @InjectRepository(SysUserEntity)
+    private readonly userRepository: Repository<SysUserEntity>,
+    private readonly operationLogService: OperationLogService,
+  ) {}
+
+  /** 内部调用：返回全量设置，不做角色过滤（用于 AI 等内部服务） */
+  async getAllSettings(): Promise<Record<string, string>> {
+    const settings = await this.systemSettingRepository.find({
+      where: SYSTEM_SETTING_KEYS.map((key) => ({ key })),
+      order: { id: 'ASC' },
+    });
+    return SYSTEM_SETTING_KEYS.reduce<Record<string, string>>((result, key) => {
+      const record = settings.find((item) => item.key === key);
+      result[key] = record?.value ?? '';
+      return result;
+    }, {});
+  }
+
+  async getSettings(user?: AuthUser) {
+    const settingMap = await this.getAllSettings();
+
+    if (user?.role === ROLE_ADMIN) {
+      return settingMap;
+    }
+
+    return {
+      shopName: settingMap.shopName,
+      aiProvider: user?.role === ROLE_MANAGER ? settingMap.aiProvider : '',
+      aiModelName: user?.role === ROLE_MANAGER ? settingMap.aiModelName : '',
+      aiIndustry: user?.role === ROLE_MANAGER ? settingMap.aiIndustry : '',
+    };
+  }
+
+  async updateSettings(dto: UpdateSystemSettingsDto, user: AuthUser) {
+    const entries = Object.entries(dto).filter(([, value]) => value !== undefined);
+
+    for (const [key, value] of entries) {
+      const existing = await this.systemSettingRepository.findOne({ where: { key } });
+
+      if (existing) {
+        existing.value = value ?? null;
+        await this.systemSettingRepository.save(existing);
+        continue;
+      }
+
+      const created = this.systemSettingRepository.create({
+        key,
+        value: value ?? null,
+      });
+      await this.systemSettingRepository.save(created);
+    }
+
+    await this.operationLogService.createLog({
+      module: 'system',
+      action: 'update_settings',
+      operatorId: user.sub,
+      detail: JSON.stringify(entries.map(([key]) => key)),
+    });
+
+    return this.getSettings(user);
+  }
+
+  async getOperationLogs(query: OperationLogQueryDto) {
+    return this.operationLogService.getLogs(query);
+  }
+
+  async getUsers(query: UserQueryDto) {
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 10;
+    const qb = this.userRepository.createQueryBuilder('user');
+
+    if (query.keyword) {
+      qb.andWhere('(user.username LIKE :keyword OR user.real_name LIKE :keyword OR user.phone LIKE :keyword)', {
+        keyword: `%${query.keyword}%`,
+      });
+    }
+
+    if (query.role) {
+      qb.andWhere('user.role = :role', { role: query.role });
+    }
+
+    if (typeof query.status === 'number') {
+      qb.andWhere('user.status = :status', { status: query.status });
+    }
+
+    qb.orderBy('user.id', 'ASC');
+    qb.skip((page - 1) * pageSize).take(pageSize);
+
+    const [list, total] = await qb.getManyAndCount();
+    return {
+      list: list.map((user) => this.toUserProfile(user)),
+      total,
+      page,
+      pageSize,
+      roleOptions: [ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF].map((role) => getRoleProfile(role)),
+    };
+  }
+
+  async createUser(dto: CreateUserDto, currentUser: AuthUser) {
+    if (!isAppRole(dto.role)) {
+      throw new BadRequestException('角色不合法');
+    }
+
+    const existingUser = await this.userRepository.findOne({ where: { username: dto.username } });
+    if (existingUser) {
+      throw new BadRequestException('账号已存在');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 10);
+    const user = this.userRepository.create({
+      username: dto.username,
+      passwordHash,
+      realName: dto.realName,
+      phone: dto.phone ?? null,
+      role: dto.role,
+      status: dto.status ?? 1,
+    });
+
+    const createdUser = await this.userRepository.save(user);
+    await this.operationLogService.createLog({
+      module: 'user',
+      action: 'create_user',
+      operatorId: currentUser.sub,
+      detail: `${createdUser.username}:${createdUser.role}`,
+    });
+
+    return this.toUserProfile(createdUser);
+  }
+
+  async updateUser(id: number, dto: UpdateUserDto, currentUser: AuthUser) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException('用户不存在');
+    }
+
+    if (dto.role !== undefined) {
+      if (!isAppRole(dto.role)) {
+        throw new BadRequestException('角色不合法');
+      }
+      user.role = dto.role;
+    }
+
+    if (dto.username !== undefined && dto.username !== user.username) {
+      const existingUser = await this.userRepository.findOne({ where: { username: dto.username } });
+      if (existingUser && existingUser.id !== user.id) {
+        throw new BadRequestException('账号已存在');
+      }
+      user.username = dto.username;
+    }
+
+    if (dto.password) {
+      user.passwordHash = await bcrypt.hash(dto.password, 10);
+    }
+
+    if (dto.realName !== undefined) user.realName = dto.realName;
+    if (dto.phone !== undefined) user.phone = dto.phone ?? null;
+    if (dto.status !== undefined) user.status = dto.status;
+
+    const updatedUser = await this.userRepository.save(user);
+    await this.operationLogService.createLog({
+      module: 'user',
+      action: 'update_user',
+      operatorId: currentUser.sub,
+      detail: `${updatedUser.username}:${updatedUser.role}`,
+    });
+
+    return this.toUserProfile(updatedUser);
+  }
+
+  async updateUserStatus(id: number, dto: UpdateUserStatusDto, currentUser: AuthUser) {
+    const user = await this.userRepository.findOne({ where: { id } });
+    if (!user) {
+      throw new NotFoundException('用户不存在');
+    }
+
+    user.status = dto.status;
+    const updatedUser = await this.userRepository.save(user);
+    await this.operationLogService.createLog({
+      module: 'user',
+      action: dto.status === 1 ? 'enable_user' : 'disable_user',
+      operatorId: currentUser.sub,
+      detail: updatedUser.username,
+    });
+
+    return this.toUserProfile(updatedUser);
+  }
+
+  private toUserProfile(user: SysUserEntity) {
+    return {
+      id: user.id,
+      username: user.username,
+      realName: user.realName,
+      phone: user.phone,
+      role: user.role,
+      roleProfile: getRoleProfile(user.role),
+      status: user.status,
+      createdAt: user.createdAt,
+      updatedAt: user.updatedAt,
+    };
+  }
+}

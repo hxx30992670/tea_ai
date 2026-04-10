@@ -1,0 +1,133 @@
+@primary: #2D6A4F;
+@primary-light: #52b788;
+@primary-glow: rgba(82, 183, 136, 0.4);
+
+.ai-recognize-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  // 拦截所有点击
+  pointer-events: all;
+}
+
+.ai-recognize-card {
+  background: #fff;
+  border-radius: 20px;
+  padding: 40px 48px;
+  width: 320px;
+  text-align: center;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.2), 0 0 0 1px rgba(255,255,255,0.1);
+  animation: ai-card-in 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes ai-card-in {
+  from { transform: scale(0.85); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+// ── 扫描动画 ─────────────────────────────────────────────────
+.ai-recognize-scanner {
+  position: relative;
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.ai-recognize-scanner__ring {
+  position: absolute;
+  border-radius: 50%;
+  border: 2px solid @primary-light;
+  animation: ai-ring-pulse 2s ease-out infinite;
+
+  &--1 { width: 96px; height: 96px; animation-delay: 0s;    opacity: 0.6; }
+  &--2 { width: 72px; height: 72px; animation-delay: 0.4s;  opacity: 0.5; border-color: @primary; }
+  &--3 { width: 48px; height: 48px; animation-delay: 0.8s;  opacity: 0.4; }
+}
+
+@keyframes ai-ring-pulse {
+  0%   { transform: scale(0.9); opacity: 0.7; }
+  50%  { transform: scale(1.08); opacity: 0.3; }
+  100% { transform: scale(0.9); opacity: 0.7; }
+}
+
+.ai-recognize-scanner__icon {
+  position: relative;
+  z-index: 2;
+  font-size: 36px;
+  line-height: 1;
+  animation: ai-icon-float 2s ease-in-out infinite;
+  filter: drop-shadow(0 4px 12px @primary-glow);
+}
+
+@keyframes ai-icon-float {
+  0%, 100% { transform: translateY(0);   }
+  50%       { transform: translateY(-4px); }
+}
+
+.ai-recognize-scanner__beam {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, @primary-light, transparent);
+  border-radius: 2px;
+  animation: ai-beam-scan 1.6s ease-in-out infinite;
+  box-shadow: 0 0 8px @primary-glow;
+}
+
+@keyframes ai-beam-scan {
+  0%   { top: 8px;  opacity: 0; }
+  20%  { opacity: 1; }
+  80%  { opacity: 1; }
+  100% { top: 84px; opacity: 0; }
+}
+
+// ── 文字 ──────────────────────────────────────────────────────
+.ai-recognize-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: #1a1a1a;
+  margin-bottom: 8px;
+  letter-spacing: 0.5px;
+}
+
+.ai-recognize-step {
+  font-size: 13px;
+  color: @primary;
+  min-height: 20px;
+  margin-bottom: 20px;
+  transition: opacity 0.3s;
+  font-weight: 500;
+}
+
+// ── 进度条 ────────────────────────────────────────────────────
+.ai-recognize-progress {
+  height: 4px;
+  background: #f0f0f0;
+  border-radius: 4px;
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.ai-recognize-progress__bar {
+  height: 100%;
+  background: linear-gradient(90deg, @primary, @primary-light);
+  border-radius: 4px;
+  transition: width 1.6s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: 0 0 8px @primary-glow;
+}
+
+// ── 提示文字 ─────────────────────────────────────────────────
+.ai-recognize-hint {
+  font-size: 11px;
+  color: #bbb;
+  letter-spacing: 0.3px;
+}
