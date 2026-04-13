@@ -26,12 +26,13 @@ export function PageHeader({
   return (
     <header
       className={cn(
-        'flex h-14 items-center gap-3 px-4 pt-safe',
+        'pt-safe',
         !transparent && 'border-b border-border bg-card/80 backdrop-blur-md',
         transparent && 'absolute inset-x-0 top-0 z-10',
         className,
       )}
     >
+      <div className="flex h-14 items-center gap-3 px-4">
       {back && (
         <button
           onClick={() => navigate(-1)}
@@ -50,6 +51,7 @@ export function PageHeader({
       </div>
 
       {action && <div className="flex items-center gap-2">{action}</div>}
+      </div>
     </header>
   )
 }
