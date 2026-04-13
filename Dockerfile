@@ -44,6 +44,9 @@ COPY --from=builder /app/packages/mobile/dist /usr/share/nginx/mobile
 # Nginx 配置
 COPY deploy/nginx.conf /etc/nginx/http.d/default.conf
 
+# SSL 证书目录
+RUN mkdir -p /etc/nginx/ssl
+
 # 数据目录
 RUN mkdir -p /app/packages/server/data
 
@@ -51,6 +54,6 @@ RUN mkdir -p /app/packages/server/data
 COPY deploy/start.sh /start.sh
 RUN chmod +x /start.sh
 
-EXPOSE 80
+EXPOSE 80 443
 
 CMD ["/start.sh"]

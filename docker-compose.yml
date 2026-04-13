@@ -7,15 +7,19 @@ services:
       dockerfile: Dockerfile
     ports:
       - "80:80"
+      - "443:443"
     env_file:
       - ./packages/server/.env
     volumes:
       # 持久化 SQLite 数据库文件
       - ./data:/app/packages/server/data
+      # SSL 证书挂载
+      - /root/cert.crt:/etc/nginx/ssl/cert.crt:ro
+      - /root/private.key:/etc/nginx/ssl/private.key:ro
     restart: unless-stopped
     init: true
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/docs || exit 1"]
+      test: ["CMD-SHELL", "wget -q -O /dev/null https://127.0.0.1/api/docs --no-check-certificate || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 5

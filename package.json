@@ -11,6 +11,7 @@
     "dev:all": "concurrently \"pnpm dev:server\" \"pnpm dev:web\" \"pnpm dev:mobile\"",
     "build:server": "pnpm --filter server build",
     "build:prompt-center": "pnpm --filter prompt-center build",
+    "build:prompt-center:encrypted": "pnpm --filter prompt-center build:encrypted",
     "build:web": "pnpm --filter web build",
     "build:mobile": "pnpm --filter mobile build",
     "export:markdown": "pnpm --filter server export:markdown",

@@ -128,6 +128,9 @@ importers:
       '@nestjs/typeorm':
         specifier: ^10.0.2
         version: 10.0.2(@nestjs/common@10.4.22(class-transformer@0.5.1)(class-validator@0.14.4)(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@10.4.22)(reflect-metadata@0.2.2)(rxjs@7.8.2)(typeorm@0.3.28(sql.js@1.14.1)(sqlite3@5.1.7)(ts-node@10.9.2(@types/node@22.19.17)(typescript@5.9.3)))
+      bytenode:
+        specifier: ^1.5.7
+        version: 1.5.7
       class-transformer:
         specifier: ^0.5.1
         version: 0.5.1
@@ -2418,6 +2421,10 @@ packages:
   busboy@1.6.0:
     resolution: {integrity: sha512-8SFQbg/0hQ9xy3UNTB0YEnsNBbWfhf7RtnzpL7TkBiTBRfrQ9Fxcnz7VJsleJpyp6rVLvXiuORqjlHi5q+PYuA==}
     engines: {node: '>=10.16.0'}
+
+  bytenode@1.5.7:
+    resolution: {integrity: sha512-FWo+xOlZ+BOzk8ZjyVvHB41wD4CoS/iHpCWPrKzghQiAE/Z/npCvz4DJ1hbzFhEbEkrv4TAikqHrvz5dTt9/jQ==}
+    hasBin: true
 
   bytes@3.1.2:
     resolution: {integrity: sha512-/Nf7TyzTx6S3yRJObOAV7956r8cr2+Oj8AC5dt8wSP3BQAoeX58NoHyCU8P8zGkNXStjTSi6fzO6F0pBdcYbEg==}
@@ -8144,6 +8151,8 @@ snapshots:
   busboy@1.6.0:
     dependencies:
       streamsearch: 1.1.0
+
+  bytenode@1.5.7: {}
 
   bytes@3.1.2: {}
 
