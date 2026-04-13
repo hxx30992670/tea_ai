@@ -157,6 +157,7 @@ export interface SaleOrder {
   customerId?: number
   customerName?: string
   status: SaleOrderStatus
+  displayStatus?: SaleOrderStatus | 'processing'
   totalAmount: number
   returnedAmount?: number
   paidAmount?: number
