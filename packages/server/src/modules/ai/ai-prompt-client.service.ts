@@ -14,18 +14,6 @@ export class AiPromptClientService {
   private readonly authCache = new Map<string, { ok: boolean; reason: string; expireAt: number }>();
   private readonly AUTH_CACHE_TTL = 5 * 60_000; // 5 分钟
 
-  private readonly stockReasonPromptHint = [
-    '【库存业务口径提示】',
-    '- stock_record 是库存流水表，type 只有 in / out 两种',
-    '- surplus = 盘盈入库（type = in）',
-    '- shortage = 盘亏出库（type = out）',
-    '- damage = 报损出库（type = out）',
-    '- usage = 内部领用（type = out）',
-    '- opening = 期初建账（通常视为入库）',
-    '- 如果用户问“亏损出库”或“损耗出库”，优先理解为 damage、shortage 这两类库存减少原因',
-    '- 如果用户问库存调整、盘点差异、盘盈盘亏，请优先查询 stock_record，而不只是 product 当前库存',
-  ].join('\n');
-
   async fetchSqlMessages(
     question: string,
     config: AiRuntimeConfig,
@@ -39,7 +27,7 @@ export class AiPromptClientService {
 
     return this.fetchFromService({
       phase: 'sql',
-      question: this.buildSqlQuestion(question),
+      question,
       history,
       structuredContext,
     }, config, userId);
@@ -59,6 +47,71 @@ export class AiPromptClientService {
     }
 
     return this.fetchFromService({ phase: 'summary', question, sql, rows, history, structuredContext }, config, userId);
+  }
+
+  async fetchSqlRetryMessages(
+    question: string,
+    failedSql: string,
+    errorReason: string,
+    config: AiRuntimeConfig,
+    history: AiChatHistoryItem[] = [],
+    structuredContext?: AiStructuredContext,
+    userId?: number,
+  ): Promise<AiPromptFetchResult> {
+    if (!config.promptServiceUrl) {
+      return { ok: false, reason: '请在系统设置中配置 AI Agent 服务地址' };
+    }
+
+    return this.fetchFromService({
+      phase: 'sql-retry',
+      question,
+      failedSql,
+      errorReason,
+      history,
+      structuredContext,
+    }, config, userId);
+  }
+
+  async fetchQueryErrorMessages(
+    question: string,
+    errorReason: string,
+    config: AiRuntimeConfig,
+    history: AiChatHistoryItem[] = [],
+    structuredContext?: AiStructuredContext,
+    userId?: number,
+  ): Promise<AiPromptFetchResult> {
+    if (!config.promptServiceUrl) {
+      return { ok: false, reason: '请在系统设置中配置 AI Agent 服务地址' };
+    }
+
+    return this.fetchFromService({
+      phase: 'query-error',
+      question,
+      errorReason,
+      history,
+      structuredContext,
+    }, config, userId);
+  }
+
+  async fetchUserRuleExtractMessages(
+    question: string,
+    answer: string,
+    config: AiRuntimeConfig,
+    history: AiChatHistoryItem[] = [],
+    structuredContext?: AiStructuredContext,
+    userId?: number,
+  ): Promise<AiPromptFetchResult> {
+    if (!config.promptServiceUrl) {
+      return { ok: false, reason: '请在系统设置中配置 AI Agent 服务地址' };
+    }
+
+    return this.fetchFromService({
+      phase: 'user-rule-extract',
+      question,
+      answer,
+      history,
+      structuredContext,
+    }, config, userId);
   }
 
   async fetchRecognizeMessages(
@@ -268,18 +321,6 @@ export class AiPromptClientService {
 
   private normalizeUrl(baseUrl: string, path: string) {
     return `${baseUrl.replace(/\/$/, '')}${path}`;
-  }
-
-  private buildSqlQuestion(question: string) {
-    if (!this.isInventoryQuestion(question)) {
-      return question;
-    }
-
-    return `${question}\n\n${this.stockReasonPromptHint}`;
-  }
-
-  private isInventoryQuestion(question: string) {
-    return /(库存|入库|出库|盘盈|盘亏|盘点|报损|领用|损耗|亏损)/.test(question);
   }
 
   private localBuildStructuredContext(

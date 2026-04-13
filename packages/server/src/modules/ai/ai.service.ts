@@ -311,13 +311,23 @@ export class AiService {
       effectiveQuestion,
       providerClient,
       availability.config,
-      sqlPromptResult.messages,
+      history,
+      structuredContext,
+      user.sub,
       emit,
     );
 
     if (!queryResult.ok) {
       this.logger.warn(`AI SQL 执行失败。question=${effectiveQuestion}; sql=${queryResult.sql ?? sql}; reason=${queryResult.reason}`);
-      const answer = this.buildFriendlyQueryErrorAnswer(saveQuestion, queryResult.reason);
+      const answer = await this.buildFriendlyQueryErrorAnswer(
+        saveQuestion,
+        queryResult.reason,
+        providerClient,
+        availability.config,
+        history,
+        structuredContext,
+        user.sub,
+      );
       await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql ?? sql, undefined, currentSessionId);
       emit('error', { message: answer });
       return { enabled: false, reason: answer, answer };
@@ -406,7 +416,7 @@ export class AiService {
     await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql, nextStructuredContext, currentSessionId, queryResult.rows);
 
     // 异步检测用户是否设定了回答偏好规则（不阻塞返回）
-    this.detectAndSaveUserRule(saveQuestion, answer, user.sub, availability.config).catch(() => {});
+    this.detectAndSaveUserRule(saveQuestion, answer, user.sub, availability.config, history, structuredContext).catch(() => {});
 
     return { enabled: true, reason: '', answer };
   }
@@ -1250,30 +1260,46 @@ export class AiService {
   }
 
   /**
-   * 检测用户消息中是否包含回答偏好规则，并异步推送到 prompt-center
-   * 匹配模式：以后/今后/下次/每次 + 回答/查询/显示 + 具体要求
+   * 调用 prompt-center 提取用户长期回答偏好，并在识别成功后异步落库
    */
   private async detectAndSaveUserRule(
     question: string,
     answer: string,
     userId: number,
     config: AiRuntimeConfig,
+    history: AiChatHistoryItem[],
+    structuredContext: AiStructuredContext | undefined,
   ) {
-    // 简单模式匹配：用户表达"以后要怎样"的意图
-    const rulePattern = /(以后|今后|下次|每次|记住|之后).{0,10}(回答|查询|显示|展示|带上|加上|包含|去掉|不要|格式)/;
-    if (!rulePattern.test(question)) return;
+    const promptResult = await this.aiPromptClientService.fetchUserRuleExtractMessages(
+      question,
+      answer,
+      config,
+      history,
+      structuredContext,
+      userId,
+    );
+    if (!promptResult.ok) return;
 
-    // AI 已经回答了"好的记住了"之类，说明 LLM 也认可这是偏好设定
-    const confirmPattern = /(好的|记住了|明白|了解|遵守|收到|没问题)/;
-    if (!confirmPattern.test(answer)) return;
+    const providerClient = this.modelProviderRegistry.get(config.provider);
+    if (!providerClient) return;
 
-    // 提取规则：去掉寒暄前缀，保留核心要求
-    const rule = question
-      .replace(/^.*(以后|今后|下次|每次|记住|之后)/, '')
-      .replace(/[。！？!?]+$/, '')
-      .trim();
+    const result = await providerClient.invoke(promptResult.messages, config);
+    if (!result.ok) return;
 
-    if (rule.length < 4 || rule.length > 200) return;
+    const jsonText = this.extractJson(result.content);
+    if (!jsonText) return;
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText) as unknown;
+    } catch {
+      return;
+    }
+
+    const normalized = this.normalizeUserRuleExtractResult(parsed);
+    if (!normalized.ok || !normalized.data.shouldSave) return;
+
+    const rule = normalized.data.rule;
 
     this.logger.log(`检测到用户偏好规则: userId=${userId}, rule="${rule}"`);
 
@@ -1282,7 +1308,30 @@ export class AiService {
       userId,
       rule,
       question,
+      normalized.data.phase,
     );
+  }
+
+  private normalizeUserRuleExtractResult(payload: unknown):
+    | { ok: true; data: { shouldSave: boolean; rule: string; phase?: string } }
+    | { ok: false } {
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return { ok: false };
+    }
+
+    const record = payload as Record<string, unknown>;
+    const shouldSave = record.shouldSave === true;
+    const rule = typeof record.rule === 'string' ? record.rule.trim() : '';
+    const phase = typeof record.phase === 'string' && record.phase.trim() ? record.phase.trim() : undefined;
+    if (!shouldSave) {
+      return { ok: true, data: { shouldSave: false, rule: '', phase } };
+    }
+
+    if (rule.length < 4 || rule.length > 200) {
+      return { ok: false };
+    }
+
+    return { ok: true, data: { shouldSave: true, rule, phase } };
   }
 
   private buildRawResultAnswer(sql: string, rows: Record<string, unknown>[]) {
@@ -1298,7 +1347,9 @@ export class AiService {
     question: string,
     providerClient: ModelProviderClient,
     config: AiRuntimeConfig,
-    originalMessages: AiPromptMessage[],
+    history: AiChatHistoryItem[],
+    structuredContext: AiStructuredContext | undefined,
+    userId: number,
     emit: SseEmitter,
   ) {
     const firstResult = await this.aiSqlService.executeSelect(sql);
@@ -1309,8 +1360,20 @@ export class AiService {
     this.logger.warn(`AI SQL 首次执行失败，准备重试。question=${question}; sql=${firstResult.sql ?? sql}; reason=${firstResult.reason}`);
     emit('status', { phase: 'execute', message: '第一次查询失败，正在自动修正后重试...' });
 
-    const retryMessages = this.buildSqlRetryMessages(question, firstResult.sql ?? sql, firstResult.reason, originalMessages);
-    const retryModelResult = await providerClient.invoke(retryMessages, config);
+    const retryPromptResult = await this.aiPromptClientService.fetchSqlRetryMessages(
+      question,
+      firstResult.sql ?? sql,
+      firstResult.reason,
+      config,
+      history,
+      structuredContext,
+      userId,
+    );
+    if (!retryPromptResult.ok) {
+      return firstResult;
+    }
+
+    const retryModelResult = await providerClient.invoke(retryPromptResult.messages, config);
     if (!retryModelResult.ok) {
       return firstResult;
     }
@@ -1330,61 +1393,37 @@ export class AiService {
     return secondResult;
   }
 
-  private buildSqlRetryMessages(
+  private async buildFriendlyQueryErrorAnswer(
     question: string,
-    failedSql: string,
     reason: string,
-    originalMessages: AiPromptMessage[],
-  ): AiPromptMessage[] {
-    const systemMessage = originalMessages.find((item) => item.role === 'system');
-    const userMessage = [...originalMessages].reverse().find((item) => item.role === 'user');
+    providerClient: ModelProviderClient,
+    config: AiRuntimeConfig,
+    history: AiChatHistoryItem[],
+    structuredContext: AiStructuredContext | undefined,
+    userId: number,
+  ) {
+    const promptResult = await this.aiPromptClientService.fetchQueryErrorMessages(
+      question,
+      reason,
+      config,
+      history,
+      structuredContext,
+      userId,
+    );
+    if (!promptResult.ok) {
+      return this.buildGenericQueryErrorAnswer();
+    }
 
-    return [
-      ...(systemMessage ? [systemMessage] : []),
-      {
-        role: 'user',
-        content: [
-          userMessage?.content ?? `【当前问题】${question}`,
-          '',
-          '【上一次失败的 SQL】',
-          failedSql,
-          '',
-          '【失败原因】',
-          reason,
-          '',
-          '请重新生成一条更保守、更兼容 SQLite 的 SELECT 语句，并严格遵守下面规则：',
-          '1. 只能输出一条 SELECT 语句',
-          '2. 结果列必须显式命名，不要使用 SELECT *',
-          '3. 如果用了 UNION / UNION ALL，ORDER BY 只能使用最终结果列名，不能使用表别名列名',
-          '4. 查询 sale_order 时，涉及欠款请使用 total_amount - received_amount - returned_amount',
-          '5. 查询 purchase_order 时，涉及欠款请使用 total_amount - paid_amount - returned_amount',
-          '6. 查询 sale_order 与 customer 的关系时，优先使用 LEFT JOIN customer，避免漏掉散客',
-          '7. 换货明细 direction 使用 return / out，不要使用 in',
-          '8. 查询库存调整、盘盈、盘亏、报损、领用时，优先查询 stock_record，并使用准确的 reason 代码：surplus=盘盈入库、shortage=盘亏出库、damage=报损出库、usage=内部领用',
-          '9. 如果用户问“亏损出库”或“损耗出库”，优先覆盖 damage、shortage 这两类出库原因',
-          '10. 语句尽量简单，优先保证能执行成功',
-        ].join('\n'),
-      },
-    ];
+    const result = await providerClient.invoke(promptResult.messages, config);
+    if (!result.ok) {
+      return this.buildGenericQueryErrorAnswer();
+    }
+
+    const answer = result.content.trim();
+    return answer || this.buildGenericQueryErrorAnswer();
   }
 
-  private buildFriendlyQueryErrorAnswer(question: string, reason: string) {
-    if (/(售后|退货|退款|换货)/.test(question)) {
-      return '我刚刚在整理售后数据时没有成功查到完整结果。你可以换一种问法试试，比如“最近有哪些退货”“最近有哪些仅退款”“最近有哪些换货”。';
-    }
-
-    if (/(电话|联系人|手机号|联系方式)/.test(question)) {
-      return '我这次没能顺利查到联系人信息。你可以换一种更明确的问法试试，比如“贺超的联系电话是多少”或“这个客户的联系人和电话是什么”。';
-    }
-
-    if (/(欠款|应收|应付|付款|收款)/.test(question)) {
-      return '我这次没能顺利算出这笔账款结果。你可以换一种更明确的问法试试，比如“哪个客户还欠我钱”“这张单还欠多少钱”或“哪些供应商还没付款”。';
-    }
-
-    if (/(库存|入库|出库|盘盈|盘亏|盘点|报损|领用|损耗|亏损)/.test(question)) {
-      return '我这次没能顺利查到库存流水。你可以换一种更明确的问法试试，比如“最近有哪些盘盈入库”“最近有哪些盘亏出库”“报损出库有哪些”“内部领用明细”或“某商品近 30 天库存流水”。';
-    }
-
+  private buildGenericQueryErrorAnswer() {
     return '我刚刚没有成功查到这条数据。请换一种更具体的问法再试一次，比如带上订单号、客户名、供应商名或时间范围。';
   }
 
