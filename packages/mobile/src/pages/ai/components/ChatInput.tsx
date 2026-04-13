@@ -18,7 +18,7 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase }: Ch
   const [speechError, setSpeechError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
-  const { isListening, isSupported, toggle: toggleSpeech } = useSpeech({
+  const { isListening, isSupported, supportInfo, toggle: toggleSpeech } = useSpeech({
     onResult: (transcript) => {
       setText((prev) => prev + transcript)
       textareaRef.current?.focus()
@@ -26,7 +26,8 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase }: Ch
     },
     onError: (error) => {
       setSpeechError(error)
-      setTimeout(() => setSpeechError(null), 3000)
+      // 5秒后消失（Android 错误信息较长）
+      setTimeout(() => setSpeechError(null), 5000)
     },
   })
 
@@ -48,11 +49,16 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase }: Ch
     <div className="border-t border-border bg-card/95 backdrop-blur-md px-3 py-3 pb-safe">
       {/* 状态提示 */}
       {speechError && (
-        <p className="mb-2 text-center text-xs text-red-500 animate-pulse">
+        <p className="mb-2 text-center text-xs text-red-500 leading-relaxed">
           {speechError}
         </p>
       )}
-      {statusPhase && !speechError && (
+      {!speechError && supportInfo && (
+        <p className="mb-2 text-center text-xs text-muted-foreground animate-pulse">
+          {supportInfo}
+        </p>
+      )}
+      {!speechError && !supportInfo && statusPhase && (
         <p className="mb-2 text-center text-xs text-muted-foreground animate-pulse">
           {statusPhase}
         </p>
