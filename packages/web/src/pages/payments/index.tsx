@@ -7,6 +7,7 @@ import { PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, SearchOutlined } from
 import { paymentApi, type PayableSummary, type ReceivableSummary } from '@/api/payments'
 import { PAYMENT_RECORD_TYPE } from '@/constants/order'
 import type { PaymentRecord } from '@/types'
+import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import type { Dayjs } from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
@@ -16,10 +17,10 @@ const { RangePicker } = DatePicker
 
 const METHOD_OPTIONS_FILTER = [
   { value: '', label: '全部方式' },
-  ...['现金', '微信', '支付宝', '转账', '赊账', '其他'].map((m) => ({ value: m, label: m })),
+  ...PAYMENT_METHOD_OPTIONS,
 ]
 
-const METHOD_OPTIONS = ['现金', '微信', '支付宝', '转账', '赊账', '其他'].map((m) => ({ value: m, label: m }))
+const METHOD_OPTIONS = PAYMENT_METHOD_OPTIONS
 
 const TYPE_OPTIONS_FILTER = [
   { value: '', label: '全部类型' },

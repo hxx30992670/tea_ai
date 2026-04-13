@@ -3,6 +3,10 @@ import './AiRecognizeLoading.less'
 
 interface AiRecognizeLoadingProps {
   visible: boolean
+  /** 批量模式：当前正在识别第几个（从 1 开始） */
+  current?: number
+  /** 批量模式：总共几个文件 */
+  total?: number
 }
 
 const STEPS = [
@@ -13,9 +17,10 @@ const STEPS = [
   '整理录单数据...',
 ]
 
-export default function AiRecognizeLoading({ visible }: AiRecognizeLoadingProps) {
+export default function AiRecognizeLoading({ visible, current, total }: AiRecognizeLoadingProps) {
   const [stepIdx, setStepIdx] = useState(0)
   const [dots, setDots] = useState('')
+  const isBatch = total != null && total > 1
 
   useEffect(() => {
     if (!visible) {
@@ -38,7 +43,17 @@ export default function AiRecognizeLoading({ visible }: AiRecognizeLoadingProps)
     }
   }, [visible])
 
+  // 批量模式下每处理一个新文件重置步骤
+  useEffect(() => {
+    if (isBatch) setStepIdx(0)
+  }, [current, isBatch])
+
   if (!visible) return null
+
+  // 批量模式下进度 = 已完成的文件比例 + 当前文件的步骤比例
+  const progressPct = isBatch
+    ? (((current ?? 1) - 1) / total! + (stepIdx + 1) / STEPS.length / total!) * 100
+    : ((stepIdx + 1) / STEPS.length) * 100
 
   return (
     <div className="ai-recognize-overlay">
@@ -53,7 +68,9 @@ export default function AiRecognizeLoading({ visible }: AiRecognizeLoadingProps)
         </div>
 
         {/* 文字区域 */}
-        <div className="ai-recognize-title">AI 识别录单</div>
+        <div className="ai-recognize-title">
+          {isBatch ? `AI 批量识别 (${current ?? 1}/${total})` : 'AI 识别录单'}
+        </div>
         <div className="ai-recognize-step">
           {STEPS[stepIdx]}{dots}
         </div>
@@ -62,7 +79,7 @@ export default function AiRecognizeLoading({ visible }: AiRecognizeLoadingProps)
         <div className="ai-recognize-progress">
           <div
             className="ai-recognize-progress__bar"
-            style={{ width: `${((stepIdx + 1) / STEPS.length) * 100}%` }}
+            style={{ width: `${progressPct}%` }}
           />
         </div>
 

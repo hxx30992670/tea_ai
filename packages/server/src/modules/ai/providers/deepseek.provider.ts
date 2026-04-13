@@ -28,6 +28,7 @@ export class DeepSeekProviderClient implements ModelProviderClient {
           model: config.modelName || 'deepseek-chat',
           messages,
           temperature: 0.1,
+          max_tokens: 800,
         }),
       });
 
@@ -69,6 +70,7 @@ export class DeepSeekProviderClient implements ModelProviderClient {
           model: config.modelName || 'deepseek-chat',
           messages,
           temperature: 0.3,
+          max_tokens: 1500,
           stream: true,
         }),
       });

@@ -34,10 +34,10 @@ export class ProductEntity {
   @Column({ name: 'sell_price', type: 'real', default: 0 })
   sellPrice!: number;
 
-  @Column({ name: 'stock_qty', type: 'integer', default: 0 })
+  @Column({ name: 'stock_qty', type: 'real', default: 0 })
   stockQty!: number;
 
-  @Column({ name: 'safe_stock', type: 'integer', default: 10 })
+  @Column({ name: 'safe_stock', type: 'real', default: 10 })
   safeStock!: number;
 
   @Column({ name: 'image_url', type: 'text', nullable: true })

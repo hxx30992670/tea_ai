@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   Form, Input, Button, Card, Select, Divider, message,
-  Typography, Space, Tag, Tabs, Alert, Collapse,
+  Typography, Space, Tag, Tabs, Alert, Collapse, Image,
 } from 'antd'
 import {
   ShopOutlined, RobotOutlined, KeyOutlined,
@@ -13,6 +13,8 @@ import { useAuthStore } from '@/store/auth'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
 
+const serviceQrcode = new URL('@/assets/images/service_qcode.JPG', import.meta.url).href
+
 const { Title, Text } = Typography
 
 // ── 提供商配置表 ────────────────────────────────────────────────────────────
@@ -21,21 +23,28 @@ const PROVIDERS = [
   { value: 'deepseek', label: 'DeepSeek' },
 ]
 
-const PROVIDER_CONFIG: Record<string, { baseUrl: string; models: { value: string; label: string }[] }> = {
+const PROVIDER_CONFIG: Record<string, { baseUrl: string; defaultModel: string }> = {
   qwen: {
     baseUrl: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    models: [
-      { value: 'qwen3-plus', label: 'qwen3-plus' },
-      { value: 'qwen3.5-plus', label: 'qwen3.5-plus' },
-      { value: 'qwen3.6-plus', label: 'qwen3.6-plus' },
-    ],
+    defaultModel: 'qwen3.6-plus',
   },
   deepseek: {
     baseUrl: 'https://api.deepseek.com',
-    models: [
-      { value: 'deepseek-chat', label: 'deepseek-chat' },
-    ],
+    defaultModel: 'deepseek-chat',
   },
+}
+
+const DEFAULT_PROVIDER = 'qwen'
+
+function getDefaultAiFields(provider = DEFAULT_PROVIDER) {
+  const normalizedProvider = PROVIDER_CONFIG[provider] ? provider : DEFAULT_PROVIDER
+  const config = PROVIDER_CONFIG[normalizedProvider]
+
+  return {
+    aiProvider: normalizedProvider,
+    aiModelName: config.defaultModel,
+    aiModelBaseUrl: config.baseUrl,
+  }
 }
 
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail'
@@ -58,8 +67,17 @@ export default function SettingsPage() {
   useEffect(() => {
     systemApi.getSettings().then((data) => {
       shopForm.setFieldsValue(data)
-      aiForm.setFieldsValue(data)
-      if (data.aiProvider) setCurrentProvider(data.aiProvider)
+
+      const defaultAiFields = getDefaultAiFields(data.aiProvider)
+      const nextAiValues = {
+        ...data,
+        aiProvider: data.aiProvider || defaultAiFields.aiProvider,
+        aiModelName: data.aiModelName || defaultAiFields.aiModelName,
+        aiModelBaseUrl: data.aiModelBaseUrl || defaultAiFields.aiModelBaseUrl,
+      }
+
+      aiForm.setFieldsValue(nextAiValues)
+      setCurrentProvider(nextAiValues.aiProvider)
     })
   }, [])
 
@@ -69,7 +87,7 @@ export default function SettingsPage() {
     if (cfg) {
       aiForm.setFieldsValue({
         aiModelBaseUrl: cfg.baseUrl,
-        aiModelName: cfg.models[0]?.value ?? '',
+        aiModelName: cfg.defaultModel,
       })
     }
     setTestStatus('idle')
@@ -88,7 +106,7 @@ export default function SettingsPage() {
 
   const handleSaveAi = async () => {
     try {
-      await aiForm.validateFields(['aiApiKey', 'aiProvider', 'aiModelApiKey', 'aiModelName', 'aiModelBaseUrl'])
+      await aiForm.validateFields(['aiApiKey', 'aiPromptServiceUrl', 'aiProvider', 'aiModelApiKey', 'aiModelName', 'aiModelBaseUrl'])
     } catch {
       return
     }
@@ -104,13 +122,14 @@ export default function SettingsPage() {
   const handleTestAi = async () => {
     const values = aiForm.getFieldsValue() as {
       aiApiKey: string
+      aiPromptServiceUrl: string
       aiProvider: string
       aiModelApiKey: string
       aiModelName: string
       aiModelBaseUrl: string
     }
-    if (!values.aiApiKey || !values.aiProvider || !values.aiModelApiKey || !values.aiModelName || !values.aiModelBaseUrl) {
-      message.warning('请先填写 AI 授权 Key、提供商、模型 API Key、模型名称和 Base URL')
+    if (!values.aiApiKey || !values.aiPromptServiceUrl || !values.aiProvider || !values.aiModelApiKey || !values.aiModelName || !values.aiModelBaseUrl) {
+      message.warning('请先填写 AI 授权 Key、Agent 服务地址、提供商、模型 API Key、模型名称和 Base URL')
       return
     }
 
@@ -120,6 +139,7 @@ export default function SettingsPage() {
     try {
       const result = await systemApi.testAi({
         apiKey: values.aiApiKey,
+        promptServiceUrl: values.aiPromptServiceUrl,
         provider: values.aiProvider,
         modelApiKey: values.aiModelApiKey,
         modelName: values.aiModelName,
@@ -185,15 +205,72 @@ export default function SettingsPage() {
       key: 'ai',
       label: <Space><RobotOutlined />AI 配置</Space>,
       children: (
-        <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', maxWidth: 560 }}>
-          <Form form={aiForm} layout="vertical">
+        <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', maxWidth: 760 }}>
+          {/* 联系提示卡片 */}
+          <div style={{
+            background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
+            border: '1.5px solid #86efac',
+            borderRadius: 12,
+            padding: '24px 28px',
+            marginBottom: 28,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 32,
+          }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                <RobotOutlined style={{ fontSize: 22, color: '#16a34a' }} />
+                <span style={{ fontSize: 17, fontWeight: 700, color: '#15803d' }}>开通 AI 功能</span>
+              </div>
+              <p style={{ margin: '0 0 6px', color: '#166534', fontSize: 14, lineHeight: 1.8 }}>
+                AI 功能由「大模型」+「茶行业 Agent」两部分组成：大模型 API Key 需自行前往对应厂商申请，Agent 服务由我们提供，专为茶行业场景优化，开通后即可使用智能问答、图片识别、AI 自动录单等能力。
+              </p>
+              <p style={{ margin: 0, color: '#15803d', fontSize: 14, fontWeight: 600 }}>
+                📱 扫码联系我，获取茶行业 Agent 服务地址和授权 Key
+              </p>
+            </div>
+            <div style={{
+              flex: 'none',
+              alignSelf: 'flex-start',
+              background: '#fff',
+              borderRadius: 12,
+              padding: 8,
+              boxShadow: '0 4px 16px rgba(0,0,0,0.12)',
+              lineHeight: 0,
+            }}>
+              <Image
+                src={serviceQrcode}
+                alt="联系二维码"
+                width={176}
+                height={176}
+                style={{
+                  borderRadius: 8,
+                  objectFit: 'contain',
+                  display: 'block',
+                  cursor: 'pointer',
+                }}
+                preview={{
+                  mask: <span style={{ fontSize: 12 }}>点击放大</span>,
+                }}
+              />
+            </div>
+          </div>
 
-            <Form.Item name="aiApiKey" label="Agent 授权 Key" rules={[{ required: true, message: '请填写 AI 授权 Key' }]}> 
+          <Form form={aiForm} layout="vertical">
+            {/* Agent 配置 */}
+            <Form.Item name="aiApiKey" label="Agent 授权 Key" rules={[{ required: true, message: '请填写 AI 授权 Key' }]}>
               <Input.Password prefix={<KeyOutlined />} placeholder="填入你购买的 AI Agent 行业授权 Key" />
+            </Form.Item>
+            <Form.Item name="aiPromptServiceUrl" label="Agent 服务地址" rules={[{ required: true, message: '请填写 Agent 服务地址' }]}>
+              <Input
+                prefix={<ApiOutlined />}
+                placeholder="https://..."
+                onChange={() => setTestStatus('idle')}
+              />
             </Form.Item>
 
             {/* 大模型配置 */}
-            <Form.Item name="aiProvider" label="大模型提供商" rules={[{ required: true, message: '请选择提供商' }]}> 
+            <Form.Item name="aiProvider" label="大模型提供商" rules={[{ required: true, message: '请选择提供商' }]}>
               <Select
                 placeholder="选择提供商"
                 options={PROVIDERS}
@@ -201,19 +278,10 @@ export default function SettingsPage() {
               />
             </Form.Item>
 
-            <Form.Item name="aiModelApiKey" label="模型 API Key" rules={[{ required: true, message: '请填写模型 API Key' }]}>
-              <Input.Password
-                prefix={<KeyOutlined />}
-                placeholder="填入你购买的大模型 API Key"
+            <Form.Item name="aiModelName" label="模型" rules={[{ required: true, message: '请填写模型名称' }]}>
+              <Input
+                placeholder={currentProvider ? `默认 ${PROVIDER_CONFIG[currentProvider]?.defaultModel}，可手动修改` : '请输入模型名称'}
                 onChange={() => setTestStatus('idle')}
-              />
-            </Form.Item>
-
-            <Form.Item name="aiModelName" label="模型" rules={[{ required: true, message: '请选择模型' }]}>
-              <Select
-                placeholder="选择模型"
-                options={currentProvider ? PROVIDER_CONFIG[currentProvider]?.models ?? [] : []}
-                disabled={!currentProvider}
               />
             </Form.Item>
 
@@ -224,6 +292,14 @@ export default function SettingsPage() {
                 onChange={() => setTestStatus('idle')}
               />
             </Form.Item>
+            <Form.Item name="aiModelApiKey" label="模型 API Key" rules={[{ required: true, message: '请填写模型 API Key' }]}>
+              <Input.Password
+                prefix={<KeyOutlined />}
+                placeholder="填入你购买的大模型 API Key"
+                onChange={() => setTestStatus('idle')}
+              />
+            </Form.Item>
+
 
             {/* 测试结果提示 */}
             {testStatus !== 'idle' && (
@@ -265,7 +341,7 @@ export default function SettingsPage() {
             </Space>
 
             {/* 高级配置（外部授权服务，暂未部署时不需要填） */}
-            <Collapse
+            {/* <Collapse
               ghost
               size="small"
               items={[{
@@ -279,16 +355,14 @@ export default function SettingsPage() {
                       message="以下配置由系统自动注入，无需客户手工修改。"
                       style={{ marginBottom: 16 }}
                     />
-                    <Form.Item name="aiPromptServiceUrl" label="Agent 服务地址">
-                      <Input placeholder="由环境变量自动注入" disabled />
-                    </Form.Item>
+
                     <Form.Item name="aiIndustry" label="行业标识">
                       <Input placeholder="由环境变量自动注入，如：tea" disabled />
                     </Form.Item>
                   </div>
                 ),
               }]}
-            />
+            /> */}
           </Form>
         </Card>
       ),

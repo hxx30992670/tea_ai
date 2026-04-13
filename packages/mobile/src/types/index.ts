@@ -46,6 +46,7 @@ export interface Product {
   barcode?: string
   categoryId?: number
   categoryName?: string
+  categoryPath?: string[]
   spec?: string
   unit?: string
   packageUnit?: string
@@ -157,13 +158,53 @@ export interface SaleOrder {
   customerName?: string
   status: SaleOrderStatus
   totalAmount: number
+  returnedAmount?: number
   paidAmount?: number
   receivable?: number
   remark?: string
   items?: SaleOrderItem[]
+  returns?: SaleReturn[]
+  refunds?: SaleRefund[]
+  exchanges?: SaleExchange[]
   operatorName?: string
   createdAt: string
   updatedAt?: string
+}
+
+export interface SaleReturn {
+  id: number
+  returnNo?: string
+  totalAmount: number
+  refundAmount: number
+  reasonCode?: string
+  reasonNote?: string
+  remark?: string
+  createdAt: string
+}
+
+export interface SaleRefund {
+  id: number
+  refundNo?: string
+  amount: number
+  method?: string
+  reasonCode?: string
+  reasonNote?: string
+  remark?: string
+  createdAt: string
+}
+
+export interface SaleExchange {
+  id: number
+  exchangeNo?: string
+  status?: 'draft' | 'processing' | 'completed' | 'cancelled'
+  returnAmount: number
+  exchangeAmount: number
+  refundAmount: number
+  receiveAmount?: number
+  reasonCode?: string
+  reasonNote?: string
+  remark?: string
+  createdAt: string
 }
 
 /** 售后原因码 */

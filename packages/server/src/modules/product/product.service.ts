@@ -13,6 +13,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
 import { ROLE_STAFF } from '../../common/constants/roles';
 import { AuthUser } from '../../common/types/auth-user.type';
+import { roundQuantity, compareQuantity } from '../../common/utils/precision.util';
 import { CategoryEntity } from '../../entities/category.entity';
 import { ProductEntity } from '../../entities/product.entity';
 import { StockRecordEntity } from '../../entities/stock-record.entity';
@@ -161,12 +162,68 @@ export class ProductService {
 
     const [list, total] = await qb.getManyAndCount();
 
+    const categoryIds = Array.from(new Set(list.map((product) => product.categoryId).filter((id): id is number => !!id)));
+    const categoryPathMap = await this.getCategoryPathMap(categoryIds);
+
     return {
-      list: list.map((product) => this.serializeProduct(product, user)),
+      list: list.map((product) => ({
+        ...this.serializeProduct(product, user),
+        categoryName: product.categoryId ? categoryPathMap.get(product.categoryId)?.slice(-1)[0] : undefined,
+        categoryPath: product.categoryId ? categoryPathMap.get(product.categoryId) : undefined,
+      })),
       total,
       page,
       pageSize,
     };
+  }
+
+  async getProductById(id: number, user: AuthUser) {
+    const product = await this.productRepository.findOne({
+      where: { id, deletedAt: IsNull() },
+    });
+    if (!product) {
+      throw new NotFoundException('商品不存在');
+    }
+    const categoryPathMap = await this.getCategoryPathMap(product.categoryId ? [product.categoryId] : []);
+    return {
+      ...this.serializeProduct(product, user),
+      categoryName: product.categoryId ? categoryPathMap.get(product.categoryId)?.slice(-1)[0] : undefined,
+      categoryPath: product.categoryId ? categoryPathMap.get(product.categoryId) : undefined,
+    };
+  }
+
+  private async getCategoryPathMap(categoryIds: number[]) {
+    if (categoryIds.length === 0) {
+      return new Map<number, string[]>();
+    }
+
+    const categories = await this.categoryRepository.find({
+      select: ['id', 'name', 'parentId'],
+    });
+
+    const categoryMap = new Map(categories.map((category) => [category.id, category]));
+    const pathMap = new Map<number, string[]>();
+
+    for (const categoryId of categoryIds) {
+      const path: string[] = [];
+      const visited = new Set<number>();
+      let currentId: number | null = categoryId;
+
+      while (currentId) {
+        if (visited.has(currentId)) break;
+        visited.add(currentId);
+        const category = categoryMap.get(currentId);
+        if (!category) break;
+        path.unshift(category.name);
+        currentId = category.parentId ?? null;
+      }
+
+      if (path.length > 0) {
+        pathMap.set(categoryId, path);
+      }
+    }
+
+    return pathMap;
   }
 
   async createProduct(dto: CreateProductDto, user: AuthUser) {
@@ -180,7 +237,7 @@ export class ProductService {
       await this.ensureSkuAvailable(sku);
 
       const extData = this.normalizeExtData(dto.extData);
-      const openingStockQty = dto.stockQty ?? 0;
+      const openingStockQty = roundQuantity(dto.stockQty ?? 0);
 
       const product = manager.getRepository(ProductEntity).create({
         name: dto.name,
@@ -192,7 +249,7 @@ export class ProductService {
         costPrice: dto.costPrice ?? 0,
         sellPrice: dto.sellPrice ?? 0,
         stockQty: openingStockQty,
-        safeStock: this.getNumber(extData, 'safeStock') ?? 10,
+        safeStock: roundQuantity(this.getNumber(extData, 'safeStock') ?? 10),
         imageUrl: dto.imageUrl ?? null,
         status: dto.status ?? 1,
         remark: dto.remark ?? null,
@@ -237,7 +294,7 @@ export class ProductService {
       throw new NotFoundException('商品不存在');
     }
 
-    if (dto.stockQty !== undefined && dto.stockQty !== product.stockQty) {
+    if (dto.stockQty !== undefined && compareQuantity(dto.stockQty, product.stockQty) !== 0) {
       throw new BadRequestException('商品编辑不允许直接修改库存，请通过库存管理做入库/出库调整');
     }
 
@@ -259,7 +316,7 @@ export class ProductService {
     if (dto.categoryId !== undefined) product.categoryId = dto.categoryId ?? null;
     if (dto.costPrice !== undefined) product.costPrice = dto.costPrice;
     if (dto.sellPrice !== undefined) product.sellPrice = dto.sellPrice;
-    if (dto.stockQty !== undefined) product.stockQty = dto.stockQty;
+    if (dto.stockQty !== undefined) product.stockQty = roundQuantity(dto.stockQty);
     if (dto.status !== undefined) product.status = dto.status;
     if (dto.remark !== undefined) product.remark = dto.remark ?? null;
     if (dto.imageUrl !== undefined) product.imageUrl = dto.imageUrl ?? null;
@@ -268,7 +325,7 @@ export class ProductService {
       product.extData = this.stringifyExtData(extData);
       product.spec = this.getString(extData, 'spec');
       product.unit = this.getString(extData, 'unit') ?? product.unit;
-      product.safeStock = this.getNumber(extData, 'safeStock') ?? product.safeStock;
+      product.safeStock = roundQuantity(this.getNumber(extData, 'safeStock') ?? product.safeStock);
       product.teaType = this.getString(extData, 'teaType');
       product.origin = this.getString(extData, 'origin');
       product.year = this.getNumber(extData, 'year');

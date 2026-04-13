@@ -138,6 +138,12 @@ export function detectVisualization(
   const stringCols = cols.filter((c) => {
     const v = rows[0][c]
     return typeof v === 'string' && isNaN(Number(v))
+  }).sort((a, b) => {
+    const preferred = ['customer_name', 'customerName', 'supplier_name', 'supplierName', 'product_name', 'productName']
+    const demoted = ['order_no', 'orderNo', 'return_no', 'returnNo', 'refund_no', 'refundNo', 'exchange_no', 'exchangeNo']
+    const aIdx = preferred.includes(a) ? -1 : demoted.includes(a) ? 1 : 0
+    const bIdx = preferred.includes(b) ? -1 : demoted.includes(b) ? 1 : 0
+    return aIdx - bIdx
   })
   const dateCols = cols.filter((c) => /^\d{4}-\d{2}/.test(String(rows[0][c] ?? '')))
 
@@ -200,4 +206,41 @@ export function fmtNum(v: unknown): string {
   const n = Number(v)
   if (isNaN(n)) return String(v)
   return Number.isInteger(n) ? n.toLocaleString() : n.toFixed(2)
+}
+
+/** 数量字段集合 */
+const QTY_FIELDS = new Set([
+  'stock_qty', 'stockQty', 'quantity', 'total_qty', 'totalQty',
+  'available_qty', 'availableQty', 'pending_qty', 'pendingQty',
+  'safe_stock', 'safeStock', 'package_qty', 'packageQty', 'loose_qty', 'looseQty',
+])
+
+/** 为数量值追加包装单位换算 */
+export function fmtQtyWithUnit(
+  value: number,
+  fieldName: string,
+  row: Record<string, unknown>,
+  rows: Record<string, unknown>[],
+): string {
+  const fmted = Number.isInteger(value) ? value.toLocaleString() : value.toFixed(2)
+  if (!QTY_FIELDS.has(fieldName)) return fmted
+
+  const src = row ?? rows[0] ?? {}
+  const unit = (src.unit ?? src.base_unit) as string | undefined
+  const pkgUnit = (src.package_unit ?? src.packageUnit) as string | undefined
+  const pkgSize = Number(src.package_size ?? src.packageSize) || 0
+
+  if (!unit) return fmted
+
+  if (pkgUnit && pkgSize > 1) {
+    const pkgQty = Math.floor(value / pkgSize)
+    const loose = value % pkgSize
+    const parts: string[] = []
+    if (pkgQty > 0) parts.push(`${pkgQty.toLocaleString()} ${pkgUnit}`)
+    if (loose > 0) parts.push(`${loose} ${unit}`)
+    if (parts.length === 0) parts.push(`0 ${unit}`)
+    return `${fmted} ${unit}（${parts.join(' ')}）`
+  }
+
+  return `${fmted} ${unit}`
 }

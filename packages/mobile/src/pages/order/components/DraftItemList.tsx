@@ -1,8 +1,13 @@
-import { Trash2 } from 'lucide-react'
+import { Pencil, Trash2 } from 'lucide-react'
 import { useOrderDraftStore } from '@/store/order-draft'
-import { formatMoney, formatQuantity, calcTotalQuantity } from '@/lib/utils'
+import { calcTotalQuantity, formatMoney, formatNumber, formatQuantity, roundQuantity } from '@/lib/utils'
+import type { DraftItem } from '@/store/order-draft'
 
-export function DraftItemList() {
+interface DraftItemListProps {
+  onEditItem: (item: DraftItem) => void
+}
+
+export function DraftItemList({ onEditItem }: DraftItemListProps) {
   const { draft, removeItem, updateItem } = useOrderDraftStore()
 
   if (!draft.items.length) {
@@ -25,9 +30,16 @@ export function DraftItemList() {
           <div key={item.productId} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{item.productName}</p>
-              <div className="flex items-center gap-2 mt-0.5">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                 {item.spec && <p className="text-xs text-muted-foreground">{item.spec}</p>}
                 <span className="text-xs text-muted-foreground">单价: ¥{formatMoney(item.unitPrice)}</span>
+                {item.sellPrice != null && item.unitPrice !== item.sellPrice && (
+                  <span className={`text-xs font-medium ${item.unitPrice > item.sellPrice ? 'text-green-400' : 'text-red-400'}`}>
+                    {item.unitPrice > item.sellPrice ? '↑' : '↓'}
+                    ¥{formatMoney(Math.abs(item.unitPrice - item.sellPrice))}
+                    <span className="text-muted-foreground font-normal ml-0.5">(参考价 ¥{formatMoney(item.sellPrice)})</span>
+                  </span>
+                )}
               </div>
               <div className="mt-1.5 flex items-center gap-2">
                 {hasPackage ? (
@@ -37,16 +49,16 @@ export function DraftItemList() {
                       <span className="text-xs text-muted-foreground mr-0.5">{item.packageUnit}</span>
                       <button
                         onClick={() => {
-                          const newPkg = Math.max(0, (item.packageQty ?? 0) - 1)
-                          updateItem(item.productId, { packageQty: newPkg, quantity: newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0) })
+                          const newPkg = roundQuantity(Math.max(0, (item.packageQty ?? 0) - 1))
+                          updateItem(item.productId, { packageQty: newPkg, quantity: roundQuantity(newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0)) })
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >−</button>
-                      <span className="w-6 text-center text-sm font-medium">{item.packageQty ?? 0}</span>
+                      <span className="w-10 text-center text-sm font-medium">{formatNumber(item.packageQty ?? 0)}</span>
                       <button
                         onClick={() => {
-                          const newPkg = (item.packageQty ?? 0) + 1
-                          updateItem(item.productId, { packageQty: newPkg, quantity: newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0) })
+                          const newPkg = roundQuantity((item.packageQty ?? 0) + 1)
+                          updateItem(item.productId, { packageQty: newPkg, quantity: roundQuantity(newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0)) })
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >＋</button>
@@ -56,16 +68,16 @@ export function DraftItemList() {
                       <span className="text-xs text-muted-foreground mr-0.5">{item.unit || '散'}</span>
                       <button
                         onClick={() => {
-                          const newLoose = Math.max(0, (item.looseQty ?? 0) - 1)
-                          updateItem(item.productId, { looseQty: newLoose, quantity: (item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose })
+                          const newLoose = roundQuantity(Math.max(0, (item.looseQty ?? 0) - 1))
+                          updateItem(item.productId, { looseQty: newLoose, quantity: roundQuantity((item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose) })
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >−</button>
-                      <span className="w-6 text-center text-sm font-medium">{item.looseQty ?? 0}</span>
+                      <span className="w-10 text-center text-sm font-medium">{formatNumber(item.looseQty ?? 0)}</span>
                       <button
                         onClick={() => {
-                          const newLoose = (item.looseQty ?? 0) + 1
-                          updateItem(item.productId, { looseQty: newLoose, quantity: (item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose })
+                          const newLoose = roundQuantity((item.looseQty ?? 0) + 1)
+                          updateItem(item.productId, { looseQty: newLoose, quantity: roundQuantity((item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose) })
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >＋</button>
@@ -76,17 +88,18 @@ export function DraftItemList() {
                     <span className="text-xs text-muted-foreground mr-0.5">{item.unit || '数量'}</span>
                     <button
                       onClick={() => {
-                        const qty = item.looseQty ?? item.quantity ?? 1
-                        if (qty <= 1) removeItem(item.productId)
-                        else updateItem(item.productId, { looseQty: qty - 1, quantity: qty - 1 })
+                          const qty = item.looseQty ?? item.quantity ?? 1
+                          const nextQty = roundQuantity(Math.max(0.0001, qty - 1))
+                          updateItem(item.productId, { looseQty: nextQty, quantity: nextQty })
                       }}
                       className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                     >−</button>
-                    <span className="w-8 text-center text-sm font-medium">{item.looseQty ?? item.quantity ?? 0}</span>
+                    <span className="w-12 text-center text-sm font-medium">{formatNumber(item.looseQty ?? item.quantity ?? 0)}</span>
                     <button
                       onClick={() => {
-                        const qty = item.looseQty ?? item.quantity ?? 0
-                        updateItem(item.productId, { looseQty: qty + 1, quantity: qty + 1 })
+                          const qty = item.looseQty ?? item.quantity ?? 0
+                          const nextQty = roundQuantity(qty + 1)
+                          updateItem(item.productId, { looseQty: nextQty, quantity: nextQty })
                       }}
                       className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                     >＋</button>
@@ -109,12 +122,22 @@ export function DraftItemList() {
             </div>
 
             <div className="flex flex-col items-end gap-2">
-              <button
-                onClick={() => removeItem(item.productId)}
-                className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
-              >
-                <Trash2 size={14} />
-              </button>
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={() => onEditItem(item)}
+                  className="p-1 text-muted-foreground hover:text-primary transition-colors"
+                  aria-label="修改商品"
+                >
+                  <Pencil size={14} />
+                </button>
+                <button
+                  onClick={() => removeItem(item.productId)}
+                  className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
+                  aria-label="删除商品"
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
               <span className="text-sm font-bold text-primary">
                 ¥{formatMoney(subtotal)}
               </span>

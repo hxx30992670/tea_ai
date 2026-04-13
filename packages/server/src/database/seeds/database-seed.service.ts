@@ -31,7 +31,6 @@ export class DatabaseSeedService implements OnModuleInit {
   async onModuleInit() {
     await this.seedAdmin();
     await this.seedCategories();
-    await this.seedAiConfig();
   }
 
   private async seedAdmin() {
@@ -54,42 +53,6 @@ export class DatabaseSeedService implements OnModuleInit {
         status: 1,
       }),
     );
-  }
-
-  /**
-   * 从环境变量预置 AI 配置（仅在数据库中尚未配置时生效）
-   * 生产部署时可通过系统设置页面覆盖这些值
-   */
-  private async seedAiConfig() {
-    const provider = process.env.AI_PROVIDER;
-    const modelApiKey = process.env.AI_MODEL_API_KEY;
-    if (!provider || !modelApiKey) return;
-
-    const existing = await this.systemSettingRepository.findOne({
-      where: { key: 'aiProvider' },
-    });
-    if (existing?.value) return; // 已有配置，不覆盖
-
-    const defaultBaseUrl =
-      provider === 'deepseek'
-        ? 'https://api.deepseek.com'
-        : 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-
-    const initialSettings: Array<{ key: string; value: string }> = [
-      { key: 'aiApiKey', value: process.env.AI_API_KEY ?? 'sk-tea-demo-local' },
-      { key: 'aiProvider', value: provider },
-      { key: 'aiModelApiKey', value: modelApiKey },
-      { key: 'aiModelName', value: process.env.AI_MODEL_NAME ?? 'qwen-plus' },
-      { key: 'aiModelBaseUrl', value: process.env.AI_MODEL_BASE_URL ?? defaultBaseUrl },
-      { key: 'aiPromptServiceUrl', value: process.env.AI_PROMPT_SERVICE_URL ?? 'http://127.0.0.1:3010' },
-      { key: 'aiIndustry', value: process.env.AI_INDUSTRY ?? 'tea' },
-    ];
-
-    for (const { key, value } of initialSettings) {
-      await this.systemSettingRepository.save(
-        this.systemSettingRepository.create({ key, value }),
-      );
-    }
   }
 
   private async seedCategories() {

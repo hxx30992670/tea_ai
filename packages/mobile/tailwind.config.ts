@@ -59,12 +59,23 @@ const config: Config = {
           '0%, 100%': { boxShadow: '0 0 0 0 rgba(212, 168, 83, 0.4)' },
           '50%': { boxShadow: '0 0 0 8px rgba(212, 168, 83, 0)' },
         },
+        'glow-ai': {
+          '0%, 100%': { boxShadow: '0 0 6px rgba(99, 102, 241, 0.3), 0 0 2px rgba(168, 85, 247, 0.2)' },
+          '50%': { boxShadow: '0 0 12px rgba(99, 102, 241, 0.5), 0 0 4px rgba(168, 85, 247, 0.3)' },
+        },
+        'ai-sparkle': {
+          '0%': { transform: 'scale(1) rotate(0deg)', opacity: '0.8' },
+          '50%': { transform: 'scale(1.1) rotate(12deg)', opacity: '1' },
+          '100%': { transform: 'scale(1) rotate(0deg)', opacity: '0.8' },
+        },
       },
       animation: {
         shimmer: 'shimmer 2s linear infinite',
         'slide-up': 'slide-up 0.3s ease-out',
         'fade-in': 'fade-in 0.2s ease-out',
         'pulse-gold': 'pulse-gold 2s ease-in-out infinite',
+        'glow-ai': 'glow-ai 2s ease-in-out infinite',
+        'ai-sparkle': 'ai-sparkle 2.5s ease-in-out infinite',
       },
     },
   },

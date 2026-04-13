@@ -94,6 +94,14 @@ export class ProductController {
     return this.productService.getProducts(query, user);
   }
 
+  @ApiOperation({ summary: '商品详情' })
+  @ApiParam({ name: 'id', description: '商品 ID', example: 1 })
+  @ApiOkResponse({ description: '返回单个商品（与列表项结构一致）' })
+  @Get('products/:id')
+  getProduct(@Param('id', ParseIntPipe) id: number, @CurrentUser() user: AuthUser) {
+    return this.productService.getProductById(id, user);
+  }
+
   @Roles(ROLE_ADMIN, ROLE_MANAGER)
   @ApiOperation({ summary: '创建商品' })
   @ApiBody({ type: CreateProductDto })

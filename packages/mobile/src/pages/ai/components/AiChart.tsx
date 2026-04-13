@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import type { AiVisualizationSpec } from '@/types'
-import { fieldToLabel, fmtNum } from '@/lib/detectVisualization'
+import { fieldToLabel, fmtNum, fmtQtyWithUnit } from '@/lib/detectVisualization'
 
 const COLORS = ['#D4A853', '#52b788', '#74c69d', '#e76f51', '#457b9d', '#e9c46a', '#a8dadc', '#f4a261']
 
@@ -35,7 +35,9 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     const minVal = Math.min(...vals)
     const maxName = String(rows[vals.indexOf(maxVal)]?.[spec.xField] ?? '')
     const minName = String(rows[vals.indexOf(minVal)]?.[spec.xField] ?? '')
-    text = `共 ${rows.length} 项，${yLabel}合计 ${fmtNum(total)}。最高「${maxName}」${fmtNum(maxVal)}，最低「${minName}」${fmtNum(minVal)}。`
+    const maxRow = rows[vals.indexOf(maxVal)] ?? {}
+    const minRow = rows[vals.indexOf(minVal)] ?? {}
+    text = `共 ${rows.length} 项，${yLabel}合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。最高「${maxName}」${fmtQtyWithUnit(maxVal, spec.yField!, maxRow, rows)}，最低「${minName}」${fmtQtyWithUnit(minVal, spec.yField!, minRow, rows)}。`
   }
 
   if (type === 'line' && spec.xField && spec.yField) {
@@ -45,7 +47,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     const avg = total / vals.length
     const firstX = String(rows[0]?.[spec.xField] ?? '')
     const lastX = String(rows[rows.length - 1]?.[spec.xField] ?? '')
-    text = `${firstX}→${lastX} 共 ${rows.length} 个周期，${yLabel}均值 ${fmtNum(avg)}，合计 ${fmtNum(total)}。`
+    text = `${firstX}→${lastX} 共 ${rows.length} 个周期，${yLabel}均值 ${fmtQtyWithUnit(avg, spec.yField!, rows[0] ?? {}, rows)}，合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。`
   }
 
   if (type === 'pie' && spec.nameField && spec.valueField) {
@@ -57,7 +59,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     const total = data.reduce((s, d) => s + d.value, 0)
     const top = data[0]
     const topPct = total > 0 ? ((top.value / total) * 100).toFixed(1) : '0'
-    text = `共 ${data.length} 类，${yLabel}合计 ${fmtNum(total)}。占比最高「${top.name}」${topPct}%。`
+    text = `共 ${data.length} 类，${yLabel}合计 ${fmtQtyWithUnit(total, spec.valueField!, rows[0] ?? {}, rows)}。占比最高「${top.name}」${topPct}%。`
   }
 
   if (type === 'table') {
@@ -66,7 +68,8 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     for (const col of cols) {
       const vals = rows.map((r) => Number(r[col])).filter((v) => !isNaN(v) && v !== 0)
       if (vals.length === rows.length && vals.length > 1) {
-        numSummaries.push(`${fieldToLabel(col)} ${fmtNum(vals.reduce((a, b) => a + b, 0))}`)
+        const colTotal = vals.reduce((a, b) => a + b, 0)
+        numSummaries.push(`${fieldToLabel(col)} ${fmtQtyWithUnit(colTotal, col, rows[0] ?? {}, rows)}`)
       }
     }
     text = `共 ${rows.length} 条记录。${numSummaries.length > 0 ? '合计：' + numSummaries.join('，') + '。' : ''}`

@@ -1,7 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import { IsIn, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
-import { PAYMENT_RECORD_TYPE } from '../../../common/constants/order-status';
+import { PAYMENT_METHOD_VALUES, PAYMENT_RECORD_TYPE, type PaymentMethod } from '../../../common/constants/order-status';
 
 export class CreatePaymentDto {
   @ApiProperty({ description: '记录类型', example: 'receive', enum: [PAYMENT_RECORD_TYPE.RECEIVE, PAYMENT_RECORD_TYPE.PAY] })
@@ -26,10 +26,11 @@ export class CreatePaymentDto {
   @Min(0.01)
   amount!: number;
 
-  @ApiPropertyOptional({ description: '支付方式', example: '微信' })
+  @ApiPropertyOptional({ description: '支付方式', example: '微信', enum: PAYMENT_METHOD_VALUES })
   @IsOptional()
   @IsString()
-  method?: string;
+  @IsIn(PAYMENT_METHOD_VALUES)
+  method?: PaymentMethod;
 
   @ApiPropertyOptional({ description: '备注', example: '客户已支付部分货款' })
   @IsOptional()

@@ -1,6 +1,8 @@
 import request from './index'
 import type { AiChatHistoryItem, AiChatResult, AiConversation, AiSession, AiSuggestion, ApiResponse } from '@/types'
 
+const AI_RECOGNIZE_TIMEOUT = 60000
+
 export interface AiSuggestionResponse {
   enabled: boolean
   reason: string
@@ -12,6 +14,34 @@ export interface AiAttachment {
   content: string
   mimeType?: string
   filename?: string
+}
+
+export interface AiRecognizeProduct {
+  id: number
+  name: string
+  teaType?: string
+  year?: string
+  spec?: string
+  sellPrice?: number
+  unit?: string
+  packageUnit?: string
+}
+
+export interface AiRecognizedSaleOrder {
+  customerName: string | null
+  items: Array<{
+    customerName?: string | null
+    lineText?: string | null
+    productName: string
+    productId: number | null
+    quantity: number | null
+    quantityUnit: string | null
+    subtotal?: number | null
+    unitPrice: number | null
+  }>
+  remark: string | null
+  paidAmount: number | null
+  paymentMethod: string | null
 }
 
 export const aiApi = {
@@ -36,6 +66,18 @@ export const aiApi = {
   /** 对话历史 */
   history: async (params?: Record<string, unknown>): Promise<{ list: AiConversation[]; total: number }> => {
     const res = await request.get<never, ApiResponse<{ list: AiConversation[]; total: number }>>('/ai/history', { params })
+    return res.data
+  },
+
+  /** AI 结构化识别，用于自动填表 */
+  recognizeSaleOrder: async (
+    attachment: AiAttachment,
+    products?: AiRecognizeProduct[],
+  ): Promise<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string }> => {
+    const res = await request.post<
+      never,
+      ApiResponse<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string }>
+    >('/ai/recognize', { module: 'sale-order', attachment, products }, { timeout: AI_RECOGNIZE_TIMEOUT })
     return res.data
   },
 

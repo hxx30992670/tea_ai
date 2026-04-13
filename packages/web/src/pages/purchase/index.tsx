@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import {
   Button,
   Card,
@@ -25,19 +26,24 @@ import {
 } from 'antd'
 import { CheckCircleOutlined, DollarOutlined, DownOutlined, EditOutlined, PlusOutlined, RollbackOutlined, SearchOutlined } from '@ant-design/icons'
 import { PURCHASE_ORDER_STATUS } from '@/constants/order'
-import { purchaseOrderApi } from '@/api/purchase'
+import { purchaseOrderApi, type QuickCompletePurchasePayload } from '@/api/purchase'
 import { paymentApi } from '@/api/payments'
 import { supplierApi } from '@/api/suppliers'
 import { productApi } from '@/api/products'
 import type { Product, PurchaseOrder, Supplier } from '@/types'
 import { formatCompositeQuantity, getProductPackageConfig } from '@/utils/packaging'
+import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import ProductSelect from '@/components/ProductSelect'
+import SupplierSelect from '@/components/SupplierSelect'
 import type { Dayjs } from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
+import dayjs from 'dayjs'
 
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
+const QUANTITY_STEP = 0.0001
+const QUANTITY_PRECISION = 4
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -58,7 +64,6 @@ export default function PurchasePage() {
   const [list, setList] = useState<PurchaseOrder[]>([])
   const [total, setTotal] = useState(0)
   const [suppliers, setSuppliers] = useState<Supplier[]>([])
-  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [editId, setEditId] = useState<number | null>(null)
@@ -76,12 +81,49 @@ export default function PurchasePage() {
   const quantities = Form.useWatch('quantities', returnForm) as Record<string, number> | undefined
   const packageQuantities = Form.useWatch('packageQuantities', returnForm) as Record<string, number> | undefined
   const looseQuantities = Form.useWatch('looseQuantities', returnForm) as Record<string, number> | undefined
+  const purchaseItems = Form.useWatch('items', form) as Array<{ productId?: number; quantity?: number; packageQty?: number; looseQty?: number; unitPrice?: number; _product?: Product }> | undefined
+  const autoPaidAmountRef = React.useRef<number | undefined>(undefined)
+  const syncingPaidAmountRef = React.useRef(false)
+  const [paidAmountTouched, setPaidAmountTouched] = useState(false)
 
   const [keyword, setKeyword] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null)
   const [page, setPage] = useState(1)
-  const productMap = useMemo(() => new Map(products.map((item) => [item.id, item])), [products])
+  const [searchParams, setSearchParams] = useSearchParams()
+
+  const getPurchaseItemQuantity = (item: { productId?: number; quantity?: number; packageQty?: number; looseQty?: number; _product?: Product }) => {
+    const product = item._product
+    const packageConfig = getProductPackageConfig(product)
+    if (packageConfig.unit && packageConfig.size > 0) {
+      return Number(item.packageQty ?? 0) * packageConfig.size + Number(item.looseQty ?? 0)
+    }
+    return Number(item.quantity ?? 0)
+  }
+
+  const calculatePurchaseItemsTotal = (items?: Array<{ productId?: number; quantity?: number; packageQty?: number; looseQty?: number; unitPrice?: number; _product?: Product }>) => {
+    const total = (items ?? []).reduce((sum, item) => sum + getPurchaseItemQuantity(item) * Number(item.unitPrice ?? 0), 0)
+    return total > 0 ? Number(total.toFixed(2)) : undefined
+  }
+
+  useEffect(() => {
+    if (!createOpen || editId || paidAmountTouched) {
+      return
+    }
+
+    const nextPaidAmount = calculatePurchaseItemsTotal(purchaseItems)
+    if (nextPaidAmount === autoPaidAmountRef.current) {
+      return
+    }
+
+    syncingPaidAmountRef.current = true
+    autoPaidAmountRef.current = nextPaidAmount
+    form.setFieldValue('paidAmount', nextPaidAmount)
+    void form.validateFields(['method']).catch(() => { })
+    queueMicrotask(() => {
+      syncingPaidAmountRef.current = false
+    })
+  }, [createOpen, editId, paidAmountTouched, purchaseItems, form])
 
   const buildParams = (overrides?: Record<string, unknown>) => ({
     keyword: keyword || undefined,
@@ -102,12 +144,78 @@ export default function PurchasePage() {
   }
 
   const loadMeta = async () => {
-    const [supRes, prodRes] = await Promise.all([supplierApi.list(), productApi.list()])
+    const supRes = await supplierApi.list()
     setSuppliers(supRes.list)
-    setProducts(prodRes.list)
   }
 
   useEffect(() => { loadData(); loadMeta() }, [])
+
+  /** 从库存预警「采购」跳转：?productId=&suggestQty= 打开新建单并预填商品行 */
+  useEffect(() => {
+    const rawPid = searchParams.get('productId')
+    if (!rawPid) return
+
+    const productId = Number(rawPid)
+    const rawSuggest = searchParams.get('suggestQty')
+    const suggestQty = rawSuggest != null && rawSuggest !== '' && Number.isFinite(Number(rawSuggest))
+      ? Math.max(1, Math.floor(Number(rawSuggest)))
+      : 1
+
+    if (!Number.isInteger(productId) || productId < 1) {
+      setSearchParams({}, { replace: true })
+      return
+    }
+
+    let cancelled = false
+      ; (async () => {
+        setEditId(null)
+        setPaidAmountTouched(false)
+        autoPaidAmountRef.current = undefined
+        setEditLoading(true)
+        setCreateOpen(true)
+        form.resetFields()
+        try {
+          const p: Product = await productApi.get(productId)
+          if (cancelled) return
+
+          const pkg = getProductPackageConfig(p)
+          const item: Record<string, unknown> = {
+            productId: p.id,
+            unitPrice: p.costPrice ?? 0,
+            _product: p,
+          }
+
+          if (pkg.unit && pkg.size > 0) {
+            const totalBase = suggestQty
+            const fullPkgs = Math.floor(totalBase / pkg.size)
+            const loose = totalBase % pkg.size
+            item.packageQty = fullPkgs
+            item.looseQty = fullPkgs === 0 && loose === 0 ? suggestQty : loose
+          } else {
+            item.quantity = suggestQty
+          }
+
+          form.setFieldsValue({
+            supplierId: undefined,
+            remark: undefined,
+            items: [item],
+          })
+          setSearchParams({}, { replace: true })
+        } catch {
+          if (!cancelled) {
+            message.error('加载商品失败')
+            setCreateOpen(false)
+          }
+          setSearchParams({}, { replace: true })
+        } finally {
+          if (!cancelled) setEditLoading(false)
+        }
+      })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [searchParams, form, setSearchParams])
 
   const handleSearch = () => { setPage(1); loadData({ page: 1 }) }
 
@@ -118,18 +226,58 @@ export default function PurchasePage() {
 
   const handleCreate = async () => {
     const values = await form.validateFields()
+    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => {
+      const { _product, ...rest } = item
+      return rest
+    })
+    const payload = { ...values, items: cleanedItems }
     if (editId) {
-      await purchaseOrderApi.update(editId, values)
+      await purchaseOrderApi.update(editId, payload)
     } else {
-      await purchaseOrderApi.create(values)
+      await purchaseOrderApi.create(payload)
     }
     setCreateOpen(false)
     setEditId(null)
+    setPaidAmountTouched(false)
+    autoPaidAmountRef.current = undefined
+    loadData()
+  }
+
+  const handleQuickComplete = async () => {
+    const values = await form.validateFields()
+    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => {
+      const { _product, ...rest } = item
+      return rest
+    })
+    const total = cleanedItems.reduce((sum: number, item: Record<string, unknown>) => {
+      const product = form.getFieldValue(['items', (item as { productId: number }).productId ? cleanedItems.indexOf(item) : 0, '_product'])
+      const packageConfig = getProductPackageConfig(product)
+      if (packageConfig.unit && packageConfig.size > 0) {
+        return sum + (Number(item.packageQty ?? 0) * packageConfig.size + Number(item.looseQty ?? 0)) * Number(item.unitPrice ?? 0)
+      }
+      return sum + Number(item.quantity ?? 0) * Number(item.unitPrice ?? 0)
+    }, 0)
+    const paidAmount = values.paidAmount != null ? values.paidAmount : total
+    const payload: QuickCompletePurchasePayload = {
+      supplierId: values.supplierId,
+      remark: values.remark,
+      items: cleanedItems as QuickCompletePurchasePayload['items'],
+      paidAmount,
+      method: values.method,
+    }
+    await purchaseOrderApi.quickComplete(payload)
+    message.success('采购完成！订单已入库并记录付款')
+    setCreateOpen(false)
+    setEditId(null)
+    setPaidAmountTouched(false)
+    autoPaidAmountRef.current = undefined
     loadData()
   }
 
   const handleOpenEdit = async (id: number) => {
     setEditId(id)
+    setPaidAmountTouched(false)
+    autoPaidAmountRef.current = undefined
     setEditLoading(true)
     setCreateOpen(true)
     const order = await purchaseOrderApi.getById(id)
@@ -280,7 +428,15 @@ export default function PurchasePage() {
       title: '状态', dataIndex: 'status', width: 90,
       render: (v: string) => <Tag color={STATUS_MAP[v]?.color}>{STATUS_MAP[v]?.label}</Tag>,
     },
-    { title: '创建时间', dataIndex: 'createdAt', width: 160 },
+    {
+      title: '创建时间', dataIndex: 'createdAt', width: 160, render(_: unknown, r: PurchaseOrder) {
+        return (
+          <Text>
+            {dayjs(r.createdAt).format('YYYY-MM-DD HH:mm:ss')}
+          </Text>
+        )
+      }
+    },
     {
       title: '操作', width: 280, fixed: 'right' as const,
       render: (_: unknown, r: PurchaseOrder) => {
@@ -340,6 +496,10 @@ export default function PurchasePage() {
             icon={<PlusOutlined />}
             onClick={() => {
               setEditId(null)
+              setPaidAmountTouched(false)
+              autoPaidAmountRef.current = undefined
+              form.resetFields()
+              form.setFieldsValue({ items: [{}] })
               setCreateOpen(true)
             }}
             className="page-primary-button"
@@ -389,12 +549,22 @@ export default function PurchasePage() {
       <Modal
         title={editId ? '编辑采购订单' : '新建采购订单'}
         open={createOpen}
-        onOk={handleCreate}
-        onCancel={() => { setCreateOpen(false); setEditId(null) }}
+        onCancel={() => { setCreateOpen(false); setEditId(null); setPaidAmountTouched(false); autoPaidAmountRef.current = undefined }}
         width={600}
-        okText={editId ? '保存' : '保存草稿'}
-        okButtonProps={{ style: { background: '#2D6A4F', borderColor: '#2D6A4F' } }}
         destroyOnHidden
+        footer={editId ? undefined : (
+          <Space style={{ justifyContent: 'flex-end', width: '100%' }}>
+            <Button onClick={() => { setCreateOpen(false); setEditId(null); setPaidAmountTouched(false); autoPaidAmountRef.current = undefined }}>取消</Button>
+            <Button onClick={handleCreate} style={{ borderColor: '#2D6A4F', color: '#2D6A4F' }}>保存草稿</Button>
+            <Button type="primary" onClick={handleQuickComplete}
+              style={{ background: '#fa8c16', borderColor: '#fa8c16' }}>
+              保存并完成
+            </Button>
+          </Space>
+        )}
+        okText="保存"
+        okButtonProps={{ style: { background: '#2D6A4F', borderColor: '#2D6A4F' } }}
+        onOk={editId ? handleCreate : undefined}
       >
         <Spin spinning={editLoading}>
           <Form
@@ -402,9 +572,8 @@ export default function PurchasePage() {
             layout="vertical"
             style={{ marginTop: 16 }}
           >
-            <Form.Item name="supplierId" label="供应商" rules={[{ required: true }]}> 
-              <Select placeholder="选择供应商" showSearch optionFilterProp="label"
-                options={suppliers.map((s) => ({ value: s.id, label: s.name }))} />
+            <Form.Item name="supplierId" label="供应商" rules={[{ required: true }]}>
+              <SupplierSelect suppliers={suppliers} />
             </Form.Item>
             <div style={{ background: '#f9f9f9', borderRadius: 10, padding: 16, marginBottom: 16 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>商品明细</Text>
@@ -415,32 +584,35 @@ export default function PurchasePage() {
                       <Space key={`${key}-${fieldProps.name}`} style={{ width: '100%', marginBottom: 8 }} align="start">
                         <Form.Item key={`${key}-product`} {...fieldProps} name={[fieldProps.name, 'productId']} rules={[{ required: true, message: '请选择商品' }]} style={{ flex: 1, marginBottom: 0 }}>
                           <ProductSelect
-                            products={products}
+                            lazy
                             priceField="costPrice"
                             onProductChange={(p) => {
-                              if (p) form.setFieldValue(['items', fieldProps.name, 'unitPrice'], p.costPrice)
+                              if (p) {
+                                form.setFieldValue(['items', fieldProps.name, 'unitPrice'], p.costPrice)
+                                form.setFieldValue(['items', fieldProps.name, '_product'], p)
+                              }
                             }}
                           />
                         </Form.Item>
                         <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.items?.[fieldProps.name]?.productId !== cur?.items?.[fieldProps.name]?.productId}>
                           {({ getFieldValue }) => {
-                            const selectedProductId = getFieldValue(['items', fieldProps.name, 'productId'])
-                            const packageConfig = getProductPackageConfig(productMap.get(selectedProductId))
+                            const selectedProduct = getFieldValue(['items', fieldProps.name, '_product'])
+                            const packageConfig = getProductPackageConfig(selectedProduct)
                             if (packageConfig.unit && packageConfig.size > 0) {
                               return (
                                 <>
                                   <Form.Item key={`${key}-pkg`} {...fieldProps} name={[fieldProps.name, 'packageQty']} style={{ marginBottom: 0 }}>
-                                    <InputNumber placeholder={packageConfig.unit} min={0} style={{ width: 82 }} />
+                                       <InputNumber placeholder={packageConfig.unit} min={0} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} style={{ width: 82 }} />
                                   </Form.Item>
                                   <Form.Item key={`${key}-loose`} {...fieldProps} name={[fieldProps.name, 'looseQty']} style={{ marginBottom: 0 }}>
-                                    <InputNumber placeholder={packageConfig.baseUnit || '散'} min={0} style={{ width: 82 }} />
+                                       <InputNumber placeholder={packageConfig.baseUnit || '散'} min={0} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} style={{ width: 82 }} />
                                   </Form.Item>
                                 </>
                               )
                             }
                             return (
                               <Form.Item key={`${key}-qty`} {...fieldProps} name={[fieldProps.name, 'quantity']} rules={[{ required: true, message: '数量必填' }]} style={{ marginBottom: 0 }}>
-                                <InputNumber placeholder="数量" min={1} style={{ width: 90 }} />
+                                     <InputNumber placeholder="数量" min={QUANTITY_STEP} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} style={{ width: 90 }} />
                               </Form.Item>
                             )
                           }}
@@ -459,6 +631,33 @@ export default function PurchasePage() {
             <Form.Item name="remark" label="备注">
               <Input.TextArea rows={2} />
             </Form.Item>
+            {!editId && (
+              <div style={{ background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 10, padding: 16, marginTop: 4 }}>
+                <Text style={{ fontSize: 12, color: '#ad6800', display: 'block', marginBottom: 12 }}>
+                  快捷完成时会自动入库并登记付款；会根据商品与数量自动计算应付金额，必须要选择支付方式。
+                </Text>
+                <Space>
+                  <Form.Item name="paidAmount" label="实付金额" style={{ marginBottom: 0 }}>
+                    <InputNumber prefix="¥" min={0} precision={2} style={{ width: 160 }} placeholder="按订单金额自动填充"
+                      onChange={() => {
+                        if (!syncingPaidAmountRef.current) {
+                          setPaidAmountTouched(true)
+                        }
+                        form.validateFields(['method']).catch(() => { })
+                      }} />
+                  </Form.Item>
+                  <Form.Item
+                    name="method"
+                    label="支付方式"
+                    style={{ marginBottom: 0 }}
+                    rules={[{ required: true, message: '请选择支付方式' }]}
+                  >
+                    <Select style={{ width: 140 }} placeholder="选择方式"
+                      options={PAYMENT_METHOD_OPTIONS} />
+                  </Form.Item>
+                </Space>
+              </div>
+            )}
           </Form>
         </Spin>
       </Modal>
@@ -596,13 +795,15 @@ export default function PurchasePage() {
                       name="method"
                       label="退款方式"
                       dependencies={['refundAmount']}
-                      rules={[{ validator(_, value) {
-                        const amount = Number(returnForm.getFieldValue('refundAmount') ?? 0)
-                        if (amount > 0 && !value) return Promise.reject(new Error('有退款金额时必须选择退款方式'))
-                        return Promise.resolve()
-                      } }]}
+                      rules={[{
+                        validator(_, value) {
+                          const amount = Number(returnForm.getFieldValue('refundAmount') ?? 0)
+                          if (amount > 0 && !value) return Promise.reject(new Error('有退款金额时必须选择退款方式'))
+                          return Promise.resolve()
+                        }
+                      }]}
                     >
-                      <Select allowClear placeholder="请选择退款方式" options={['现金', '微信', '支付宝', '转账', '其他'].map((m) => ({ value: m, label: m }))} />
+                      <Select allowClear placeholder="请选择退款方式" options={PAYMENT_METHOD_OPTIONS} />
                     </Form.Item>
                   </Col>
                 </Row>
@@ -638,14 +839,16 @@ export default function PurchasePage() {
               name="method"
               label="支付方式"
               dependencies={['amount']}
-              rules={[{ validator(_, value) {
-                const amount = Number(payForm.getFieldValue('amount') ?? 0)
-                if (amount > 0 && !value) return Promise.reject(new Error('有付款金额时必须选择支付方式'))
-                return Promise.resolve()
-              } }]}
+              rules={[{
+                validator(_, value) {
+                  const amount = Number(payForm.getFieldValue('amount') ?? 0)
+                  if (amount > 0 && !value) return Promise.reject(new Error('有付款金额时必须选择支付方式'))
+                  return Promise.resolve()
+                }
+              }]}
             >
               <Select placeholder="请选择支付方式" allowClear
-                options={['现金', '微信', '支付宝', '转账', '其他'].map((m) => ({ value: m, label: m }))} />
+                options={PAYMENT_METHOD_OPTIONS} />
             </Form.Item>
             <Form.Item name="remark" label="备注">
               <Input.TextArea rows={2} placeholder="备注信息（选填）" />

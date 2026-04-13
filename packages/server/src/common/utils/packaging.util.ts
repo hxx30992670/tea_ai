@@ -1,4 +1,5 @@
 import { ProductEntity } from '../../entities/product.entity';
+import { addQuantity, roundQuantity } from './precision.util';
 
 type QuantityInput = {
   quantity?: number;
@@ -34,33 +35,33 @@ export function getProductPackageConfig(product: Pick<ProductEntity, 'unit' | 'e
 }
 
 export function resolveCompositeQuantity(input: QuantityInput, config: PackageConfig) {
-  const normalizedPackageQty = Math.max(0, Math.floor(Number(input.packageQty ?? 0) || 0));
-  const normalizedLooseQty = Math.max(0, Math.floor(Number(input.looseQty ?? 0) || 0));
+  const normalizedPackageQty = Math.max(0, roundQuantity(input.packageQty ?? 0));
+  const normalizedLooseQty = Math.max(0, roundQuantity(input.looseQty ?? 0));
   const hasCompositeInput = input.packageQty !== undefined || input.looseQty !== undefined;
 
   if (config.packageUnit && config.packageSize) {
     if (hasCompositeInput) {
-      const mergedLooseQty = normalizedPackageQty * config.packageSize + normalizedLooseQty;
+      const mergedLooseQty = addQuantity(normalizedPackageQty * config.packageSize, normalizedLooseQty);
       return {
         quantity: mergedLooseQty,
-        packageQty: Math.floor(mergedLooseQty / config.packageSize),
-        looseQty: mergedLooseQty % config.packageSize,
+        packageQty: normalizedPackageQty,
+        looseQty: normalizedLooseQty,
         packageUnit: config.packageUnit,
         packageSize: config.packageSize,
       };
     }
 
-    const quantity = Math.max(0, Math.floor(Number(input.quantity ?? 0) || 0));
+    const quantity = Math.max(0, roundQuantity(input.quantity ?? 0));
     return {
       quantity,
-      packageQty: Math.floor(quantity / config.packageSize),
-      looseQty: quantity % config.packageSize,
+      packageQty: 0,
+      looseQty: quantity,
       packageUnit: config.packageUnit,
       packageSize: config.packageSize,
     };
   }
 
-  const quantity = Math.max(0, Math.floor(Number(input.quantity ?? input.looseQty ?? 0) || 0));
+  const quantity = Math.max(0, roundQuantity(input.quantity ?? input.looseQty ?? 0));
   return {
     quantity,
     packageQty: null,

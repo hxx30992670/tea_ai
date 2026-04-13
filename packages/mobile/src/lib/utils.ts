@@ -1,8 +1,34 @@
 import { type ClassValue, clsx } from 'clsx'
 import { twMerge } from 'tailwind-merge'
+import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
+}
+
+export function roundQuantity(value: number | undefined | null, precision = 4): number {
+  const num = Number(value ?? 0)
+  if (!Number.isFinite(num)) return 0
+  const factor = 10 ** precision
+  return Math.round(num * factor) / factor
+}
+
+export function roundAmount(value: number | undefined | null, precision = 2): number {
+  const num = Number(value ?? 0)
+  if (!Number.isFinite(num)) return 0
+  const factor = 10 ** precision
+  return Math.round(num * factor) / factor
+}
+
+export function parseDecimal(value: string | number | undefined | null, fallback = 0): number {
+  const num = typeof value === 'number' ? value : Number.parseFloat(String(value ?? ''))
+  return Number.isFinite(num) ? num : fallback
+}
+
+export function formatNumber(value: number | undefined | null, precision = 4): string {
+  const num = Number(value ?? 0)
+  if (!Number.isFinite(num)) return '0'
+  return String(Number(num.toFixed(precision)))
 }
 
 /** 格式化金额，带千分符 */
@@ -83,12 +109,7 @@ export const PURCHASE_ORDER_STATUS_MAP: Record<string, { label: string; color: s
 
 /** 支付方式 */
 export const PAYMENT_METHODS = [
-  { value: '现金', label: '现金' },
-  { value: '微信', label: '微信' },
-  { value: '支付宝', label: '支付宝' },
-  { value: '转账', label: '转账' },
-  { value: '赊账', label: '赊账' },
-  { value: '其他', label: '其他' },
+  ...PAYMENT_METHOD_OPTIONS,
 ] as const
 
 export const PAYMENT_METHOD_MAP: Record<string, string> = Object.fromEntries(
@@ -130,7 +151,7 @@ export function calcTotalQuantity(
   looseQty: number | undefined,
   packageSize: number | undefined,
 ): number {
-  return ((packageQty ?? 0) * (packageSize ?? 1)) + (looseQty ?? 0)
+  return roundQuantity(((packageQty ?? 0) * (packageSize ?? 1)) + (looseQty ?? 0))
 }
 
 /**
@@ -145,12 +166,12 @@ export function formatQuantity(
 ): string {
   const parts: string[] = []
   if (packageQty && packageQty > 0) {
-    parts.push(`${packageQty}${packageUnit || '件'}`)
+    parts.push(`${formatNumber(packageQty)}${packageUnit || '件'}`)
   }
   if (looseQty && looseQty > 0) {
-    parts.push(`${looseQty}${unit || ''}`)
+    parts.push(`${formatNumber(looseQty)}${unit || ''}`)
   }
   if (parts.length) return parts.join(' + ')
-  if (quantity != null) return `${quantity}${unit || ''}`
+  if (quantity != null) return `${formatNumber(quantity)}${unit || ''}`
   return '—'
 }

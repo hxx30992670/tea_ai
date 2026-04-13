@@ -58,6 +58,7 @@ export interface Product {
   barcode?: string
   categoryId?: number
   categoryName?: string
+  categoryPath?: string[]
   spec?: string
   unit?: string
   packageUnit?: string
@@ -117,6 +118,7 @@ export interface StockRecord {
 export interface StockWarning {
   /** 同一商品可能有多条预警（如库存+临期），需与 warningType 组合保证唯一 */
   id: string
+  productId: number
   productName: string
   type: 'low_stock' | 'expiring'
   stockQty: number
@@ -284,10 +286,15 @@ export interface SaleExchange {
   id: number
   exchangeNo?: string
   saleOrderId: number
+  status?: 'draft' | 'processing' | 'completed' | 'cancelled'
+  returnStockDone?: number
+  exchangeStockDone?: number
+  paymentDone?: number
   returnAmount: number
   exchangeAmount: number
   refundAmount: number
   receiveAmount?: number
+  method?: string
   reasonCode?: AfterSaleReasonCode | string
   reasonNote?: string
   remark?: string

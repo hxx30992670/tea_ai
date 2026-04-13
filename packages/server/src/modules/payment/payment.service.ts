@@ -16,6 +16,7 @@ import { PaymentRecordEntity } from '../../entities/payment-record.entity';
 import { PurchaseOrderEntity } from '../../entities/purchase-order.entity';
 import { SaleOrderEntity } from '../../entities/sale-order.entity';
 import { SupplierEntity } from '../../entities/supplier.entity';
+import { addAmount, compareAmount, roundAmount, subtractAmount } from '../../common/utils/precision.util';
 import { OperationLogService } from '../system/operation-log.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { PaymentQueryDto } from './dto/payment-query.dto';
@@ -30,17 +31,17 @@ export class PaymentService {
   private recalculatePurchaseOrderStatus(
     order: Pick<PurchaseOrderEntity, 'paidAmount' | 'returnedAmount' | 'totalAmount' | 'status'>,
   ) {
-    const effectiveTotal = Math.max(order.totalAmount - order.returnedAmount, 0);
+    const effectiveTotal = Math.max(subtractAmount(order.totalAmount, order.returnedAmount), 0);
     const isStocked =
       order.status === PURCHASE_ORDER_STATUS.STOCKED ||
       order.status === PURCHASE_ORDER_STATUS.DONE ||
       order.status === PURCHASE_ORDER_STATUS.RETURNED;
 
-    if (order.returnedAmount >= order.totalAmount && order.totalAmount > 0) {
+    if (compareAmount(order.returnedAmount, order.totalAmount) >= 0 && compareAmount(order.totalAmount, 0) > 0) {
       return PURCHASE_ORDER_STATUS.RETURNED;
     }
 
-    if (isStocked && order.paidAmount >= effectiveTotal) {
+    if (isStocked && compareAmount(order.paidAmount, effectiveTotal) >= 0) {
       return PURCHASE_ORDER_STATUS.DONE;
     }
 
@@ -54,17 +55,17 @@ export class PaymentService {
   private recalculateSaleOrderStatus(
     order: Pick<SaleOrderEntity, 'receivedAmount' | 'returnedAmount' | 'totalAmount' | 'status'>,
   ) {
-    const effectiveTotal = Math.max(order.totalAmount - order.returnedAmount, 0);
+    const effectiveTotal = Math.max(subtractAmount(order.totalAmount, order.returnedAmount), 0);
     const isShipped =
       order.status === SALE_ORDER_STATUS.SHIPPED ||
       order.status === SALE_ORDER_STATUS.DONE ||
       order.status === SALE_ORDER_STATUS.RETURNED;
 
-    if (order.returnedAmount >= order.totalAmount && order.totalAmount > 0) {
+    if (compareAmount(order.returnedAmount, order.totalAmount) >= 0 && compareAmount(order.totalAmount, 0) > 0) {
       return SALE_ORDER_STATUS.RETURNED;
     }
 
-    if (isShipped && order.receivedAmount >= effectiveTotal) {
+    if (isShipped && compareAmount(order.receivedAmount, effectiveTotal) >= 0) {
       return SALE_ORDER_STATUS.DONE;
     }
 
@@ -77,6 +78,8 @@ export class PaymentService {
 
   async createPayment(dto: CreatePaymentDto, user: AuthUser) {
     return this.dataSource.transaction(async (manager) => {
+      const amount = roundAmount(dto.amount);
+
       if (dto.type === PAYMENT_RECORD_TYPE.RECEIVE && dto.relatedType !== 'sale_order') {
         throw new BadRequestException('收款只能关联销售订单');
       }
@@ -91,12 +94,12 @@ export class PaymentService {
           throw new NotFoundException('销售订单不存在');
         }
 
-        const effectiveTotal = Math.max(order.totalAmount - order.returnedAmount, 0);
-        if (order.receivedAmount + dto.amount > effectiveTotal) {
+        const effectiveTotal = Math.max(subtractAmount(order.totalAmount, order.returnedAmount), 0);
+        if (compareAmount(addAmount(order.receivedAmount, amount), effectiveTotal) > 0) {
           throw new BadRequestException('收款金额超过销售订单应收总额');
         }
 
-        order.receivedAmount += dto.amount;
+        order.receivedAmount = addAmount(order.receivedAmount, amount);
         order.status = this.recalculateSaleOrderStatus(order);
         await manager.save(SaleOrderEntity, order);
       }
@@ -109,12 +112,12 @@ export class PaymentService {
           throw new NotFoundException('采购订单不存在');
         }
 
-        const effectiveTotal = Math.max(order.totalAmount - order.returnedAmount, 0);
-        if (order.paidAmount + dto.amount > effectiveTotal) {
+        const effectiveTotal = Math.max(subtractAmount(order.totalAmount, order.returnedAmount), 0);
+        if (compareAmount(addAmount(order.paidAmount, amount), effectiveTotal) > 0) {
           throw new BadRequestException('付款金额超过采购订单应付总额');
         }
 
-        order.paidAmount += dto.amount;
+        order.paidAmount = addAmount(order.paidAmount, amount);
         order.status = this.recalculatePurchaseOrderStatus(order);
         await manager.save(PurchaseOrderEntity, order);
       }
@@ -123,7 +126,7 @@ export class PaymentService {
         type: dto.type,
         relatedType: dto.relatedType,
         relatedId: dto.relatedId,
-        amount: dto.amount,
+        amount,
         method: dto.method ?? null,
         operatorId: user.sub,
         remark: dto.remark ?? null,
@@ -134,7 +137,7 @@ export class PaymentService {
         module: 'payment',
         action: dto.type === PAYMENT_RECORD_TYPE.RECEIVE ? 'create_receive' : 'create_pay',
         operatorId: user.sub,
-        detail: `${dto.relatedType}:${dto.relatedId}｜金额 ${dto.amount}`,
+        detail: `${dto.relatedType}:${dto.relatedId}｜金额 ${amount}`,
       });
       return saved;
     });

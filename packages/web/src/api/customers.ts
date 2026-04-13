@@ -45,4 +45,9 @@ export const customerApi = {
     const res = await request.post<never, ApiResponse<FollowUp>>('/follow-ups', data)
     return res.data
   },
+
+  updateFollowUp: async (id: number, data: { content?: string; followType?: string; intentLevel?: string; nextFollowDate?: string }): Promise<FollowUp> => {
+    const res = await request.put<never, ApiResponse<FollowUp>>(`/follow-ups/${id}`, data)
+    return res.data
+  },
 }

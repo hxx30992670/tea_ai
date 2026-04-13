@@ -8,6 +8,7 @@ import { CreateFollowUpDto } from './dto/create-follow-up.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { FollowUpQueryDto } from './dto/follow-up-query.dto';
+import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
 
 @Injectable()
@@ -49,7 +50,60 @@ export class CustomerService {
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [list, total] = await Promise.all([qb.getRawMany(), this.customerRepository.count()]);
-    return { list, total, page, pageSize };
+
+    const customerIds = list
+      .map((item: { id?: number | string }) => Number(item.id))
+      .filter((id) => Number.isFinite(id) && id > 0);
+
+    if (customerIds.length === 0) {
+      return { list, total, page, pageSize };
+    }
+
+    const followUps = await this.followUpRepository
+      .createQueryBuilder('followUp')
+      .where('followUp.customer_id IN (:...customerIds)', { customerIds })
+      .andWhere('followUp.next_follow_date IS NOT NULL')
+      .select([
+        'followUp.id AS id',
+        'followUp.customer_id AS customerId',
+        'followUp.intent_level AS intentLevel',
+        'followUp.next_follow_date AS nextFollowDate',
+      ])
+      .getRawMany();
+
+    const nowTs = Date.now();
+    const nearestFollowUpMap = new Map<number, { intentLevel?: string; nextFollowDate?: string; distance: number }>();
+
+    for (const row of followUps) {
+      const customerId = Number(row.customerId);
+      const nextFollowDate = row.nextFollowDate as string | undefined;
+      if (!customerId || !nextFollowDate) continue;
+
+      const ts = new Date(nextFollowDate).getTime();
+      if (!Number.isFinite(ts)) continue;
+
+      const distance = Math.abs(ts - nowTs);
+      const prev = nearestFollowUpMap.get(customerId);
+      if (!prev || distance < prev.distance) {
+        nearestFollowUpMap.set(customerId, {
+          intentLevel: (row.intentLevel as string | undefined) ?? undefined,
+          nextFollowDate,
+          distance,
+        });
+      }
+    }
+
+    const mergedList = list.map((item: { id?: number | string } & Record<string, unknown>) => {
+      const customerId = Number(item.id);
+      const nearest = nearestFollowUpMap.get(customerId);
+      return {
+        ...item,
+        latestIntentLevel: nearest?.intentLevel,
+        nextFollowDate: nearest?.nextFollowDate,
+      };
+    });
+
+    return { list: mergedList, total, page, pageSize };
   }
 
   async createCustomer(dto: CreateCustomerDto) {
@@ -125,6 +179,21 @@ export class CustomerService {
       nextFollowDate: dto.nextFollowDate ?? null,
       operatorId: operatorId ?? null,
     });
+
+    return this.followUpRepository.save(followUp);
+  }
+
+  async updateFollowUp(id: number, dto: UpdateFollowUpDto, operatorId?: number) {
+    const followUp = await this.followUpRepository.findOne({ where: { id } });
+    if (!followUp) {
+      throw new NotFoundException('跟进记录不存在');
+    }
+
+    if (dto.content !== undefined) followUp.content = dto.content;
+    if (dto.followType !== undefined) followUp.followType = dto.followType;
+    if (dto.intentLevel !== undefined) followUp.intentLevel = dto.intentLevel;
+    if (dto.nextFollowDate !== undefined) followUp.nextFollowDate = dto.nextFollowDate ?? null;
+    if (operatorId !== undefined) followUp.operatorId = operatorId;
 
     return this.followUpRepository.save(followUp);
   }

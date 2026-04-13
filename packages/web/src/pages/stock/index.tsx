@@ -1,13 +1,14 @@
 import React, { useEffect, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   Table, Button, Space, Tag, Modal, Form, Input, Select,
   InputNumber, Card, Badge, Typography, Row, Col, List, Statistic, DatePicker,
 } from 'antd'
 import { ArrowUpOutlined, ArrowDownOutlined, WarningOutlined, SearchOutlined } from '@ant-design/icons'
 import { stockApi } from '@/api/stock'
-import { productApi } from '@/api/products'
-import type { StockRecord, StockWarning, Product } from '@/types'
-import { getProductPackageConfig } from '@/utils/packaging'
+import type { StockRecord, StockWarning } from '@/types'
+import { formatCompositeQuantity, formatQuantityNumber, getProductPackageConfig } from '@/utils/packaging'
+import ProductSelect from '@/components/ProductSelect'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
@@ -15,6 +16,8 @@ import '@/styles/page.less'
 
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
+const QUANTITY_STEP = 0.0001
+const QUANTITY_PRECISION = 4
 
 const REASON_MAP: Record<string, string> = {
   opening: '期初建账',
@@ -33,21 +36,34 @@ const REASON_MAP: Record<string, string> = {
 }
 
 function formatStockQty(r: StockRecord): string {
-  const qty = r.quantity
+  if (r.packageUnit && (Number(r.packageQty ?? 0) > 0 || Number(r.looseQty ?? 0) > 0)) {
+    return formatCompositeQuantity(r)
+  }
+
+  return `${formatQuantityNumber(r.quantity)}${r.unit ?? ''}`
+}
+
+function renderAfterQty(qty: number, r: StockRecord) {
   const unit = r.unit ?? ''
   const packageUnit = r.packageUnit
   const packageSize = Number(r.packageSize ?? 0)
 
   if (packageUnit && packageSize > 0) {
-    const pkgCount = Math.floor(qty / packageSize)
-    const loose = qty % packageSize
-    const secondary = pkgCount > 0
-      ? `${pkgCount}${packageUnit}${loose > 0 ? `${loose}${unit}` : ''}`
-      : `${loose}${unit}`
-    return `${qty}${unit}（${secondary}）`
+    const pkgAmount = formatQuantityNumber(qty / packageSize)
+    return (
+      <span>
+        <Text strong>{formatQuantityNumber(qty)}{unit}</Text>
+        <br />
+        <Text type="secondary" style={{ fontSize: 11 }}>{pkgAmount}{packageUnit}</Text>
+      </span>
+    )
   }
 
-  return `${qty}${unit}`
+  return <Text strong>{formatQuantityNumber(qty)}{unit}</Text>
+}
+
+function formatAfterQty(qty: number, r: { unit?: string }) {
+  return `${formatQuantityNumber(qty)}${r.unit ?? ''}`
 }
 
 const URGENCY_STATUS: Record<string, 'error' | 'warning' | 'processing'> = {
@@ -65,11 +81,11 @@ const TYPE_OPTIONS = [
 ]
 
 export default function StockPage() {
+  const navigate = useNavigate()
   const [records, setRecords] = useState<StockRecord[]>([])
   const [total, setTotal] = useState(0)
   const [stats, setStats] = useState({ todayIn: 0, todayOut: 0 })
   const [warnings, setWarnings] = useState<StockWarning[]>([])
-  const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [modalType, setModalType] = useState<'in' | 'out'>('in')
@@ -92,17 +108,15 @@ export default function StockPage() {
 
   const loadData = async (overrides?: Record<string, unknown>) => {
     setLoading(true)
-    const [res, statsRes, wa, prodRes] = await Promise.all([
+    const [res, statsRes, wa] = await Promise.all([
       stockApi.records(buildParams(overrides)),
       stockApi.stats(),
       stockApi.warnings(),
-      productApi.list(),
     ])
     setRecords(res.list)
     setTotal(res.total ?? 0)
     setStats(statsRes)
     setWarnings(wa)
-    setProducts(prodRes.list)
     setLoading(false)
   }
 
@@ -118,14 +132,21 @@ export default function StockPage() {
   const openModal = (type: 'in' | 'out') => {
     setModalType(type)
     form.resetFields()
-    form.setFieldsValue({ reason: type === 'in' ? 'surplus' : 'damage' })
+    form.setFieldsValue({ reason: type === 'in' ? 'surplus' : 'damage', _product: null })
     setModalOpen(true)
+  }
+
+  /** 从库存预警跳转采购页，按缺口预填建议采购数量 */
+  const goPurchaseForWarning = (w: StockWarning) => {
+    const gap = Math.max(1, Math.ceil(Number(w.safeStock ?? 0) - Number(w.stockQty ?? 0)))
+    navigate(`/purchase?productId=${w.productId}&suggestQty=${gap}`)
   }
 
   const handleSubmit = async () => {
     const values = await form.validateFields()
-    if (modalType === 'in') await stockApi.in(values)
-    else await stockApi.out(values)
+    const { _product, ...payload } = values
+    if (modalType === 'in') await stockApi.in(payload)
+    else await stockApi.out(payload)
     setModalOpen(false)
     loadData()
   }
@@ -150,8 +171,17 @@ export default function StockPage() {
         </Text>
       ),
     },
-    { title: '操作后库存', dataIndex: 'afterQty', width: 100 },
-    { title: '时间', dataIndex: 'createdAt', width: 180 },
+    {
+      title: '总库存', dataIndex: 'afterQty', width: 120,
+      render: (afterQty: number, r: StockRecord) => renderAfterQty(afterQty, r),
+    },
+    {
+      title: '时间',
+      dataIndex: 'createdAt',
+      width: 200,
+      render: (v: string | Date | null | undefined) =>
+        v != null && v !== '' ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—',
+    },
     { title: '备注', dataIndex: 'remark', ellipsis: true },
   ]
 
@@ -185,9 +215,15 @@ export default function StockPage() {
         <Card size="small" style={{ marginBottom: 16, borderRadius: 12, borderColor: '#faad14' }}
           title={<Space><WarningOutlined style={{ color: '#faad14' }} /><span>需要关注的商品</span><Badge count={warnings.length} style={{ backgroundColor: '#faad14' }} /></Space>}>
           <List size="small" dataSource={sortedWarnings} renderItem={(w) => (
-            <List.Item style={{ padding: '6px 0' }} actions={[
-              w.type === 'low_stock' && <Button size="small" type="primary" ghost onClick={() => openModal('in')}>入库</Button>,
-            ]}>
+            <List.Item
+              style={{ padding: '6px 0' }}
+              actions={w.type === 'low_stock'
+                ? [
+                    <Button key="in" size="small" type="primary" ghost onClick={() => openModal('in')}>入库</Button>,
+                    <Button key="po" size="small" onClick={() => goPurchaseForWarning(w)}>采购</Button>,
+                  ]
+                : []}
+            >
               <Space size={12}>
                 <Badge status={URGENCY_STATUS[w.urgency]} text={URGENCY_LABEL[w.urgency]} />
                 <Text strong style={{ minWidth: 100 }}>{w.productName}</Text>
@@ -254,25 +290,30 @@ export default function StockPage() {
         okButtonProps={{ style: { background: modalType === 'in' ? '#52c41a' : '#ff4d4f', borderColor: 'transparent' } }}>
         <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
           <Form.Item name="productId" label="商品" rules={[{ required: true }]}>
-            <Select placeholder="选择商品" showSearch optionFilterProp="label"
-              options={products.map((p) => ({ value: p.id, label: `${p.name}（库存：${p.stockQty}${p.unit}）` }))} />
+            <ProductSelect
+              lazy
+              onProductChange={(p) => {
+                if (p) form.setFieldValue('_product', p)
+              }}
+              style={{ width: '100%' }}
+            />
           </Form.Item>
-          <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.productId !== cur?.productId}>
+          <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.productId !== cur?.productId || prev?._product !== cur?._product}>
             {({ getFieldValue }) => {
-              const selectedProductId = getFieldValue('productId')
-              const packageConfig = getProductPackageConfig(products.find((p) => p.id === selectedProductId))
+              const selectedProduct = getFieldValue('_product')
+              const packageConfig = getProductPackageConfig(selectedProduct)
 
               if (packageConfig.unit && packageConfig.size > 0) {
                 return (
                   <Row gutter={12}>
                     <Col span={12}>
                       <Form.Item name="packageQty" label={`包装数量（${packageConfig.unit}）`}>
-                        <InputNumber style={{ width: '100%' }} min={0} placeholder={`输入${packageConfig.unit}数`} />
+                        <InputNumber style={{ width: '100%' }} min={0} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} placeholder={`输入${packageConfig.unit}数`} />
                       </Form.Item>
                     </Col>
                     <Col span={12}>
                       <Form.Item name="looseQty" label={`散数量（${packageConfig.baseUnit || '散'}）`}>
-                        <InputNumber style={{ width: '100%' }} min={0} placeholder={`输入${packageConfig.baseUnit || '散'}数`} />
+                        <InputNumber style={{ width: '100%' }} min={0} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} placeholder={`输入${packageConfig.baseUnit || '散'}数`} />
                       </Form.Item>
                     </Col>
                   </Row>
@@ -281,7 +322,7 @@ export default function StockPage() {
 
               return (
                 <Form.Item name="quantity" label="数量" rules={[{ required: true }]}>
-                  <InputNumber style={{ width: '100%' }} min={1} placeholder="输入数量" />
+                  <InputNumber style={{ width: '100%' }} min={QUANTITY_STEP} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} placeholder="输入数量" />
                 </Form.Item>
               )
             }}

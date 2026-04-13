@@ -101,10 +101,12 @@ export default function AiPage() {
 }
 
 function WelcomeScreen() {
+  const appIconSrc = `${import.meta.env.BASE_URL}icons/icon.svg`
+
   return (
     <div className="flex flex-col items-center gap-4 py-12 text-center">
       <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/15">
-        <img src="/icons/icon.svg" alt="" className="h-10 w-10" />
+        <img src={appIconSrc} alt="" className="h-10 w-10" />
       </div>
       <div>
         <h2 className="text-lg font-semibold text-foreground">茶掌柜 AI</h2>

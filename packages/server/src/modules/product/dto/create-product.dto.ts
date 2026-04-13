@@ -49,7 +49,7 @@ export class CreateProductDto {
   @ApiPropertyOptional({ description: '当前库存', example: 20 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   stockQty?: number;
 

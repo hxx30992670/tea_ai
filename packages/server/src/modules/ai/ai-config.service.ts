@@ -9,9 +9,18 @@ import { AiAvailability, AiRuntimeConfig } from './ai.types';
 
 @Injectable()
 export class AiConfigService {
+  private cachedResult: AiAvailability | null = null;
+  private cachedAt = 0;
+  private readonly CACHE_TTL = 60_000; // 60 秒
+
   constructor(private readonly systemService: SystemService) {}
 
   async getAvailability(): Promise<AiAvailability> {
+    const now = Date.now();
+    if (this.cachedResult && now - this.cachedAt < this.CACHE_TTL) {
+      return this.cachedResult;
+    }
+
     const settings = await this.systemService.getAllSettings();
     const config: AiRuntimeConfig = {
       provider: settings.aiProvider?.trim() ?? '',
@@ -24,17 +33,32 @@ export class AiConfigService {
     };
 
     if (!config.provider) {
-      return { enabled: false, reason: '未配置 AI 提供商', config: null };
+      const r = { enabled: false as const, reason: '未配置 AI 提供商', config: null };
+      this.cachedResult = r; this.cachedAt = now;
+      return r;
     }
 
     if (!config.apiKey) {
-      return { enabled: false, reason: '未配置 AI 授权 Key', config: null };
+      const r = { enabled: false as const, reason: '未配置 AI 授权 Key', config: null };
+      this.cachedResult = r; this.cachedAt = now;
+      return r;
     }
 
     if (!config.modelApiKey) {
-      return { enabled: false, reason: '未配置模型 API Key', config: null };
+      const r = { enabled: false as const, reason: '未配置模型 API Key', config: null };
+      this.cachedResult = r; this.cachedAt = now;
+      return r;
     }
 
-    return { enabled: true, reason: '', config };
+    const result: AiAvailability = { enabled: true, reason: '', config };
+    this.cachedResult = result;
+    this.cachedAt = now;
+    return result;
+  }
+
+  /** 配置变更时清除缓存 */
+  invalidateCache() {
+    this.cachedResult = null;
+    this.cachedAt = 0;
   }
 }

@@ -284,6 +284,13 @@ export function detectVisualization(
   const stringCols = cols.filter((c) => {
     const v = rows[0][c]
     return typeof v === 'string' && isNaN(Number(v))
+  }).sort((a, b) => {
+    // 优先用客户名/供应商名作为图表标签，而非订单号
+    const preferred = ['customer_name', 'customerName', 'supplier_name', 'supplierName', 'product_name', 'productName']
+    const demoted = ['order_no', 'orderNo', 'return_no', 'returnNo', 'refund_no', 'refundNo', 'exchange_no', 'exchangeNo']
+    const aIdx = preferred.includes(a) ? -1 : demoted.includes(a) ? 1 : 0
+    const bIdx = preferred.includes(b) ? -1 : demoted.includes(b) ? 1 : 0
+    return aIdx - bIdx
   })
   const dateCols = cols.filter((c) => {
     const v = String(rows[0][c] ?? '')
@@ -354,6 +361,47 @@ function fmtNum(v: number) {
   return Number.isInteger(v) ? v.toLocaleString() : v.toFixed(2)
 }
 
+/** 数量字段集合 —— 这些字段的值代表"数量"，需要带上包装单位换算 */
+const QTY_FIELDS = new Set([
+  'stock_qty', 'stockQty', 'quantity', 'total_qty', 'totalQty',
+  'available_qty', 'availableQty', 'pending_qty', 'pendingQty',
+  'safe_stock', 'safeStock', 'package_qty', 'packageQty', 'loose_qty', 'looseQty',
+])
+
+/**
+ * 如果查询结果包含 unit / package_unit / package_size，
+ * 尝试为数量值追加包装单位换算文本
+ */
+function fmtQtyWithUnit(
+  value: number,
+  fieldName: string,
+  row: Record<string, unknown>,
+  rows: Record<string, unknown>[],
+): string {
+  if (!QTY_FIELDS.has(fieldName)) return fmtNum(value)
+
+  // 从当前行或第一行取单位信息
+  const src = row ?? rows[0] ?? {}
+  const unit = (src.unit ?? src.base_unit) as string | undefined
+  const pkgUnit = (src.package_unit ?? src.packageUnit) as string | undefined
+  const pkgSize = Number(src.package_size ?? src.packageSize) || 0
+
+  if (!unit) return fmtNum(value)
+
+  if (pkgUnit && pkgSize > 1) {
+    const pkgQty = Math.floor(value / pkgSize)
+    const loose = value % pkgSize
+    const parts: string[] = []
+    if (pkgQty > 0) parts.push(`${pkgQty.toLocaleString()} ${pkgUnit}`)
+    if (loose > 0) parts.push(`${loose} ${unit}`)
+    if (parts.length === 0) parts.push(`0 ${unit}`)
+    // 同时显示基础单位总量和包装换算
+    return `${fmtNum(value)} ${unit}（${parts.join(' ')}）`
+  }
+
+  return `${fmtNum(value)} ${unit}`
+}
+
 // ─── 图表数据摘要说明 ─────────────────────────────────────────────────────────
 function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string, unknown>[]; spec: AiVisualizationSpec }) {
   if (rows.length === 0) return null
@@ -361,17 +409,21 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
   let text = ''
 
   if (type === 'bar' && spec.xField && spec.yField) {
-    const xLabel = fieldToLabel(spec.xField)
     const yLabel = fieldToLabel(spec.yField)
     const values = rows.map((r) => Number(r[spec.yField!]) || 0)
     const total = values.reduce((a, b) => a + b, 0)
     const maxVal = Math.max(...values)
     const minVal = Math.min(...values)
-    const maxRow = rows[values.indexOf(maxVal)]
-    const minRow = rows[values.indexOf(minVal)]
+    const maxIdx = values.indexOf(maxVal)
+    const minIdx = values.indexOf(minVal)
+    const maxRow = rows[maxIdx]
+    const minRow = rows[minIdx]
     const maxName = String(maxRow?.[spec.xField] ?? '')
     const minName = String(minRow?.[spec.xField] ?? '')
-    text = `共 ${rows.length} 项数据，${yLabel}合计 ${fmtNum(total)}。其中「${maxName}」最高（${fmtNum(maxVal)}），「${minName}」最低（${fmtNum(minVal)}）。`
+    const fmtTotal = fmtQtyWithUnit(total, spec.yField, rows[0], rows)
+    const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, maxRow, rows)
+    const fmtMin = fmtQtyWithUnit(minVal, spec.yField, minRow, rows)
+    text = `共 ${rows.length} 项数据，${yLabel}合计 ${fmtTotal}。其中「${maxName}」最高（${fmtMax}），「${minName}」最低（${fmtMin}）。`
   }
 
   if (type === 'line' && spec.xField && spec.yField) {
@@ -384,7 +436,11 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
     const minVal = Math.min(...values)
     const firstX = String(rows[0]?.[spec.xField] ?? '')
     const lastX = String(rows[rows.length - 1]?.[spec.xField] ?? '')
-    text = `${xLabel}从「${firstX}」到「${lastX}」共 ${rows.length} 个周期，${yLabel}均值 ${fmtNum(avg)}，最高 ${fmtNum(maxVal)}，最低 ${fmtNum(minVal)}，合计 ${fmtNum(total)}。`
+    const fmtAvg = fmtQtyWithUnit(avg, spec.yField, rows[0], rows)
+    const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, rows[0], rows)
+    const fmtMin = fmtQtyWithUnit(minVal, spec.yField, rows[0], rows)
+    const fmtTotal = fmtQtyWithUnit(total, spec.yField, rows[0], rows)
+    text = `${xLabel}从「${firstX}」到「${lastX}」共 ${rows.length} 个周期，${yLabel}均值 ${fmtAvg}，最高 ${fmtMax}，最低 ${fmtMin}，合计 ${fmtTotal}。`
   }
 
   if (type === 'pie' && spec.nameField && spec.valueField) {
@@ -409,7 +465,7 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
       const vals = rows.map((r) => Number(r[col])).filter((v) => !isNaN(v) && v !== 0)
       if (vals.length === rows.length && vals.length > 1) {
         const sum = vals.reduce((a, b) => a + b, 0)
-        numericSummaries.push(`${fieldToLabel(col)}合计 ${fmtNum(sum)}`)
+        numericSummaries.push(`${fieldToLabel(col)}合计 ${fmtQtyWithUnit(sum, col, rows[0], rows)}`)
       }
     }
     text = `共 ${rows.length} 条记录，包含字段：${colLabels}。${numericSummaries.length > 0 ? numericSummaries.join('，') + '。' : ''}`

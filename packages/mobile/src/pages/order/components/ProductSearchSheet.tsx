@@ -9,18 +9,20 @@ import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useOrderDraftStore } from '@/store/order-draft'
-import { formatMoney, calcTotalQuantity } from '@/lib/utils'
+import { calcTotalQuantity, formatMoney, formatNumber, parseDecimal, roundQuantity } from '@/lib/utils'
 import { useVisualViewportInset } from '@/hooks/useVisualViewportInset'
 import { useProductList } from '../hooks/useProductList'
 import type { Product } from '@/types'
+import type { DraftItem } from '@/store/order-draft'
 
 interface ProductSearchSheetProps {
   open: boolean
   onClose: () => void
+  editingItem?: DraftItem | null
 }
 
-export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
-  const { addItem } = useOrderDraftStore()
+export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearchSheetProps) {
+  const { addItem, removeItem } = useOrderDraftStore()
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Product | null>(null)
   const [packageQty, setPackageQty] = useState('0')
@@ -35,6 +37,13 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const hasPackage = selected?.packageUnit && selected?.packageSize
+
+  const getCategoryPathText = (product: Product) => {
+    if (Array.isArray(product.categoryPath) && product.categoryPath.length > 0) {
+      return product.categoryPath.join(' / ')
+    }
+    return product.categoryName || product.teaType || ''
+  }
 
   // Reset state when sheet closes
   useEffect(() => {
@@ -61,19 +70,32 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
   }, [loadMore])
 
   const selectProduct = (p: Product) => {
+    const editTotalQty = editingItem
+      ? (editingItem.quantity ?? calcTotalQuantity(editingItem.packageQty, editingItem.looseQty, editingItem.packageSize))
+      : 1
+
     setSelected(p)
-    setPrice(String(p.sellPrice))
+    setPrice(String(editingItem?.unitPrice ?? p.sellPrice))
+    if (editingItem && p.id === editingItem.productId) {
+      setPackageQty(String(editingItem.packageQty ?? 0))
+      setLooseQty(String(editingItem.looseQty ?? editingItem.quantity ?? 1))
+      return
+    }
     setPackageQty('0')
-    setLooseQty('1')
+    setLooseQty(String(Math.max(1, editTotalQty)))
   }
 
   const handleAdd = () => {
     if (!selected) return
-    const pkg = parseInt(packageQty) || 0
-    const loose = parseInt(looseQty) || 0
+    const pkg = roundQuantity(parseDecimal(packageQty))
+    const loose = roundQuantity(parseDecimal(looseQty))
     const totalQty = hasPackage
       ? calcTotalQuantity(pkg, loose, selected.packageSize)
       : loose
+
+    if (editingItem) {
+      removeItem(editingItem.productId)
+    }
 
     addItem({
       productId: selected.id,
@@ -86,22 +108,28 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
       looseQty: loose,
       quantity: totalQty,
       unitPrice: parseFloat(price) || selected.sellPrice,
+      sellPrice: selected.sellPrice,
     })
+    if (editingItem) {
+      onClose()
+      return
+    }
+
     // 保持面板打开，继续添加
     setSelected(null)
   }
 
   const currentUnitPrice = parseFloat(price) || (selected?.sellPrice ?? 0)
   const currentTotalQty = hasPackage
-    ? calcTotalQuantity(parseInt(packageQty) || 0, parseInt(looseQty) || 0, selected?.packageSize)
-    : (parseInt(looseQty) || 1)
+    ? calcTotalQuantity(parseDecimal(packageQty), parseDecimal(looseQty), selected?.packageSize)
+    : roundQuantity(parseDecimal(looseQty, 1))
   const subtotal = currentTotalQty * currentUnitPrice
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
       <SheetContent>
         <SheetHeader className="flex shrink-0 flex-row items-center justify-between gap-3 pb-2">
-          <SheetTitle className="flex-1">{selected ? '确认商品' : '添加商品'}</SheetTitle>
+          <SheetTitle className="flex-1">{selected ? (editingItem ? '确认修改商品' : '确认商品') : (editingItem ? '修改商品' : '添加商品')}</SheetTitle>
           <SheetClose asChild>
             <Button
               type="button"
@@ -161,6 +189,9 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
                       >
                         <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium truncate">{p.name}</p>
+                          {getCategoryPathText(p) && (
+                            <p className="text-[11px] text-muted-foreground mt-0.5 truncate">分类：{getCategoryPathText(p)}</p>
+                          )}
                           <p className="text-xs text-muted-foreground mt-0.5">
                             {p.spec} · 库存 {p.stockQty}{p.unit}
                             {p.packageUnit && ` · ${p.packageSize}${p.unit}/${p.packageUnit}`}
@@ -190,6 +221,7 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain pb-8">
               <div className="rounded-xl border border-primary/30 bg-primary/5 p-3">
                 <p className="font-semibold">{selected.name}</p>
+                {getCategoryPathText(selected) && <p className="text-xs text-muted-foreground mt-0.5">分类：{getCategoryPathText(selected)}</p>}
                 {selected.spec && <p className="text-xs text-muted-foreground mt-0.5">{selected.spec}</p>}
                 {hasPackage && (
                   <p className="text-xs text-muted-foreground mt-0.5">
@@ -224,6 +256,8 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
                 <label className="mb-1.5 block text-xs text-muted-foreground">单价（元/{selected.unit || '单位'}）</label>
                 <Input
                   type="number"
+                  inputMode="decimal"
+                  pattern="[0-9.]*"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
                   placeholder={String(selected.sellPrice)}
@@ -245,7 +279,7 @@ export function ProductSearchSheet({ open, onClose }: ProductSearchSheetProps) {
 
               <Button variant="gold" size="lg" className="w-full" onClick={handleAdd}>
                 <Plus size={18} />
-                加入开单
+                {editingItem ? '保存修改' : '加入开单'}
               </Button>
               <Button variant="ghost" className="w-full" onClick={() => setSelected(null)}>
                 返回列表
@@ -262,18 +296,20 @@ function NumberInput({ value, onChange, min = 0 }: { value: string; onChange: (v
   return (
     <div className="flex items-center gap-2">
       <button
-        onClick={() => onChange(String(Math.max(min, parseInt(value) - 1)))}
+        onClick={() => onChange(String(roundQuantity(Math.max(min, parseDecimal(value) - 1))))}
         className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary text-lg font-bold tap-scale"
       >−</button>
       <Input
         type="number"
+        inputMode="decimal"
+        pattern="[0-9.]*"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="scroll-mt-14 text-center text-lg font-semibold ring-inset"
         min={min}
       />
       <button
-        onClick={() => onChange(String(parseInt(value) + 1))}
+        onClick={() => onChange(String(roundQuantity(parseDecimal(value) + 1)))}
         className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary text-lg font-bold tap-scale"
       >＋</button>
     </div>

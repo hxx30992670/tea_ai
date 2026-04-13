@@ -5,6 +5,12 @@
  */
 import type { Product } from '@/types'
 
+export function formatQuantityNumber(value: number | null | undefined, precision = 4) {
+  const num = Number(value ?? 0)
+  if (!Number.isFinite(num)) return '0'
+  return String(Number(num.toFixed(precision)))
+}
+
 /** 格式化复合数量：优先显示“包装+散装”，否则显示普通数量 */
 export function formatCompositeQuantity(item: {
   quantity?: number
@@ -19,13 +25,13 @@ export function formatCompositeQuantity(item: {
   // 如果有包装单位且数量有效，显示复合格式
   if (item.packageUnit && (packageQty > 0 || looseQty > 0)) {
     const parts: string[] = []
-    if (packageQty > 0) parts.push(`${packageQty}${item.packageUnit}`)
-    if (looseQty > 0) parts.push(`${looseQty}${item.unit ?? ''}`)
+    if (packageQty > 0) parts.push(`${formatQuantityNumber(packageQty)}${item.packageUnit}`)
+    if (looseQty > 0) parts.push(`${formatQuantityNumber(looseQty)}${item.unit ?? ''}`)
     return parts.join(' + ')
   }
 
   // 降级为普通数量显示
-  return `${Number(item.quantity ?? 0)}${item.unit ?? ''}`
+  return `${formatQuantityNumber(Number(item.quantity ?? 0))}${item.unit ?? ''}`
 }
 
 /** 获取商品的包装配置（包装单位、规格、基础单位） */

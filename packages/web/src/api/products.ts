@@ -27,6 +27,11 @@ export const productApi = {
     return res.data
   },
 
+  get: async (id: number): Promise<Product> => {
+    const res = await request.get<never, ApiResponse<Product>>(`/products/${id}`)
+    return res.data
+  },
+
   categories: async (): Promise<Category[]> => {
     const res = await request.get<never, ApiResponse<Category[]>>('/categories')
     return res.data

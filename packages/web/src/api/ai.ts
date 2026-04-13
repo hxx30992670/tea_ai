@@ -1,6 +1,8 @@
 import type { AiConversation, ApiResponse } from '@/types'
 import request from './index'
 
+const AI_RECOGNIZE_TIMEOUT = 60000
+
 export interface AiSuggestion {
   type: string
   content: string
@@ -46,10 +48,13 @@ export interface AiRecognizeProduct {
 export interface AiRecognizedSaleOrder {
   customerName: string | null
   items: Array<{
+    customerName?: string | null
+    lineText?: string | null
     productName: string
     productId: number | null
     quantity: number | null
     quantityUnit: string | null
+    subtotal?: number | null
     unitPrice: number | null
   }>
   remark: string | null
@@ -84,6 +89,7 @@ export const aiApi = {
     const res = await request.post<never, ApiResponse<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string }>>(
       '/ai/recognize',
       { module: 'sale-order', attachment, products },
+      { timeout: AI_RECOGNIZE_TIMEOUT },
     )
     return res.data
   },

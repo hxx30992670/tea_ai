@@ -7,6 +7,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull } from 'typeorm';
 import { PURCHASE_ORDER_STATUS, PAYMENT_RECORD_TYPE } from '../../common/constants/order-status';
 import { getProductPackageConfig, resolveCompositeQuantity } from '../../common/utils/packaging.util';
+import { addAmount, addQuantity, compareAmount, compareQuantity, multiplyAmount, roundAmount, roundQuantity, subtractAmount, subtractQuantity } from '../../common/utils/precision.util';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { PaymentRecordEntity } from '../../entities/payment-record.entity';
 import { ProductEntity } from '../../entities/product.entity';
@@ -20,6 +21,7 @@ import { OperationLogService } from '../system/operation-log.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReturnDto } from './dto/create-purchase-return.dto';
 import { PurchaseOrderQueryDto } from './dto/purchase-order-query.dto';
+import { QuickCompletePurchaseOrderDto } from './dto/quick-complete-purchase-order.dto';
 import { StockInPurchaseOrderDto } from './dto/stock-in-purchase-order.dto';
 
 @Injectable()
@@ -32,17 +34,17 @@ export class PurchaseOrderService {
   private recalculateStatus(
     purchaseOrder: Pick<PurchaseOrderEntity, 'paidAmount' | 'returnedAmount' | 'totalAmount' | 'status'>,
   ) {
-    const effectiveTotal = Math.max(purchaseOrder.totalAmount - purchaseOrder.returnedAmount, 0);
+    const effectiveTotal = Math.max(subtractAmount(purchaseOrder.totalAmount, purchaseOrder.returnedAmount), 0);
     const isStocked =
       purchaseOrder.status === PURCHASE_ORDER_STATUS.STOCKED ||
       purchaseOrder.status === PURCHASE_ORDER_STATUS.DONE ||
       purchaseOrder.status === PURCHASE_ORDER_STATUS.RETURNED;
 
-    if (purchaseOrder.returnedAmount >= purchaseOrder.totalAmount && purchaseOrder.totalAmount > 0) {
+    if (compareAmount(purchaseOrder.returnedAmount, purchaseOrder.totalAmount) >= 0 && compareAmount(purchaseOrder.totalAmount, 0) > 0) {
       return PURCHASE_ORDER_STATUS.RETURNED;
     }
 
-    if (isStocked && purchaseOrder.paidAmount >= effectiveTotal) {
+    if (isStocked && compareAmount(purchaseOrder.paidAmount, effectiveTotal) >= 0) {
       return PURCHASE_ORDER_STATUS.DONE;
     }
 
@@ -82,7 +84,7 @@ export class PurchaseOrderService {
       .groupBy('purchaseReturnItem.purchase_order_item_id')
       .getRawMany<{ purchaseOrderItemId: number; returnedQuantity: string }>();
 
-    return new Map(rows.map((row) => [Number(row.purchaseOrderItemId), Number(row.returnedQuantity)]));
+    return new Map(rows.map((row) => [Number(row.purchaseOrderItemId), roundQuantity(row.returnedQuantity)]));
   }
 
   private async buildPurchaseOrderDetail(order: PurchaseOrderEntity, manager: EntityManager) {
@@ -109,12 +111,12 @@ export class PurchaseOrderService {
     const returnedQuantityMap = await this.getReturnedQuantityMap(order.id, manager);
     const detailItems = items.map((item) => {
       const returnedQuantity = returnedQuantityMap.get(Number(item.id)) ?? 0;
-      const quantity = Number(item.quantity);
+      const quantity = roundQuantity(item.quantity as number);
 
       return {
         ...item,
         returnedQuantity,
-        remainingQuantity: quantity - returnedQuantity,
+        remainingQuantity: subtractQuantity(quantity, returnedQuantity),
       };
     });
 
@@ -244,7 +246,7 @@ export class PurchaseOrderService {
           throw new BadRequestException('采购商品不存在、已删除或已停售');
         }
         const normalized = this.normalizeLineItemQuantity(product, item);
-        return sum + normalized.quantity * item.unitPrice;
+        return addAmount(sum, multiplyAmount(normalized.quantity, item.unitPrice));
       }, 0);
 
       let purchaseOrder = manager.create(PurchaseOrderEntity, {
@@ -277,7 +279,7 @@ export class PurchaseOrderService {
           packageUnit: normalized.packageUnit,
           packageSize: normalized.packageSize,
           unitPrice: item.unitPrice,
-          subtotal: normalized.quantity * item.unitPrice,
+           subtotal: multiplyAmount(normalized.quantity, item.unitPrice),
         });
       });
 
@@ -320,8 +322,8 @@ export class PurchaseOrderService {
           throw new BadRequestException(`商品 ${item.productId} 不存在、已删除或已停售`);
         }
 
-        const beforeQty = product.stockQty;
-        product.stockQty += item.quantity;
+        const beforeQty = roundQuantity(product.stockQty);
+        product.stockQty = addQuantity(beforeQty, item.quantity);
         await manager.save(ProductEntity, product);
 
         const record = manager.create(StockRecordEntity, {
@@ -391,7 +393,7 @@ export class PurchaseOrderService {
         const product = productMap.get(item.productId);
         if (!product || product.status !== 1) throw new BadRequestException('采购商品不存在、已删除或已停售');
         const normalized = this.normalizeLineItemQuantity(product, item);
-        return sum + normalized.quantity * item.unitPrice;
+        return addAmount(sum, multiplyAmount(normalized.quantity, item.unitPrice));
       }, 0);
 
       await manager.delete(PurchaseOrderItemEntity, { orderId: id });
@@ -415,7 +417,7 @@ export class PurchaseOrderService {
           packageUnit: normalized.packageUnit,
           packageSize: normalized.packageSize,
           unitPrice: item.unitPrice,
-          subtotal: normalized.quantity * item.unitPrice,
+          subtotal: multiplyAmount(normalized.quantity, item.unitPrice),
         });
       });
       await manager.save(PurchaseOrderItemEntity, orderItems);
@@ -462,7 +464,7 @@ export class PurchaseOrderService {
         const normalized = this.normalizeLineItemQuantity(product, item);
         requestedQuantityMap.set(
           item.purchaseOrderItemId,
-          (requestedQuantityMap.get(item.purchaseOrderItemId) ?? 0) + normalized.quantity,
+          addQuantity(requestedQuantityMap.get(item.purchaseOrderItemId) ?? 0, normalized.quantity),
         );
         requestedDisplayMap.set(item.purchaseOrderItemId, normalized);
       }
@@ -478,19 +480,19 @@ export class PurchaseOrderService {
         }
 
         const returnedQuantity = returnedQuantityMap.get(purchaseOrderItemId) ?? 0;
-        const remainingQuantity = orderItem.quantity - returnedQuantity;
-        if (quantity > remainingQuantity) {
+        const remainingQuantity = subtractQuantity(orderItem.quantity, returnedQuantity);
+        if (compareQuantity(quantity, remainingQuantity) > 0) {
           throw new BadRequestException('退货数量不能超过原采购单的剩余可退数量');
         }
 
-        totalAmount += quantity * orderItem.unitPrice;
+        totalAmount = addAmount(totalAmount, multiplyAmount(quantity, orderItem.unitPrice));
       }
 
-      const refundAmount = dto.refundAmount ?? 0;
-      if (refundAmount > totalAmount) {
+      const refundAmount = roundAmount(dto.refundAmount ?? 0);
+      if (compareAmount(refundAmount, totalAmount) > 0) {
         throw new BadRequestException('供应商退款金额不能超过本次退货金额');
       }
-      if (refundAmount > order.paidAmount) {
+      if (compareAmount(refundAmount, order.paidAmount) > 0) {
         throw new BadRequestException('供应商退款金额不能超过该订单当前已付款金额');
       }
 
@@ -514,7 +516,7 @@ export class PurchaseOrderService {
         if (!product) {
           throw new BadRequestException('退货商品不存在或已删除，无法回退库存');
         }
-        if (product.stockQty < quantity) {
+        if (compareQuantity(product.stockQty, quantity) < 0) {
           throw new BadRequestException(`商品 ${product.name} 当前库存不足，无法退回供应商`);
         }
 
@@ -528,12 +530,12 @@ export class PurchaseOrderService {
           packageUnit: requestedDisplayMap.get(purchaseOrderItemId)?.packageUnit ?? orderItem.packageUnit,
           packageSize: requestedDisplayMap.get(purchaseOrderItemId)?.packageSize ?? orderItem.packageSize,
           unitPrice: orderItem.unitPrice,
-          subtotal: quantity * orderItem.unitPrice,
+          subtotal: multiplyAmount(quantity, orderItem.unitPrice),
         });
         returnItems.push(returnItem);
 
-        const beforeQty = product.stockQty;
-        product.stockQty -= quantity;
+        const beforeQty = roundQuantity(product.stockQty);
+        product.stockQty = subtractQuantity(beforeQty, quantity);
         await manager.save(ProductEntity, product);
 
         const stockRecord = manager.create(StockRecordEntity, {
@@ -552,9 +554,9 @@ export class PurchaseOrderService {
 
       await manager.save(PurchaseReturnItemEntity, returnItems);
 
-      order.returnedAmount += totalAmount;
-      if (refundAmount > 0) {
-        order.paidAmount -= refundAmount;
+      order.returnedAmount = addAmount(order.returnedAmount, totalAmount);
+      if (compareAmount(refundAmount, 0) > 0) {
+        order.paidAmount = subtractAmount(order.paidAmount, refundAmount);
         const refundRecord = manager.create(PaymentRecordEntity, {
           type: PAYMENT_RECORD_TYPE.SUPPLIER_REFUND,
           relatedType: 'purchase_order',
@@ -605,5 +607,117 @@ export class PurchaseOrderService {
       detail: `${order.orderNo}`,
     });
     return { success: true };
+  }
+
+  async quickCompletePurchaseOrder(dto: QuickCompletePurchaseOrderDto, user: AuthUser) {
+    return this.dataSource.transaction(async (manager) => {
+      if (dto.supplierId) {
+        const supplier = await manager.findOne(SupplierEntity, {
+          where: { id: dto.supplierId },
+        });
+        if (!supplier) {
+          throw new BadRequestException('供应商不存在');
+        }
+      }
+
+      const productIds = [...new Set(dto.items.map((item) => item.productId))];
+      const products = await manager.findBy(
+        ProductEntity,
+        productIds.map((id) => ({ id, deletedAt: IsNull() })),
+      );
+      if (products.length !== productIds.length) {
+        throw new BadRequestException('采购商品中存在无效商品');
+      }
+
+      const productMap = new Map(products.map((product) => [product.id, product]));
+      let totalAmount = 0;
+
+      for (const item of dto.items) {
+        const product = productMap.get(item.productId);
+        if (!product || product.status !== 1) {
+          throw new BadRequestException('采购商品不存在、已删除或已停售');
+        }
+        const normalized = this.normalizeLineItemQuantity(product, item);
+        totalAmount = addAmount(totalAmount, multiplyAmount(normalized.quantity, item.unitPrice));
+      }
+
+      const paidAmount = roundAmount(dto.paidAmount);
+
+      let purchaseOrder = manager.create(PurchaseOrderEntity, {
+        supplierId: dto.supplierId ?? null,
+        totalAmount,
+        paidAmount,
+        returnedAmount: 0,
+        status: PURCHASE_ORDER_STATUS.STOCKED,
+        operatorId: user.sub,
+        remark: dto.remark ?? null,
+      });
+      purchaseOrder = await manager.save(PurchaseOrderEntity, purchaseOrder);
+      purchaseOrder.orderNo = this.generateOrderNo('CG', purchaseOrder.id);
+      purchaseOrder = await manager.save(PurchaseOrderEntity, purchaseOrder);
+
+      const orderItems = [];
+      for (const item of dto.items) {
+        const product = productMap.get(item.productId)!;
+        const normalized = this.normalizeLineItemQuantity(product, item);
+        orderItems.push(manager.create(PurchaseOrderItemEntity, {
+          orderId: purchaseOrder.id,
+          productId: item.productId,
+          quantity: normalized.quantity,
+          packageQty: normalized.packageQty,
+          looseQty: normalized.looseQty,
+          packageUnit: normalized.packageUnit,
+          packageSize: normalized.packageSize,
+          unitPrice: item.unitPrice,
+           subtotal: multiplyAmount(normalized.quantity, item.unitPrice),
+         }));
+
+        const beforeQty = roundQuantity(product.stockQty);
+        product.stockQty = addQuantity(beforeQty, normalized.quantity);
+        await manager.save(ProductEntity, product);
+
+        await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
+          productId: product.id,
+          type: 'in',
+          reason: 'purchase',
+          quantity: normalized.quantity,
+          beforeQty,
+          afterQty: product.stockQty,
+          relatedOrderId: purchaseOrder.id,
+          operatorId: user.sub,
+          remark: dto.remark ?? null,
+        }));
+      }
+      await manager.save(PurchaseOrderItemEntity, orderItems);
+
+      if (compareAmount(paidAmount, 0) > 0) {
+        await manager.save(PaymentRecordEntity, manager.create(PaymentRecordEntity, {
+          type: PAYMENT_RECORD_TYPE.PAY,
+          relatedType: 'purchase_order',
+          relatedId: purchaseOrder.id,
+          amount: paidAmount,
+          method: dto.method ?? null,
+          operatorId: user.sub,
+          remark: dto.remark ?? null,
+        }));
+      }
+
+      purchaseOrder.status = this.recalculateStatus({
+        paidAmount,
+        returnedAmount: 0,
+        totalAmount,
+        status: PURCHASE_ORDER_STATUS.STOCKED,
+      });
+      await manager.save(PurchaseOrderEntity, purchaseOrder);
+
+      await this.operationLogService.createLog({
+        module: 'purchase',
+        action: 'quick_complete',
+        operatorId: user.sub,
+        detail: `${purchaseOrder.orderNo}｜金额 ${totalAmount}｜付款 ${paidAmount}`,
+      });
+
+      return this.buildPurchaseOrderDetail(purchaseOrder, manager);
+    });
   }
 }

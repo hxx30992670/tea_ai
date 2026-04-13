@@ -6,7 +6,11 @@
  * 如果商品有 packageSize，则 quantity = packageQty * packageSize + looseQty
  */
 import { create } from 'zustand'
-import { persist } from 'zustand/middleware'
+import { persist, subscribeWithSelector } from 'zustand/middleware'
+
+const roundQuantity = (value: number) => Math.round(value * 10000) / 10000
+const roundAmount = (value: number) => Math.round(value * 100) / 100
+const calcItemQuantity = (item: Pick<DraftItem, 'quantity' | 'packageQty' | 'looseQty' | 'packageSize'>) => roundQuantity(item.quantity ?? ((item.packageQty ?? 0) * (item.packageSize ?? 1) + (item.looseQty ?? 0)))
 
 export interface DraftItem {
   productId: number
@@ -22,6 +26,8 @@ export interface DraftItem {
   /** 散数量（如：3斤） */
   looseQty?: number
   unitPrice: number
+  /** 商品登记售价（参考价，用于对比加价/降价） */
+  sellPrice?: number
 }
 
 export interface OrderDraft {
@@ -29,7 +35,7 @@ export interface OrderDraft {
   customerName?: string
   customerPhone?: string
   items: DraftItem[]
-  /** 支付方式（现金/微信/支付宝/转账/赊账/其他） */
+  /** 支付方式（现金/微信/支付宝/转账/其他） */
   method: string
   remark: string
   paidAmount?: number
@@ -46,6 +52,7 @@ interface OrderDraftState {
   setMethod: (method: string) => void
   setRemark: (remark: string) => void
   setPaidAmount: (amount: number | undefined) => void
+  adjustPricesByPaidAmount: (paidAmount: number) => void
   clearDraft: () => void
   totalAmount: () => number
 }
@@ -57,8 +64,9 @@ const EMPTY_DRAFT: OrderDraft = {
 }
 
 export const useOrderDraftStore = create<OrderDraftState>()(
-  persist(
-    (set, get) => ({
+  subscribeWithSelector(
+    persist(
+      (set, get) => ({
       draft: EMPTY_DRAFT,
       isDirty: false,
 
@@ -76,9 +84,9 @@ export const useOrderDraftStore = create<OrderDraftState>()(
                 i.productId === item.productId
                   ? {
                       ...i,
-                      packageQty: (i.packageQty ?? 0) + (item.packageQty ?? 0),
-                      looseQty: (i.looseQty ?? 0) + (item.looseQty ?? 0),
-                      quantity: (i.quantity ?? 0) + (item.quantity ?? 0),
+                      packageQty: roundQuantity((i.packageQty ?? 0) + (item.packageQty ?? 0)),
+                      looseQty: roundQuantity((i.looseQty ?? 0) + (item.looseQty ?? 0)),
+                      quantity: roundQuantity((i.quantity ?? 0) + (item.quantity ?? 0)),
                     }
                   : i,
               )
@@ -113,17 +121,52 @@ export const useOrderDraftStore = create<OrderDraftState>()(
       setPaidAmount: (amount) =>
         set((s) => ({ draft: { ...s.draft, paidAmount: amount }, isDirty: true })),
 
+      adjustPricesByPaidAmount: (paidAmount) =>
+        set((s) => {
+          const originalTotal = get().totalAmount()
+          if (originalTotal <= 0 || s.draft.items.length === 0) {
+            return { draft: { ...s.draft, paidAmount: roundAmount(paidAmount) }, isDirty: true }
+          }
+
+          const normalizedPaidAmount = roundAmount(paidAmount)
+          const ratio = normalizedPaidAmount / originalTotal
+          const itemsCount = s.draft.items.length
+
+          const adjustedItems = s.draft.items.map((item, index) => {
+            const qty = calcItemQuantity(item)
+            let adjustedPrice = roundAmount(item.unitPrice * ratio)
+
+            if (index === itemsCount - 1) {
+              const prevTotal = s.draft.items.slice(0, index).reduce((sum, i) => {
+                const q = calcItemQuantity(i)
+                const adjPrice = roundAmount(i.unitPrice * ratio)
+                return roundAmount(sum + roundAmount(q * adjPrice))
+              }, 0)
+              const lastItemTotal = roundAmount(normalizedPaidAmount - prevTotal)
+              adjustedPrice = qty > 0 ? roundAmount(lastItemTotal / qty) : 0
+            }
+
+            return {
+              ...item,
+              unitPrice: adjustedPrice,
+            }
+          })
+
+          return {
+            draft: { ...s.draft, items: adjustedItems, paidAmount: normalizedPaidAmount },
+            isDirty: true,
+          }
+        }),
+
       clearDraft: () => set({ draft: EMPTY_DRAFT, isDirty: false }),
 
       totalAmount: () =>
-        get().draft.items.reduce((sum, i) => {
-          const qty = i.quantity ?? ((i.packageQty ?? 0) * (i.packageSize ?? 1) + (i.looseQty ?? 0))
-          return sum + qty * i.unitPrice
-        }, 0),
+        get().draft.items.reduce((sum, i) => roundAmount(sum + roundAmount(calcItemQuantity(i) * i.unitPrice)), 0),
     }),
     {
       name: 'tea-order-draft',
-      partialize: (state) => ({ draft: state.draft, isDirty: state.isDirty }),
+      partialize: (state) => ({ draft: state.draft }),
     },
   ),
+),
 )

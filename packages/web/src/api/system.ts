@@ -48,6 +48,7 @@ export const systemApi = {
 
   testAi: async (params: {
     apiKey: string
+    promptServiceUrl: string
     provider: string
     modelApiKey: string
     modelName: string

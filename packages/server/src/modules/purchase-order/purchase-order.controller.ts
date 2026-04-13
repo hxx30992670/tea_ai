@@ -20,6 +20,7 @@ import { AuthUser } from '../../common/types/auth-user.type';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReturnDto } from './dto/create-purchase-return.dto';
 import { PurchaseOrderQueryDto } from './dto/purchase-order-query.dto';
+import { QuickCompletePurchaseOrderDto } from './dto/quick-complete-purchase-order.dto';
 import { StockInPurchaseOrderDto } from './dto/stock-in-purchase-order.dto';
 import { PurchaseOrderService } from './purchase-order.service';
 
@@ -90,6 +91,18 @@ export class PurchaseOrderController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.purchaseOrderService.stockInPurchaseOrder(id, dto, user);
+  }
+
+  @Roles('admin', 'manager')
+  @ApiOperation({ summary: '采购订单快捷完成（一键入库+付款）' })
+  @ApiBody({ type: QuickCompletePurchaseOrderDto })
+  @ApiOkResponse({ description: '返回采购订单详情' })
+  @Post('quick-complete')
+  quickCompletePurchaseOrder(
+    @Body() dto: QuickCompletePurchaseOrderDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.purchaseOrderService.quickCompletePurchaseOrder(dto, user);
   }
 
   @Roles('admin', 'manager')

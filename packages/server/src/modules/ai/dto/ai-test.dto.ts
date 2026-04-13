@@ -7,6 +7,11 @@ export class AiTestDto {
   @IsNotEmpty()
   apiKey!: string;
 
+  @ApiProperty({ description: 'AI Agent 服务地址', example: 'http://127.0.0.1:3010' })
+  @IsString()
+  @IsNotEmpty()
+  promptServiceUrl!: string;
+
   @ApiProperty({ description: '提供商', example: 'qwen' })
   @IsString()
   @IsNotEmpty()

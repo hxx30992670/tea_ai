@@ -11,6 +11,7 @@ import {
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
 import { resolveCompositeQuantity, getProductPackageConfig } from '../../common/utils/packaging.util';
+import { addQuantity, compareQuantity, roundQuantity, subtractQuantity } from '../../common/utils/precision.util';
 import { ProductEntity } from '../../entities/product.entity';
 import { StockRecordEntity } from '../../entities/stock-record.entity';
 import { AuthUser } from '../../common/types/auth-user.type';
@@ -54,8 +55,8 @@ export class StockService {
 
       const resolvedQuantity = this.resolveStockQuantity(product, dto);
       const quantity = resolvedQuantity.quantity;
-      const beforeQty = product.stockQty;
-      const afterQty = beforeQty + quantity;
+      const beforeQty = roundQuantity(product.stockQty);
+      const afterQty = addQuantity(beforeQty, quantity);
 
       product.stockQty = afterQty;
       await productRepository.save(product);
@@ -101,12 +102,12 @@ export class StockService {
 
       const resolvedQuantity = this.resolveStockQuantity(product, dto);
       const quantity = resolvedQuantity.quantity;
-      const beforeQty = product.stockQty;
-      if (beforeQty < quantity) {
+      const beforeQty = roundQuantity(product.stockQty);
+      if (compareQuantity(beforeQty, quantity) < 0) {
         throw new BadRequestException('库存不足，无法出库');
       }
 
-      const afterQty = beforeQty - quantity;
+      const afterQty = subtractQuantity(beforeQty, quantity);
 
       product.stockQty = afterQty;
       await productRepository.save(product);
@@ -248,7 +249,7 @@ export class StockService {
 
     return rows.reduce(
       (acc, row) => {
-        const quantity = Number(row.totalQuantity ?? 0);
+        const quantity = roundQuantity(row.totalQuantity ?? 0);
         if (row.type === 'in') acc.todayIn = quantity;
         if (row.type === 'out') acc.todayOut = quantity;
         return acc;

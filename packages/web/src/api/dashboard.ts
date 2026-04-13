@@ -106,6 +106,7 @@ export const dashboardApi = {
     const res = await request.get<never, ApiResponse<ServerStockWarning[]>>('/dashboard/stock-warnings')
     return (res.data ?? []).map((w) => ({
       id: `${w.productId}-${w.warningType}`,
+      productId: w.productId,
       productName: w.productName,
       type: mapWarningType(w.warningType),
       stockQty: w.stockQty ?? 0,

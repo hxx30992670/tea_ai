@@ -14,13 +14,13 @@ export class StockRecordEntity {
   @Column({ type: 'text' })
   reason!: string;
 
-  @Column({ type: 'integer' })
+  @Column({ type: 'real' })
   quantity!: number;
 
-  @Column({ name: 'package_qty', type: 'integer', nullable: true })
+  @Column({ name: 'package_qty', type: 'real', nullable: true })
   packageQty!: number | null;
 
-  @Column({ name: 'loose_qty', type: 'integer', nullable: true })
+  @Column({ name: 'loose_qty', type: 'real', nullable: true })
   looseQty!: number | null;
 
   @Column({ name: 'package_unit', type: 'text', nullable: true })
@@ -29,10 +29,10 @@ export class StockRecordEntity {
   @Column({ name: 'package_size', type: 'integer', nullable: true })
   packageSize!: number | null;
 
-  @Column({ name: 'before_qty', type: 'integer' })
+  @Column({ name: 'before_qty', type: 'real' })
   beforeQty!: number;
 
-  @Column({ name: 'after_qty', type: 'integer' })
+  @Column({ name: 'after_qty', type: 'real' })
   afterQty!: number;
 
   @Column({ type: 'text', nullable: true })

@@ -1,36 +1,41 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, ScanLine } from 'lucide-react'
+import { Plus, Bot, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { useOrderDraftStore } from '@/store/order-draft'
-import { PAYMENT_METHOD_MAP, formatMoney } from '@/lib/utils'
+import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import { CustomerSelect } from './components/CustomerSelect'
 import { DraftItemList } from './components/DraftItemList'
 import { ProductSearchSheet } from './components/ProductSearchSheet'
+import { AiInputSheet } from './components/AiInputSheet'
 import { OrderSummaryBar } from './components/OrderSummaryBar'
 import { useNewOrder } from './hooks/useNewOrder'
-
-const PAYMENT_OPTIONS = Object.entries(PAYMENT_METHOD_MAP)
+import { useAiRecognize } from './hooks/useAiRecognize'
+import type { DraftItem } from '@/store/order-draft'
 
 export default function NewOrderPage() {
   const navigate = useNavigate()
-  const { draft, setMethod, setRemark, setPaidAmount, totalAmount } = useOrderDraftStore()
+  const { draft, setMethod, setRemark, setPaidAmount, adjustPricesByPaidAmount, totalAmount } = useOrderDraftStore()
   const { submitting, error, submit } = useNewOrder()
+  const { recognizing, progress, recognize } = useAiRecognize()
   const [showProductSheet, setShowProductSheet] = useState(false)
+  const [showAiSheet, setShowAiSheet] = useState(false)
+  const [editingItem, setEditingItem] = useState<DraftItem | null>(null)
+  const [aiMessage, setAiMessage] = useState('')
   const [autoStockOut, setAutoStockOut] = useState(true)
   const [autoPayment, setAutoPayment] = useState(true)
-  const [isManualAmount, setIsManualAmount] = useState(false)
+  const [adjustTotalPrice, setAdjustTotalPrice] = useState<number | undefined>(undefined)
 
   const total = totalAmount()
 
   useEffect(() => {
-    if (autoPayment && !isManualAmount) {
+    if (autoPayment) {
       setPaidAmount(total)
     }
-  }, [total, autoPayment, isManualAmount, setPaidAmount])
+  }, [total, autoPayment, setPaidAmount])
 
   return (
     <div className="min-h-full bg-background">
@@ -38,15 +43,26 @@ export default function NewOrderPage() {
         title="新建开单"
         back
         action={
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => navigate('/scan')}
-            className="text-muted-foreground gap-1.5"
-          >
-            <ScanLine size={16} />
-            扫码
-          </Button>
+          recognizing ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled
+              className="gap-1.5 text-primary"
+            >
+              <Loader2 size={16} className="animate-spin" />
+              识别中
+            </Button>
+          ) : (
+            <button
+              onClick={() => setShowAiSheet(true)}
+              className="relative flex items-center gap-1 rounded-full bg-gradient-to-r from-indigo-500/20 via-purple-500/20 to-indigo-500/20 border border-purple-400/40 px-3 py-1.5 text-xs font-medium text-purple-400 animate-glow-ai tap-scale"
+            >
+              <span className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+              <Bot size={14} className="animate-ai-sparkle flex-shrink-0" />
+              <span>AI 录单</span>
+            </button>
+          )
         }
       />
 
@@ -69,15 +85,65 @@ export default function NewOrderPage() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setShowProductSheet(true)}
+              onClick={() => {
+                setEditingItem(null)
+                setShowProductSheet(true)
+              }}
               className="h-7 gap-1.5 text-xs"
             >
               <Plus size={13} />
               添加商品
             </Button>
           </div>
-          <DraftItemList />
+          <DraftItemList
+            onEditItem={(item) => {
+              setEditingItem(item)
+              setShowProductSheet(true)
+            }}
+          />
         </section>
+
+        {/* 调整总价 */}
+        {draft.items.length > 0 && (
+          <section>
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-border bg-card p-4">
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs text-muted-foreground">当前总价</span>
+                <span className="text-xl font-bold text-primary">¥{total.toFixed(2)}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  type="number"
+                  inputMode="decimal"
+                  pattern="[0-9.]*"
+                  value={adjustTotalPrice ?? ''}
+                  onChange={(e) => setAdjustTotalPrice(Number(e.target.value) || undefined)}
+                  className="w-24 h-9 text-right"
+                  placeholder="目标总价"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-9 whitespace-nowrap"
+                  disabled={adjustTotalPrice == null || adjustTotalPrice === total}
+                  onClick={() => {
+                    if (adjustTotalPrice != null) {
+                      adjustPricesByPaidAmount(adjustTotalPrice)
+                      setAdjustTotalPrice(undefined)
+                    }
+                  }}
+                >
+                  调整
+                </Button>
+              </div>
+            </div>
+            {adjustTotalPrice != null && adjustTotalPrice !== total && (
+              <p className="mt-1.5 text-right text-xs text-muted-foreground">
+                差额 {(adjustTotalPrice - total) >= 0 ? '+' : ''}¥{(adjustTotalPrice - total).toFixed(2)}
+              </p>
+            )}
+          </section>
+        )}
 
         {/* 支付方式 */}
         <section>
@@ -85,12 +151,12 @@ export default function NewOrderPage() {
             付款方式
           </h3>
           <div className="grid grid-cols-3 gap-2">
-            {PAYMENT_OPTIONS.map(([key, label]) => (
+            {PAYMENT_METHOD_OPTIONS.map(({ value, label }) => (
               <button
-                key={key}
-                onClick={() => setMethod(key)}
+                key={value}
+                onClick={() => setMethod(value)}
                 className={`rounded-lg border py-2.5 text-sm font-medium transition-all tap-scale ${
-                  draft.method === key
+                  draft.method === value
                     ? 'border-primary bg-primary/15 text-primary'
                     : 'border-border bg-card text-muted-foreground'
                 }`}
@@ -125,11 +191,7 @@ export default function NewOrderPage() {
               </div>
             </button>
             <button
-              onClick={() => {
-                  const next = !autoPayment
-                  setAutoPayment(next)
-                  if (next) setIsManualAmount(false)
-                }}
+              onClick={() => setAutoPayment((v) => !v)}
               className="flex w-full items-center justify-between px-4 py-3 tap-scale"
             >
               <span className="text-sm text-foreground">直接收款</span>
@@ -152,11 +214,10 @@ export default function NewOrderPage() {
                   <span className="text-sm text-muted-foreground">¥</span>
                   <Input
                     type="number"
+                    inputMode="decimal"
+                    pattern="[0-9.]*"
                     value={draft.paidAmount || ''}
-                    onChange={(e) => {
-                      setIsManualAmount(true)
-                      setPaidAmount(Number(e.target.value) || 0)
-                    }}
+                    onChange={(e) => setPaidAmount(Number(e.target.value) || 0)}
                     className="w-28 h-8 text-right"
                     placeholder="金额"
                   />
@@ -184,8 +245,41 @@ export default function NewOrderPage() {
         )}
       </div>
 
+      {/* AI 识别录单 */}
+      <AiInputSheet
+        open={showAiSheet}
+        onClose={() => setShowAiSheet(false)}
+        onFile={async (file) => {
+          const result = await recognize(file)
+          setAiMessage(result.message)
+          setTimeout(() => setAiMessage(''), 4000)
+        }}
+      />
+
+      {/* AI 识别中遮罩 */}
+      {recognizing && (
+        <div className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+          <Loader2 size={36} className="animate-spin text-primary mb-3" />
+          <p className="text-sm font-medium text-foreground">{progress || 'AI 识别中…'}</p>
+        </div>
+      )}
+
+      {/* AI 识别结果提示 */}
+      {aiMessage && !recognizing && (
+        <div className="fixed top-16 left-4 right-4 z-50 rounded-xl border border-primary/30 bg-primary/10 px-4 py-3 text-sm text-primary font-medium shadow-lg animate-in fade-in slide-in-from-top-2">
+          {aiMessage}
+        </div>
+      )}
+
       {/* 商品搜索面板 */}
-      <ProductSearchSheet open={showProductSheet} onClose={() => setShowProductSheet(false)} />
+      <ProductSearchSheet
+        open={showProductSheet}
+        editingItem={editingItem}
+        onClose={() => {
+          setShowProductSheet(false)
+          setEditingItem(null)
+        }}
+      />
 
       {/* 底部汇总栏 */}
       <OrderSummaryBar

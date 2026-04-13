@@ -4,6 +4,23 @@ import { useRegisterSW } from 'virtual:pwa-register/react'
 import './index.css'
 import App from './App'
 
+if (import.meta.env.DEV && 'serviceWorker' in navigator) {
+  // 清掉此前开发态注册的 SW，避免缓存旧资源导致空白页。
+  void navigator.serviceWorker.getRegistrations().then((registrations) => {
+    registrations.forEach((registration) => {
+      void registration.unregister()
+    })
+  })
+
+  if ('caches' in window) {
+    void caches.keys().then((cacheKeys) => {
+      cacheKeys.forEach((cacheKey) => {
+        void caches.delete(cacheKey)
+      })
+    })
+  }
+}
+
 /** SW 更新通知组件 */
 function SWUpdateNotice() {
   const { needRefresh: [needRefresh], updateServiceWorker } = useRegisterSW({

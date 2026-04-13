@@ -73,6 +73,12 @@ export function OrderDetailSheet({
 
   const showStockOut = order?.status === 'draft' && !!onStockOut
   const showCollect = order && (order.status === 'draft' || order.status === 'shipped') && receivable > 0 && !!onCollect
+  const exchangeStatusMap: Record<string, string> = {
+    draft: '草稿',
+    processing: '处理中',
+    completed: '已完成',
+    cancelled: '已取消',
+  }
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
@@ -193,6 +199,65 @@ export function OrderDetailSheet({
                 <section className="rounded-xl border border-border bg-card p-3.5 space-y-1">
                   <span className="text-xs font-semibold text-muted-foreground">备注</span>
                   <p className="text-sm text-foreground whitespace-pre-wrap">{order.remark}</p>
+                </section>
+              )}
+
+              {/* 售后记录 */}
+              {((order.returns?.length ?? 0) > 0 || (order.refunds?.length ?? 0) > 0 || (order.exchanges?.length ?? 0) > 0) && (
+                <section className="rounded-xl border border-border bg-card p-3.5 space-y-3">
+                  <span className="text-xs font-semibold text-muted-foreground">售后记录</span>
+
+                  {(order.returns?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">退货记录</p>
+                      {order.returns?.map((item) => (
+                        <div key={item.id} className="rounded-lg border border-border/80 bg-background px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-foreground">{item.returnNo || `退货#${item.id}`}</span>
+                            <span className="text-muted-foreground">{formatDate(item.createdAt, 'YYYY-MM-DD HH:mm')}</span>
+                          </div>
+                          <div className="mt-1 text-muted-foreground">
+                            退货 ¥{formatMoney(item.totalAmount)} · 退款 ¥{formatMoney(item.refundAmount)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(order.refunds?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">仅退款记录</p>
+                      {order.refunds?.map((item) => (
+                        <div key={item.id} className="rounded-lg border border-border/80 bg-background px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-foreground">{item.refundNo || `退款#${item.id}`}</span>
+                            <span className="text-muted-foreground">{formatDate(item.createdAt, 'YYYY-MM-DD HH:mm')}</span>
+                          </div>
+                          <div className="mt-1 text-muted-foreground">退款 ¥{formatMoney(item.amount)}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {(order.exchanges?.length ?? 0) > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs text-muted-foreground">换货记录</p>
+                      {order.exchanges?.map((item) => (
+                        <div key={item.id} className="rounded-lg border border-border/80 bg-background px-3 py-2 text-xs">
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="font-medium text-foreground">{item.exchangeNo || `换货#${item.id}`}</span>
+                            <span className="text-muted-foreground">{exchangeStatusMap[item.status || 'completed'] || item.status || '已完成'}</span>
+                          </div>
+                          <div className="mt-1 text-muted-foreground">
+                            换回 ¥{formatMoney(item.returnAmount)} · 换出 ¥{formatMoney(item.exchangeAmount)}
+                          </div>
+                          <div className="mt-1 text-muted-foreground">
+                            退款 ¥{formatMoney(item.refundAmount)} · 补差 ¥{formatMoney(item.receiveAmount ?? 0)}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </section>
               )}
 

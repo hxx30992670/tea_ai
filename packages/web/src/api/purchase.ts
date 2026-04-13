@@ -17,6 +17,20 @@ export interface CreatePurchaseReturnPayload {
   remark?: string
 }
 
+export interface QuickCompletePurchasePayload {
+  supplierId?: number
+  remark?: string
+  items: Array<{
+    productId: number
+    quantity?: number
+    packageQty?: number
+    looseQty?: number
+    unitPrice: number
+  }>
+  paidAmount: number
+  method?: string
+}
+
 export const purchaseOrderApi = {
   list: async (params?: Record<string, unknown>): Promise<{ list: PurchaseOrder[]; total: number }> => {
     const res = await request.get<never, ApiResponse<PageResult<PurchaseOrder>>>('/purchase-orders', { params })
@@ -49,5 +63,10 @@ export const purchaseOrderApi = {
 
   remove: async (id: number): Promise<void> => {
     await request.delete(`/purchase-orders/${id}`)
+  },
+
+  quickComplete: async (data: QuickCompletePurchasePayload): Promise<PurchaseOrder> => {
+    const res = await request.post<never, ApiResponse<PurchaseOrder>>('/purchase-orders/quick-complete', data)
+    return res.data
   },
 }

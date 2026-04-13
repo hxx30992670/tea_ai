@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Post, Put, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF } from '../../common/constants/roles';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -6,6 +6,7 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { CreateFollowUpDto } from './dto/create-follow-up.dto';
 import { FollowUpQueryDto } from './dto/follow-up-query.dto';
+import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
 import { CustomerService } from './customer.service';
 
 @ApiTags('客户跟进')
@@ -28,5 +29,18 @@ export class FollowUpController {
   @Post()
   createFollowUp(@Body() dto: CreateFollowUpDto, @CurrentUser() user: AuthUser) {
     return this.customerService.createFollowUp(dto, user.sub);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
+  @ApiOperation({ summary: '编辑跟进记录' })
+  @ApiBody({ type: UpdateFollowUpDto })
+  @ApiOkResponse({ description: '返回更新后的跟进记录' })
+  @Put(':id')
+  updateFollowUp(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateFollowUpDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.customerService.updateFollowUp(id, dto, user.sub);
   }
 }

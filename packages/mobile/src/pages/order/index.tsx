@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus, RefreshCw } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody } from '@/components/ui/sheet'
 import { useOrderDraftStore } from '@/store/order-draft'
 import { formatMoney } from '@/lib/utils'
+import { useVisualViewportInset } from '@/hooks/useVisualViewportInset'
 import { useOrderList } from './hooks/useOrderList'
 import { useOrderActions } from './hooks/useOrderActions'
 import { OrderCard } from './components/OrderCard'
@@ -16,7 +17,8 @@ import type { SaleOrder } from '@/types'
 
 export default function OrderListPage() {
   const navigate = useNavigate()
-  const { isDirty } = useOrderDraftStore()
+  const hasDraft = useOrderDraftStore((s) => s.draft.customerId != null || s.draft.items.length > 0)
+  const clearDraft = useOrderDraftStore((s) => s.clearDraft)
   const { orders, loading, loadingMore, refresh, loadMore } = useOrderList()
   const { doStockOut, doCollect, stockingOutId, collectingId } = useOrderActions(refresh)
   
@@ -24,6 +26,17 @@ export default function OrderListPage() {
   const [collectSheetOpen, setCollectSheetOpen] = useState(false)
   const [collectTarget, setCollectTarget] = useState<{ id: number; amount: number } | null>(null)
   const [collectAmount, setCollectAmount] = useState<number>(0)
+  const collectInputRef = useRef<HTMLInputElement | null>(null)
+  const keyboardInset = useVisualViewportInset(collectSheetOpen)
+
+  useEffect(() => {
+    if (!collectSheetOpen) return
+    const timer = window.setTimeout(() => {
+      collectInputRef.current?.focus()
+      collectInputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    }, 320)
+    return () => window.clearTimeout(timer)
+  }, [collectSheetOpen])
 
   const handleOpenCollect = (id: number, amount: number) => {
     setCollectTarget({ id, amount })
@@ -52,7 +65,7 @@ export default function OrderListPage() {
 
       <div className="p-4 space-y-3">
         {/* 草稿提示 */}
-        {isDirty && (
+        {hasDraft && (
           <button
             onClick={() => navigate('/order/new')}
             className="w-full rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-left tap-scale"
@@ -111,7 +124,7 @@ export default function OrderListPage() {
 
       {/* 新建开单 FAB */}
       <button
-        onClick={() => navigate('/order/new')}
+        onClick={() => { clearDraft(); navigate('/order/new') }}
         className="fixed bottom-[calc(72px+env(safe-area-inset-bottom,0px))] right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-[#D4A853] to-[#B8892F] shadow-lg shadow-[#D4A853]/30 tap-scale animate-pulse-gold"
         aria-label="新建开单"
       >
@@ -131,11 +144,28 @@ export default function OrderListPage() {
 
       {/* 收款金额弹窗 */}
       <Sheet open={collectSheetOpen} onOpenChange={setCollectSheetOpen}>
-        <SheetContent height="auto">
+        <SheetContent
+          height="auto"
+          style={
+            keyboardInset > 0
+              ? {
+                  bottom: keyboardInset,
+                  maxHeight: `calc(100dvh - ${keyboardInset}px)`,
+                }
+              : undefined
+          }
+        >
           <SheetHeader>
             <SheetTitle>收款</SheetTitle>
           </SheetHeader>
-          <SheetBody className="space-y-4">
+          <SheetBody
+            className="space-y-4 overflow-y-auto overscroll-contain pb-6"
+            style={
+              keyboardInset > 0
+                ? { paddingBottom: keyboardInset + 24 }
+                : undefined
+            }
+          >
             <div>
               <p className="text-sm text-muted-foreground mb-2">
                 待收款：<span className="text-foreground font-medium">¥{formatMoney(collectTarget?.amount ?? 0)}</span>
@@ -144,11 +174,17 @@ export default function OrderListPage() {
                 <span className="text-sm text-muted-foreground">收款金额</span>
                 <span className="text-sm text-muted-foreground">¥</span>
                 <Input
+                  ref={collectInputRef}
                   type="number"
+                  inputMode="decimal"
+                  pattern="[0-9.]*"
                   value={collectAmount || ''}
                   onChange={(e) => setCollectAmount(Number(e.target.value) || 0)}
                   className="flex-1"
                   placeholder="输入金额"
+                  onFocus={() => {
+                    setTimeout(() => collectInputRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' }), 80)
+                  }}
                 />
               </div>
             </div>

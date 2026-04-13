@@ -21,21 +21,21 @@ class PurchaseOrderItemDto {
   @ApiPropertyOptional({ description: '采购数量（基准单位）', example: 5 })
   @Type(() => Number)
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   quantity?: number;
 
   @ApiPropertyOptional({ description: '包装数量', example: 10 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   packageQty?: number;
 
   @ApiPropertyOptional({ description: '散数量（基准单位）', example: 3 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   looseQty?: number;
 

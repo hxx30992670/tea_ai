@@ -1,0 +1,22 @@
+services:
+  smartstock:
+    image: smartstock:latest
+    container_name: smartstock
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "80:80"
+    env_file:
+      - ./packages/server/.env
+    volumes:
+      # 持久化 SQLite 数据库文件
+      - ./data:/app/packages/server/data
+    restart: unless-stopped
+    init: true
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/api/docs || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

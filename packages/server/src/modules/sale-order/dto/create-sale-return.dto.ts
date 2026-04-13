@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -10,6 +11,7 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { PAYMENT_METHOD_VALUES, type PaymentMethod } from '../../../common/constants/order-status';
 
 class SaleReturnItemDto {
   @ApiProperty({ description: '原销售明细 ID', example: 1 })
@@ -21,21 +23,21 @@ class SaleReturnItemDto {
   @ApiPropertyOptional({ description: '退货数量（基准单位）', example: 1 })
   @Type(() => Number)
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   quantity?: number;
 
   @ApiPropertyOptional({ description: '包装数量', example: 1 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   packageQty?: number;
 
   @ApiPropertyOptional({ description: '散数量（基准单位）', example: 3 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   looseQty?: number;
 }
@@ -65,10 +67,11 @@ export class CreateSaleReturnDto {
   @IsString()
   reasonNote?: string;
 
-  @ApiPropertyOptional({ description: '退款方式', example: '微信' })
+  @ApiPropertyOptional({ description: '退款方式', example: '微信', enum: PAYMENT_METHOD_VALUES })
   @IsOptional()
   @IsString()
-  method?: string;
+  @IsIn(PAYMENT_METHOD_VALUES)
+  method?: PaymentMethod;
 
   @ApiPropertyOptional({ description: '退货备注', example: '客户反馈部分茶叶口感不符，退回 1 份' })
   @IsOptional()

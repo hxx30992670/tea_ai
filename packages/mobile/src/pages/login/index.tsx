@@ -4,6 +4,8 @@ import { LoginForm } from './components/LoginForm'
 
 export default function LoginPage() {
   const { isLoggedIn } = useAuthStore()
+  const appIconSrc = `${import.meta.env.BASE_URL}icons/icon.svg`
+
   if (isLoggedIn) return <Navigate to="/dashboard" replace />
 
   return (
@@ -17,7 +19,7 @@ export default function LoginPage() {
       {/* Logo 区 */}
       <div className="mb-10 flex flex-col items-center gap-3 animate-slide-up">
         <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/15 glow-gold">
-          <img src="/icons/icon.svg" alt="茶掌柜" className="h-10 w-10" />
+          <img src={appIconSrc} alt="茶掌柜" className="h-10 w-10" />
         </div>
         <div className="text-center">
           <h1 className="text-2xl font-bold text-gold">茶掌柜</h1>

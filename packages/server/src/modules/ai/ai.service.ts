@@ -24,10 +24,13 @@ type AiSuggestion = {
 };
 
 type AiRecognizedSaleOrderItem = {
+  customerName: string | null;
+  lineText: string | null;
   productName: string;
   productId: number | null;
   quantity: number | null;
   quantityUnit: string | null;
+  subtotal: number | null;
   unitPrice: number | null;
 };
 
@@ -216,13 +219,12 @@ export class AiService {
     } = params;
     const currentSessionId = sessionId || `sess_${Date.now()}`;
     const emit = (event: string, data: unknown) => emitter?.(event, data);
-    const structuredContext = useRecentStructuredContext
-      ? await this.getRecentStructuredContext(user.sub)
-      : {};
 
-    // ── 1. 检查 AI 配置 ──────────────────────────────────────────────────────
-
-    const availability = await this.aiConfigService.getAvailability();
+    // ── 1. 并行获取上下文 + AI 配置 ─────────────────────────────────────────
+    const [structuredContext, availability] = await Promise.all([
+      useRecentStructuredContext ? this.getRecentStructuredContext(user.sub) : Promise.resolve({}),
+      this.aiConfigService.getAvailability(),
+    ]);
 
     if (!availability.enabled || !availability.config) {
       const answer = `AI 模块当前已禁用：${availability.reason}`;
@@ -273,6 +275,7 @@ export class AiService {
       availability.config,
       history,
       structuredContext,
+      user.sub,
     );
 
     if (!sqlPromptResult.ok) {
@@ -350,16 +353,28 @@ export class AiService {
       ? saveQuestion
       : `${saveQuestion}\n【附件识别线索】${effectiveQuestion}`;
 
+    // 统计类问题 SQL 已做聚合，明细类问题前端图表已有完整数据
+    // 只需前 30 行供 LLM 描述，减少 token 消耗和传输延迟
+    const summaryRows = queryResult.rows.length > 30 ? queryResult.rows.slice(0, 30) : queryResult.rows;
+
     const summaryPromptResult = await this.aiPromptClientService.fetchSummaryMessages(
       summaryQuestion,
       queryResult.sql,
-      queryResult.rows,
+      summaryRows,
       availability.config,
       history,
       structuredContext,
+      user.sub,
     );
 
     let answer: string;
+
+    // 提前启动 buildStructuredContext，与 LLM 总结并行
+    const contextPromise = this.aiPromptClientService.buildStructuredContext(
+      availability.config,
+      structuredContext,
+      queryResult.rows,
+    );
 
     if (!summaryPromptResult.ok) {
       // 提示词获取失败，降级展示原始结果
@@ -386,13 +401,13 @@ export class AiService {
       emit('token', { content: answer });
     }
 
-    const nextStructuredContext = await this.aiPromptClientService.buildStructuredContext(
-      availability.config,
-      structuredContext,
-      queryResult.rows,
-    );
+    const nextStructuredContext = await contextPromise;
 
     await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql, nextStructuredContext, currentSessionId, queryResult.rows);
+
+    // 异步检测用户是否设定了回答偏好规则（不阻塞返回）
+    this.detectAndSaveUserRule(saveQuestion, answer, user.sub, availability.config).catch(() => {});
+
     return { enabled: true, reason: '', answer };
   }
 
@@ -467,13 +482,19 @@ export class AiService {
   private extractJson(text: string): string | null {
     // 尝试直接解析
     const trimmed = text.trim();
-    if (trimmed.startsWith('{')) return trimmed;
+    if (trimmed.startsWith('{') || trimmed.startsWith('[')) return trimmed;
 
     // 提取 markdown 代码块中的 JSON
     const match = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (match?.[1]) return match[1].trim();
 
-    // 提取第一个 { ... } 块
+    // 提取第一个 [...] 或 { ... } 块（优先数组）
+    const startArr = trimmed.indexOf('[');
+    const endArr = trimmed.lastIndexOf(']');
+    if (startArr !== -1 && endArr !== -1 && endArr > startArr) {
+      return trimmed.slice(startArr, endArr + 1);
+    }
+
     const start = trimmed.indexOf('{');
     const end = trimmed.lastIndexOf('}');
     if (start !== -1 && end !== -1) return trimmed.slice(start, end + 1);
@@ -525,7 +546,6 @@ export class AiService {
     if (module !== 'sale-order') {
       return { ok: false, reason: `暂不支持模块 ${module}` };
     }
-
     if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
       return { ok: false, reason: '模型返回的数据结构无效，请重试' };
     }
@@ -548,10 +568,13 @@ export class AiService {
       }
 
       items.push({
+        customerName: this.toOptionalString(current.customerName),
+        lineText: this.toOptionalString(current.lineText),
         productName,
         productId: this.toOptionalNumber(current.productId),
         quantity: this.toOptionalNumber(current.quantity),
         quantityUnit: this.toOptionalString(current.quantityUnit),
+        subtotal: this.toOptionalNumber(current.subtotal),
         unitPrice: this.toOptionalNumber(current.unitPrice),
       });
     }
@@ -1171,7 +1194,7 @@ export class AiService {
       modelName: dto.modelName,
       modelBaseUrl: dto.modelBaseUrl,
       apiKey: dto.apiKey,
-      promptServiceUrl: availability.config?.promptServiceUrl ?? '',
+      promptServiceUrl: dto.promptServiceUrl,
       industry: availability.config?.industry ?? 'tea',
     };
 
@@ -1224,6 +1247,42 @@ export class AiService {
       message: result.reason,
     });
     return { ok: false, message: result.reason, checks };
+  }
+
+  /**
+   * 检测用户消息中是否包含回答偏好规则，并异步推送到 prompt-center
+   * 匹配模式：以后/今后/下次/每次 + 回答/查询/显示 + 具体要求
+   */
+  private async detectAndSaveUserRule(
+    question: string,
+    answer: string,
+    userId: number,
+    config: AiRuntimeConfig,
+  ) {
+    // 简单模式匹配：用户表达"以后要怎样"的意图
+    const rulePattern = /(以后|今后|下次|每次|记住|之后).{0,10}(回答|查询|显示|展示|带上|加上|包含|去掉|不要|格式)/;
+    if (!rulePattern.test(question)) return;
+
+    // AI 已经回答了"好的记住了"之类，说明 LLM 也认可这是偏好设定
+    const confirmPattern = /(好的|记住了|明白|了解|遵守|收到|没问题)/;
+    if (!confirmPattern.test(answer)) return;
+
+    // 提取规则：去掉寒暄前缀，保留核心要求
+    const rule = question
+      .replace(/^.*(以后|今后|下次|每次|记住|之后)/, '')
+      .replace(/[。！？!?]+$/, '')
+      .trim();
+
+    if (rule.length < 4 || rule.length > 200) return;
+
+    this.logger.log(`检测到用户偏好规则: userId=${userId}, rule="${rule}"`);
+
+    await this.aiPromptClientService.pushUserRule(
+      config,
+      userId,
+      rule,
+      question,
+    );
   }
 
   private buildRawResultAnswer(sql: string, rows: Record<string, unknown>[]) {

@@ -1,6 +1,7 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { PAYMENT_METHOD_VALUES, type PaymentMethod } from '../../../common/constants/order-status';
 
 export class CreateSaleRefundDto {
   @ApiProperty({ description: '退款金额', example: 20 })
@@ -9,10 +10,11 @@ export class CreateSaleRefundDto {
   @Min(0.01)
   amount!: number;
 
-  @ApiPropertyOptional({ description: '退款方式', example: '微信' })
+  @ApiPropertyOptional({ description: '退款方式', example: '微信', enum: PAYMENT_METHOD_VALUES })
   @IsOptional()
   @IsString()
-  method?: string;
+  @IsIn(PAYMENT_METHOD_VALUES)
+  method?: PaymentMethod;
 
   @ApiPropertyOptional({ description: '售后原因编码', example: 'price_adjustment' })
   @IsOptional()

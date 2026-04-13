@@ -10,6 +10,10 @@ import { AiChatHistoryItem, AiPromptFetchResult, AiRuntimeConfig, AiStructuredCo
 export class AiPromptClientService {
   private readonly logger = new Logger(AiPromptClientService.name);
 
+  /** 授权验证缓存：key → { ok, reason, expireAt } */
+  private readonly authCache = new Map<string, { ok: boolean; reason: string; expireAt: number }>();
+  private readonly AUTH_CACHE_TTL = 5 * 60_000; // 5 分钟
+
   private readonly stockReasonPromptHint = [
     '【库存业务口径提示】',
     '- stock_record 是库存流水表，type 只有 in / out 两种',
@@ -27,6 +31,7 @@ export class AiPromptClientService {
     config: AiRuntimeConfig,
     history: AiChatHistoryItem[] = [],
     structuredContext?: AiStructuredContext,
+    userId?: number,
   ): Promise<AiPromptFetchResult> {
     if (!config.promptServiceUrl) {
       return { ok: false, reason: '请在系统设置中配置 AI Agent 服务地址' };
@@ -37,7 +42,7 @@ export class AiPromptClientService {
       question: this.buildSqlQuestion(question),
       history,
       structuredContext,
-    }, config);
+    }, config, userId);
   }
 
   async fetchSummaryMessages(
@@ -47,12 +52,13 @@ export class AiPromptClientService {
     config: AiRuntimeConfig,
     history: AiChatHistoryItem[] = [],
     structuredContext?: AiStructuredContext,
+    userId?: number,
   ): Promise<AiPromptFetchResult> {
     if (!config.promptServiceUrl) {
       return { ok: false, reason: '请在系统设置中配置 AI Agent 服务地址' };
     }
 
-    return this.fetchFromService({ phase: 'summary', question, sql, rows, history, structuredContext }, config);
+    return this.fetchFromService({ phase: 'summary', question, sql, rows, history, structuredContext }, config, userId);
   }
 
   async fetchRecognizeMessages(
@@ -97,6 +103,13 @@ export class AiPromptClientService {
       return { ok: false, reason: '请在系统设置中配置 AI Agent 服务地址' };
     }
 
+    // 命中缓存则直接返回
+    const cacheKey = config.apiKey;
+    const cached = this.authCache.get(cacheKey);
+    if (cached && Date.now() < cached.expireAt) {
+      return { ok: cached.ok, reason: cached.reason };
+    }
+
     const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/key/verify');
 
     try {
@@ -117,13 +130,17 @@ export class AiPromptClientService {
       };
 
       if (!data?.data?.valid) {
-        return { ok: false, reason: data?.data?.reason || 'AI 授权 Key 无效' };
+        const reason = data?.data?.reason || 'AI 授权 Key 无效';
+        this.authCache.set(cacheKey, { ok: false, reason, expireAt: Date.now() + 30_000 }); // 失败缓存 30s
+        return { ok: false, reason };
       }
 
       if (data.data.industry && data.data.industry !== config.industry) {
-        return { ok: false, reason: `AI 行业不匹配：当前 key 属于 ${data.data.industry}` };
+        const reason = `AI 行业不匹配：当前 key 属于 ${data.data.industry}`;
+        return { ok: false, reason };
       }
 
+      this.authCache.set(cacheKey, { ok: true, reason: '', expireAt: Date.now() + this.AUTH_CACHE_TTL });
       return { ok: true, reason: '' };
     } catch (error) {
       const message = error instanceof Error ? error.message : 'unknown error';
@@ -173,6 +190,7 @@ export class AiPromptClientService {
   private async fetchFromService(
     payload: Record<string, unknown>,
     config: AiRuntimeConfig,
+    userId?: number,
   ): Promise<AiPromptFetchResult> {
     const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/prompt/generate');
 
@@ -185,6 +203,7 @@ export class AiPromptClientService {
         body: JSON.stringify({
           apiKey: config.apiKey,
           industry: config.industry,
+          ...(userId != null ? { userId } : {}),
           ...payload,
         }),
       });
@@ -215,6 +234,35 @@ export class AiPromptClientService {
       const message = error instanceof Error ? error.message : 'unknown error';
       this.logger.error(`Prompt 服务不可用: ${message}`);
       return { ok: false, reason: `Prompt 服务不可用: ${message}` };
+    }
+  }
+
+  /** 向 prompt-center 推送用户自定义规则 */
+  async pushUserRule(
+    config: AiRuntimeConfig,
+    userId: number,
+    rule: string,
+    sourceMessage?: string,
+    phase?: string,
+  ): Promise<{ ok: boolean }> {
+    if (!config.promptServiceUrl) return { ok: false };
+
+    const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/user-rule/create');
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apiKey: config.apiKey,
+          userId,
+          rule,
+          sourceMessage,
+          phase,
+        }),
+      });
+      return { ok: response.ok };
+    } catch {
+      return { ok: false };
     }
   }
 

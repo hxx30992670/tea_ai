@@ -36,7 +36,7 @@ const SheetContent = React.forwardRef<
      */
     height?: string
   }
->(({ className, children, height = '80dvh', ...props }, ref) => (
+>(({ className, children, height = '80dvh', style, ...props }, ref) => (
   <DialogPrimitive.Portal>
     <SheetOverlay />
     <DialogPrimitive.Content
@@ -49,7 +49,7 @@ const SheetContent = React.forwardRef<
         'duration-300',
         className,
       )}
-      style={{ maxHeight: height }}
+      style={{ maxHeight: height, ...style }}
       {...props}
     >
       {/* 拖动指示条 */}

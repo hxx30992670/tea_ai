@@ -28,6 +28,7 @@ export class QwenProviderClient implements ModelProviderClient {
           model: config.modelName || 'qwen-plus',
           messages,
           temperature: 0.1,
+          max_tokens: 800,
           enable_thinking: false,
         }),
       });
@@ -70,6 +71,7 @@ export class QwenProviderClient implements ModelProviderClient {
           model: config.modelName || 'qwen-plus',
           messages,
           temperature: 0.3,
+          max_tokens: 1500,
           stream: true,
         }),
       });

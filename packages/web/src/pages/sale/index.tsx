@@ -47,18 +47,23 @@ import { customerApi } from '@/api/customers'
 import { productApi } from '@/api/products'
 import SaleOrderReceipt from '@/components/SaleOrderReceipt'
 import ProductSelect from '@/components/ProductSelect'
+import CustomerSelect from '@/components/CustomerSelect'
 import AiRecognizeLoading from '@/components/AiRecognizeLoading'
-import type { Category, Customer, Product, SaleOrder } from '@/types'
+import AiBatchPreview from '@/components/AiBatchPreview'
+import type { BatchRecognizeResult, BatchFormItem } from '@/components/AiBatchPreview'
+import type { AiRecognizedSaleOrder } from '@/api/ai'
+import type { Category, Customer, Product, SaleExchange, SaleOrder } from '@/types'
 import { matchCustomerByRecognizedName } from '@/utils/customerMatching'
 import { formatCompositeQuantity, getProductPackageConfig } from '@/utils/packaging'
+import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
-
-const PAYMENT_METHOD_OPTIONS = ['现金', '微信', '支付宝', '转账', '赊账', '其他'].map((m) => ({ value: m, label: m }))
+const QUANTITY_STEP = 0.0001
+const QUANTITY_PRECISION = 4
 
 const STATUS_OPTIONS = [
   { value: '', label: '全部状态' },
@@ -73,6 +78,182 @@ const STATUS_MAP: Record<string, { label: string; color: string; step: number }>
   [SALE_ORDER_STATUS.SHIPPED]: { label: '已出货', color: 'blue', step: 1 },
   [SALE_ORDER_STATUS.DONE]: { label: '已完成', color: 'success', step: 2 },
   [SALE_ORDER_STATUS.RETURNED]: { label: '已退完', color: 'purple', step: 2 },
+}
+
+const EXCHANGE_STATUS_MAP: Record<string, { label: string; color: string }> = {
+  draft: { label: '草稿', color: 'orange' },
+  processing: { label: '处理中', color: 'blue' },
+  completed: { label: '已完成', color: 'success' },
+  cancelled: { label: '已取消', color: 'default' },
+}
+
+type RecognizedSaleItem = AiRecognizedSaleOrder['items'][number]
+
+/** 将 AI 识别结果映射为表单所需的商品行 */
+function normalizeRecognizedAmount(item: RecognizedSaleItem) {
+  const rawLineText = item.lineText ?? ''
+  const normalizedLineText = rawLineText.replace(/\s+/g, '')
+
+  if (normalizedLineText.includes('一斤半')) {
+    return { quantity: 1.5, quantityUnit: '斤' }
+  }
+
+  if (normalizedLineText.includes('半斤')) {
+    return { quantity: 0.5, quantityUnit: '斤' }
+  }
+
+  if (normalizedLineText.includes('半两')) {
+    return { quantity: 0.5, quantityUnit: '两' }
+  }
+
+  return {
+    quantity: item.quantity ?? undefined,
+    quantityUnit: item.quantityUnit ?? '',
+  }
+}
+
+function isUnitMatched(qUnit: string, product?: Product) {
+  if (!qUnit || !product) return true
+  const pkgUnit = product.packageUnit ?? ''
+  const baseUnit = product.unit ?? ''
+  return qUnit === pkgUnit
+    || qUnit === baseUnit
+    || (pkgUnit ? qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit) : false)
+    || (baseUnit ? qUnit.includes(baseUnit) || baseUnit.includes(qUnit) : false)
+}
+
+function normalizePriceToProductBaseUnit(unitPrice: number, qUnit: string, product?: Product) {
+  if (!product) return unitPrice
+  const pkgUnit = product.packageUnit ?? ''
+  const pkgSize = product.packageSize ?? 0
+  const recognizedAsPackage = qUnit && pkgUnit && (qUnit === pkgUnit || qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit))
+  if (recognizedAsPackage && pkgSize > 0) {
+    return Number((unitPrice / pkgSize).toFixed(2))
+  }
+  return unitPrice
+}
+
+function pickBestProduct(
+  item: RecognizedSaleItem,
+  products: Product[],
+  productMap: Map<number, Product>,
+  quantity: number | undefined,
+  quantityUnit: string,
+) {
+  const name = (item.productName ?? '').trim()
+  const lineText = (item.lineText ?? '').replace(/\s+/g, '')
+  const byId = item.productId != null ? productMap.get(item.productId) : undefined
+  const byName = name
+    ? products.filter((p) => name.includes(p.name) || p.name.includes(name))
+    : []
+
+  const candidateMap = new Map<number, Product>()
+  if (byId) candidateMap.set(byId.id, byId)
+  byName.forEach((p) => candidateMap.set(p.id, p))
+  const candidates = [...candidateMap.values()]
+  if (candidates.length === 0) return undefined
+
+  const unitCandidates = quantityUnit ? candidates.filter((p) => isUnitMatched(quantityUnit, p)) : candidates
+  const pool = unitCandidates.length > 0 ? unitCandidates : candidates
+
+  const rawUnitPrice = item.subtotal != null && quantity != null && quantity > 0
+    ? Number((item.subtotal / quantity).toFixed(2))
+    : (item.unitPrice ?? undefined)
+
+  const score = (product: Product) => {
+    let total = 0
+    if (byId?.id === product.id) total += 5
+    if (name && name === product.name) total += 4
+    else if (name && (name.includes(product.name) || product.name.includes(name))) total += 2
+    if (quantityUnit && isUnitMatched(quantityUnit, product)) total += 4
+    if (product.year != null && lineText.includes(String(product.year))) total += 4
+    if (product.teaType && lineText.includes(product.teaType)) total += 2
+
+    if (rawUnitPrice != null && product.sellPrice > 0) {
+      const normalized = normalizePriceToProductBaseUnit(rawUnitPrice, quantityUnit, product)
+      const ratioDiff = Math.abs(normalized - product.sellPrice) / product.sellPrice
+      if (ratioDiff <= 0.05) total += 8
+      else if (ratioDiff <= 0.2) total += 6
+      else if (ratioDiff <= 0.5) total += 3
+      else if (ratioDiff <= 1) total += 1
+      else total -= 3
+    }
+
+    return total
+  }
+
+  return pool
+    .slice()
+    .sort((a, b) => score(b) - score(a) || a.id - b.id)[0]
+}
+
+function parsePossibleCustomerName(lineText?: string | null) {
+  const text = (lineText ?? '').trim()
+  if (!text) return undefined
+  const firstCell = text.split(/[\s,，\t|/\\]+/).find(Boolean)
+  if (!firstCell) return undefined
+  const candidate = firstCell.replace(/[:：]/g, '').trim()
+  if (!candidate) return undefined
+  if (/^(姓名|客户|联系人|产品|商品|价格|单价|数量|小计)$/i.test(candidate)) return undefined
+  if (/\d/.test(candidate) || candidate.length < 2 || candidate.length > 8) return undefined
+  return candidate
+}
+
+function resolveRecognizedCustomerId(recognized: AiRecognizedSaleOrder, customers: Customer[]) {
+  const names: string[] = []
+  if (recognized.customerName) names.push(recognized.customerName)
+  for (const item of recognized.items) {
+    if (item.customerName) names.push(item.customerName)
+    const parsed = parsePossibleCustomerName(item.lineText)
+    if (parsed) names.push(parsed)
+  }
+
+  const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))]
+  for (const name of uniqueNames) {
+    const matched = matchCustomerByRecognizedName(name, customers)
+    if (matched) return matched.id
+  }
+  return undefined
+}
+
+function mapRecognizedItems(
+  recognized: AiRecognizedSaleOrder,
+  products: Product[],
+  productMap: Map<number, Product>,
+) {
+  return recognized.items.map((item) => {
+    const normalizedAmount = normalizeRecognizedAmount(item)
+    const qUnit = normalizedAmount.quantityUnit
+    const qty = normalizedAmount.quantity
+    const matched = pickBestProduct(item, products, productMap, qty, qUnit)
+
+    const pkgUnit = matched?.packageUnit ?? ''
+    const baseUnit = matched?.unit ?? ''
+
+    const isPackageUnit = pkgUnit && (qUnit === pkgUnit || qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit))
+    const isBaseUnit = baseUnit && (qUnit === baseUnit || qUnit.includes(baseUnit) || baseUnit.includes(qUnit))
+
+    const packageSize = matched?.packageSize ?? null
+    const pkgQtyRaw = isPackageUnit ? qty : undefined
+    const rawUnitPrice = item.subtotal != null && qty != null && qty > 0
+      ? Number((item.subtotal / qty).toFixed(2))
+      : (item.unitPrice ?? undefined)
+    const unitPrice = rawUnitPrice != null
+      ? normalizePriceToProductBaseUnit(rawUnitPrice, qUnit, matched)
+      : undefined
+
+    return {
+      productId: matched?.id,
+      ...(pkgUnit
+        ? {
+          packageQty: isPackageUnit ? qty : undefined,
+          looseQty: isBaseUnit ? qty : undefined,
+          ...(!isPackageUnit && !isBaseUnit && qty != null ? { packageQty: qty } : {}),
+        }
+        : { quantity: qty }),
+      unitPrice: unitPrice ?? matched?.sellPrice ?? undefined,
+    }
+  })
 }
 
 export default function SalePage() {
@@ -90,6 +271,7 @@ export default function SalePage() {
   const [returnRecord, setReturnRecord] = useState<SaleOrder | null>(null)
   const [refundRecord, setRefundRecord] = useState<SaleOrder | null>(null)
   const [exchangeRecord, setExchangeRecord] = useState<SaleOrder | null>(null)
+  const [editingExchangeDraftId, setEditingExchangeDraftId] = useState<number | null>(null)
   const [returnOpen, setReturnOpen] = useState(false)
   const [refundOpen, setRefundOpen] = useState(false)
   const [exchangeOpen, setExchangeOpen] = useState(false)
@@ -115,10 +297,65 @@ export default function SalePage() {
   const saleItems = Form.useWatch('items', form) as Array<{ productId?: number; quantity?: number; packageQty?: number; looseQty?: number; unitPrice?: number }> | undefined
 
   const [aiRecognizing, setAiRecognizing] = useState(false)
+  const [aiBatchCurrent, setAiBatchCurrent] = useState(0)
+  const [aiBatchTotal, setAiBatchTotal] = useState(0)
   const aiFileInputRef = React.useRef<HTMLInputElement>(null)
+  const aiBatchFileInputRef = React.useRef<HTMLInputElement>(null)
   const autoPaidAmountRef = React.useRef<number | undefined>(undefined)
   const syncingPaidAmountRef = React.useRef(false)
   const [paidAmountTouched, setPaidAmountTouched] = useState(false)
+  const [adjustTotalPrice, setAdjustTotalPrice] = useState<number | undefined>(undefined)
+
+  const handleAdjustPrices = () => {
+    const items = form.getFieldValue('items') || []
+    if (items.length === 0 || adjustTotalPrice == null) return
+
+    const originalTotal = items.reduce((sum: number, item: any) => {
+      const product = form.getFieldValue(['items', items.indexOf(item), '_product'])
+      const pkgSize = product?.packageSize ?? 1
+      const qty = item.packageQty != null || item.looseQty != null
+        ? (item.packageQty ?? 0) * pkgSize + (item.looseQty ?? 0)
+        : (item.quantity ?? 0)
+      return sum + qty * (item.unitPrice ?? 0)
+    }, 0)
+
+    if (originalTotal <= 0) return
+
+    const ratio = adjustTotalPrice / originalTotal
+    const adjustedItems = items.map((item: any, index: number) => {
+      const product = form.getFieldValue(['items', index, '_product'])
+      const pkgSize = product?.packageSize ?? 1
+      const qty = item.packageQty != null || item.looseQty != null
+        ? (item.packageQty ?? 0) * pkgSize + (item.looseQty ?? 0)
+        : (item.quantity ?? 0)
+      let adjustedPrice = Math.round((item.unitPrice ?? 0) * ratio * 100) / 100
+
+      if (index === items.length - 1) {
+        const prevTotal = items.slice(0, index).reduce((sum: number, i: any) => {
+          const p = form.getFieldValue(['items', items.indexOf(i), '_product'])
+          const ps = p?.packageSize ?? 1
+          const q = i.packageQty != null || i.looseQty != null
+            ? (i.packageQty ?? 0) * ps + (i.looseQty ?? 0)
+            : (i.quantity ?? 0)
+          const adjP = Math.round((i.unitPrice ?? 0) * ratio * 100) / 100
+          return sum + Math.round(q * adjP * 100) / 100
+        }, 0)
+        const lastTotal = Math.round((adjustTotalPrice - prevTotal) * 100) / 100
+        adjustedPrice = qty > 0 ? Math.round((lastTotal / qty) * 100) / 100 : 0
+      }
+
+      return { ...item, unitPrice: adjustedPrice }
+    })
+
+    form.setFieldValue('items', adjustedItems)
+    setAdjustTotalPrice(undefined)
+    message.success('已按总价调整单价')
+  }
+
+  // 批量识别
+  const [batchResults, setBatchResults] = useState<BatchRecognizeResult[]>([])
+  const [batchPreviewOpen, setBatchPreviewOpen] = useState(false)
+  const [batchSubmitting, setBatchSubmitting] = useState(false)
 
   const [keyword, setKeyword] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
@@ -174,7 +411,7 @@ export default function SalePage() {
     syncingPaidAmountRef.current = true
     autoPaidAmountRef.current = nextPaidAmount
     form.setFieldValue('paidAmount', nextPaidAmount)
-    void form.validateFields(['method']).catch(() => {})
+    void form.validateFields(['method']).catch(() => { })
     queueMicrotask(() => {
       syncingPaidAmountRef.current = false
     })
@@ -191,7 +428,7 @@ export default function SalePage() {
   const loadMeta = async () => {
     const [custRes, prodRes, settingsRes, catRes] = await Promise.all([
       customerApi.list(),
-      productApi.list(),
+      productApi.list({ pageSize: 100 }),
       systemApi.getSettings(),
       productApi.categories(),
     ])
@@ -216,125 +453,73 @@ export default function SalePage() {
     loadData({ keyword: undefined, status: undefined, dateFrom: undefined, dateTo: undefined, page: 1 })
   }
 
+  /** 构建发给 AI 的商品目录 */
+  const buildProductCatalog = () =>
+    products.map((p) => ({
+      id: p.id,
+      name: p.name,
+      ...(p.teaType ? { teaType: p.teaType } : {}),
+      ...(p.year != null ? { year: String(p.year) } : {}),
+      ...(p.spec ? { spec: p.spec } : {}),
+      ...(p.sellPrice != null ? { sellPrice: p.sellPrice } : {}),
+      ...(p.unit ? { unit: p.unit } : {}),
+      ...(p.packageUnit ? { packageUnit: p.packageUnit } : {}),
+    }))
+
+  /** 读取单个文件内容并校验大小 */
+  const readFileContent = (file: File): Promise<{ content: string; isImage: boolean } | null> => {
+    const isImage = file.type.startsWith('image/')
+    const maxSize = isImage ? 5 * 1024 * 1024 : 500 * 1024
+    if (file.size > maxSize) {
+      void message.warning(`${file.name}: ${isImage ? '图片不能超过 5MB' : '文件不能超过 500KB'}`)
+      return Promise.resolve(null)
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve({ content: reader.result as string, isImage })
+      reader.onerror = reject
+      if (isImage) reader.readAsDataURL(file)
+      else reader.readAsText(file)
+    })
+  }
+
+  /** 处理 AI 识别失败的提示逻辑 */
+  const handleAiRecognizeError = (reason: string) => {
+    if (reason.includes('禁用') || reason.includes('授权') || reason.includes('apiKey') || reason.includes('配置')) {
+      void message.warning(`AI 功能不可用：${reason}，请前往系统设置 > AI配置 完成配置`)
+    } else {
+      void message.error(reason)
+    }
+  }
+
+  // ── 单张识别 ──────────────────────────────────────────────────────────
   const handleAiFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
     e.target.value = ''
 
-    const isImage = file.type.startsWith('image/')
-    const maxSize = isImage ? 5 * 1024 * 1024 : 500 * 1024
-    if (file.size > maxSize) {
-      void message.warning(isImage ? '图片不能超过 5MB' : '文件不能超过 500KB')
-      return
-    }
-
     setAiRecognizing(true)
+    setAiBatchTotal(0)
     try {
-      const content = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = reject
-        if (isImage) reader.readAsDataURL(file)
-        else reader.readAsText(file)
-      })
-
-      // 把商品目录传给 AI（过滤掉 null/undefined，避免后端校验失败）
-      const productCatalog = products.map((p) => ({
-        id: p.id,
-        name: p.name,
-        ...(p.teaType ? { teaType: p.teaType } : {}),
-        ...(p.year != null ? { year: String(p.year) } : {}),
-        ...(p.spec ? { spec: p.spec } : {}),
-        ...(p.sellPrice != null ? { sellPrice: p.sellPrice } : {}),
-        ...(p.unit ? { unit: p.unit } : {}),
-        ...(p.packageUnit ? { packageUnit: p.packageUnit } : {}),
-      }))
+      const fileData = await readFileContent(file)
+      if (!fileData) return
 
       const res = await aiApi.recognizeSaleOrder(
-        { type: isImage ? 'image' : 'text', content, mimeType: file.type, filename: file.name },
-        productCatalog,
+        { type: fileData.isImage ? 'image' : 'text', content: fileData.content, mimeType: file.type, filename: file.name },
+        buildProductCatalog(),
       )
 
       if (!res.ok || !res.data) {
-        const reason = res.reason ?? '识别失败，请换一张更清晰的图片'
-        // AI 未开通/未授权时给出和 AI 助手一致的提示
-        if (reason.includes('禁用') || reason.includes('授权') || reason.includes('apiKey') || reason.includes('配置')) {
-          void message.warning(`AI 功能不可用：${reason}，请前往系统设置 > AI配置 完成配置`)
-        } else {
-          void message.error(reason)
-        }
+        handleAiRecognizeError(res.reason ?? '识别失败，请换一张更清晰的图片')
         return
       }
 
       const recognized = res.data
+      const customerId = resolveRecognizedCustomerId(recognized, customers)
 
-      // ── 匹配客户 ──────────────────────────────────────────────────────
-      let customerId: number | undefined
-      if (recognized.customerName) {
-        const matched = matchCustomerByRecognizedName(recognized.customerName, customers)
-        customerId = matched?.id
-      }
-
-      // ── 构建商品行（AI 已匹配 productId，按单位填对字段）────────────────
-      const items = recognized.items.map((item) => {
-        // 优先用 AI 返回的 productId
-        let matched = item.productId != null ? productMap.get(item.productId) : undefined
-
-        // 如果 AI 给的 productId 对应商品单位与识别单位不符，重新按单位+名称匹配
-        const qUnit = item.quantityUnit ?? ''
-        if (matched && qUnit) {
-          const unitMatch = (p: typeof matched) =>
-            p && (qUnit === p.unit || qUnit === p.packageUnit ||
-              (p.unit && p.unit.includes(qUnit)) || (p.packageUnit && p.packageUnit.includes(qUnit)) ||
-              (qUnit && p.unit && qUnit.includes(p.unit)) || (qUnit && p.packageUnit && qUnit.includes(p.packageUnit)))
-          if (!unitMatch(matched)) {
-            // 单位不符，重新从同名商品里找单位匹配的
-            const sameNameProducts = products.filter(
-              (p) => item.productName.includes(p.name) || p.name.includes(item.productName),
-            )
-            const unitMatched = sameNameProducts.find(unitMatch)
-            if (unitMatched) matched = unitMatched
-          }
-        }
-
-        // 还是没匹配，模糊匹配名称
-        if (!matched && item.productName) {
-          matched = products.find((p) => item.productName.includes(p.name) || p.name.includes(item.productName))
-        }
-
-        const qty = item.quantity ?? undefined
-        const pkgUnit = matched?.packageUnit ?? ''
-        const baseUnit = matched?.unit ?? ''
-
-        // 判断识别到的数量单位属于包装单位还是散装单位
-        const isPackageUnit = pkgUnit && (qUnit === pkgUnit || qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit))
-        const isBaseUnit = baseUnit && (qUnit === baseUnit || qUnit.includes(baseUnit) || baseUnit.includes(qUnit))
-
-        // 包装单位数量，若为小数（如 0.5 斤），换算成基准单位直接填 looseQty
-        const packageSize = matched?.packageSize ?? null
-        const pkgQtyRaw = isPackageUnit ? qty : undefined
-        const pkgQtyIsDecimal = pkgQtyRaw != null && !Number.isInteger(pkgQtyRaw)
-        const pkgQtyConverted = pkgQtyIsDecimal && packageSize ? Math.round(pkgQtyRaw! * packageSize) : undefined
-
-        return {
-          productId: matched?.id,
-          // 有包装规格的商品用 packageQty/looseQty，否则用 quantity
-          ...(pkgUnit
-            ? {
-                // 非整数包装数量（如 0.5 斤）→ 换算为基准单位填入 looseQty
-                packageQty: pkgQtyIsDecimal ? undefined : (isPackageUnit ? qty : undefined),
-                looseQty: pkgQtyIsDecimal ? pkgQtyConverted : (isBaseUnit ? qty : undefined),
-                // 两者都不匹配时（如 g/kg）暂放 packageQty
-                ...(!isPackageUnit && !isBaseUnit && qty != null ? { packageQty: qty } : {}),
-              }
-            : { quantity: qty }),
-          unitPrice: item.unitPrice ?? matched?.sellPrice ?? undefined,
-        }
-      })
-
+      const items = mapRecognizedItems(recognized, products, productMap)
       const unmatchedCount = items.filter((i) => !i.productId).length
 
-      // ── 打开弹窗并填表 ────────────────────────────────────────────────
       setPaidAmountTouched(false)
       autoPaidAmountRef.current = undefined
       form.resetFields()
@@ -360,12 +545,177 @@ export default function SalePage() {
     }
   }
 
+  // ── 批量识别 ──────────────────────────────────────────────────────────
+  const handleAiBatchFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+    // 必须在清空 input 之前拷贝，因为 files 是 live 引用
+    const fileList = Array.from(files)
+    e.target.value = ''
+    setAiRecognizing(true)
+    setAiBatchTotal(fileList.length)
+    setAiBatchCurrent(1)
+
+    const catalog = buildProductCatalog()
+    const results: BatchRecognizeResult[] = []
+
+    for (let i = 0; i < fileList.length; i++) {
+      setAiBatchCurrent(i + 1)
+      const file = fileList[i]
+
+      try {
+        const fileData = await readFileContent(file)
+        if (!fileData) {
+          results.push({ index: i, filename: file.name, success: false, error: '文件格式或大小不符', items: [] })
+          continue
+        }
+
+        const res = await aiApi.recognizeSaleOrder(
+          { type: fileData.isImage ? 'image' : 'text', content: fileData.content, mimeType: file.type, filename: file.name },
+          catalog,
+        )
+
+        if (!res.ok || !res.data) {
+          results.push({ index: results.length, filename: file.name, success: false, error: res.reason ?? '识别失败', items: [] })
+          continue
+        }
+
+        const recognized = res.data
+        // 批量识别：每个 item 拆分为一条独立的订单记录（每行商品 = 一个散客订单）
+        const allItems = mapRecognizedItems(recognized, products, productMap)
+        const fallbackCustomerId = resolveRecognizedCustomerId(recognized, customers)
+        for (let j = 0; j < allItems.length; j++) {
+          const item = allItems[j]
+          const currentRecognizedItem = recognized.items[j]
+          const currentCustomerId = (() => {
+            const itemCustomerName = currentRecognizedItem?.customerName ?? parsePossibleCustomerName(currentRecognizedItem?.lineText)
+            if (itemCustomerName) {
+              return matchCustomerByRecognizedName(itemCustomerName, customers)?.id
+            }
+            return fallbackCustomerId
+          })()
+          results.push({
+            index: results.length,
+            filename: allItems.length > 1 ? `${file.name} #${j + 1}` : file.name,
+            success: true,
+            customerId: currentCustomerId,
+            customerName: currentRecognizedItem?.customerName ?? recognized.customerName,
+            items: [item],
+            remark: undefined,
+            paidAmount: undefined,
+            paymentMethod: recognized.paymentMethod,
+          })
+        }
+      } catch {
+        results.push({ index: results.length, filename: file.name, success: false, error: '识别出错', items: [] })
+      }
+    }
+
+    setAiRecognizing(false)
+    setBatchResults(results)
+    setBatchPreviewOpen(true)
+
+    const successCount = results.filter((r) => r.success).length
+    if (successCount === 0) {
+      void message.error('所有文件识别失败，请检查文件内容')
+    } else {
+      void message.success(`成功识别 ${successCount}/${results.length} 个文件`)
+    }
+  }
+
+  // ── 批量预览操作 ──────────────────────────────────────────────────────
+  const handleBatchRemove = (index: number) => {
+    setBatchResults((prev) => prev.filter((r) => r.index !== index))
+  }
+
+  const handleBatchUpdate = (index: number, updates: Partial<BatchRecognizeResult>) => {
+    setBatchResults((prev) => prev.map((r) => r.index === index ? { ...r, ...updates } : r))
+  }
+
+  const handleBatchUpdateItem = (orderIndex: number, itemIndex: number, updates: Partial<BatchFormItem>) => {
+    setBatchResults((prev) => prev.map((r) => {
+      if (r.index !== orderIndex) return r
+      const newItems = [...r.items]
+      newItems[itemIndex] = { ...newItems[itemIndex], ...updates }
+      return { ...r, items: newItems }
+    }))
+  }
+
+  const handleBatchSaveDraft = async () => {
+    const successResults = batchResults.filter((r) => r.success && r.items.length > 0)
+    if (successResults.length === 0) return
+
+    setBatchSubmitting(true)
+    let created = 0
+    for (const r of successResults) {
+      try {
+        await saleOrderApi.create({
+          customerId: r.customerId,
+          items: r.items,
+          remark: r.remark,
+        } as Partial<SaleOrder>)
+        created++
+      } catch {
+        // continue with others
+      }
+    }
+    setBatchSubmitting(false)
+    setBatchPreviewOpen(false)
+    setBatchResults([])
+    void message.success(`成功创建 ${created} 个草稿订单`)
+    loadData()
+  }
+
+  const handleBatchQuickComplete = async () => {
+    const successResults = batchResults.filter((r) => r.success && r.items.length > 0)
+    if (successResults.length === 0) return
+
+    setBatchSubmitting(true)
+    let created = 0
+    for (const r of successResults) {
+      try {
+        // 计算总金额作为 paidAmount
+        const total = r.items.reduce((sum, item) => {
+          const product = item.productId ? productMap.get(item.productId) : undefined
+          const packageConfig = getProductPackageConfig(product)
+          const qty = packageConfig.unit && packageConfig.size > 0
+            ? Number(item.packageQty ?? 0) * packageConfig.size + Number(item.looseQty ?? 0)
+            : Number(item.quantity ?? 0)
+          return sum + qty * Number(item.unitPrice ?? 0)
+        }, 0)
+        const paidAmount = r.paidAmount ?? total
+
+        await saleOrderApi.quickComplete({
+          customerId: r.customerId,
+          items: r.items,
+          remark: r.remark,
+          paidAmount,
+          method: r.paymentMethod,
+        })
+        created++
+      } catch {
+        // continue with others
+      }
+    }
+    setBatchSubmitting(false)
+    setBatchPreviewOpen(false)
+    setBatchResults([])
+    void message.success(`成功完成 ${created} 个销售订单`)
+    loadData()
+  }
+
   const handleCreate = async () => {
     const values = await form.validateFields()
+    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => {
+      const { _product, ...rest } = item
+      return rest
+    })
+    const { paidAmount: _paidAmount, method: _method, ...restValues } = values
+    const payload = { ...restValues, items: cleanedItems }
     if (editId) {
-      await saleOrderApi.update(editId, values)
+      await saleOrderApi.update(editId, payload)
     } else {
-      await saleOrderApi.create(values)
+      await saleOrderApi.create(payload)
     }
     setCreateOpen(false)
     setEditId(null)
@@ -375,10 +725,13 @@ export default function SalePage() {
 
   const handleQuickComplete = async () => {
     const values = await form.validateFields()
-    // AI 识别可能填入 packageQty/looseQty，这里统一按实际净数量计算订单金额。
-    const total = calculateSaleItemsTotal(values.items) ?? 0
+    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => {
+      const { _product, ...rest } = item
+      return rest
+    })
+    const total = calculateSaleItemsTotal(cleanedItems) ?? 0
     const paidAmount = values.paidAmount != null ? values.paidAmount : total
-    await saleOrderApi.quickComplete({ ...values, paidAmount })
+    await saleOrderApi.quickComplete({ ...values, items: cleanedItems, paidAmount })
     message.success('销售完成！订单已出库并记录收款')
     setCreateOpen(false)
     setEditId(null)
@@ -434,6 +787,7 @@ export default function SalePage() {
     }
     if (type === 'exchange') {
       setExchangeRecord(order)
+      setEditingExchangeDraftId(null)
       setExchangeOpen(true)
       exchangeForm.setFieldsValue({
         returnQuantities: Object.fromEntries((order.items ?? []).map((item) => [String(item.id), 0])),
@@ -548,50 +902,165 @@ export default function SalePage() {
     loadData()
   }
 
-  const handleCreateExchange = async () => {
-    if (!exchangeRecord) return
-    const values = await exchangeForm.validateFields()
-    const returnItems = (exchangeRecord.items ?? [])
+  const buildExchangePayload = (values: Record<string, unknown>, order: SaleOrder) => {
+    const returnItems = (order.items ?? [])
       .map((item) => ({
         saleOrderItemId: item.id,
-        quantity: Number(values.returnQuantities?.[String(item.id)] ?? 0) || undefined,
-        packageQty: Number(values.returnPackageQuantities?.[String(item.id)] ?? 0) || undefined,
-        looseQty: Number(values.returnLooseQuantities?.[String(item.id)] ?? 0) || undefined,
+        quantity: Number((values.returnQuantities as Record<string, number> | undefined)?.[String(item.id)] ?? 0) || undefined,
+        packageQty: Number((values.returnPackageQuantities as Record<string, number> | undefined)?.[String(item.id)] ?? 0) || undefined,
+        looseQty: Number((values.returnLooseQuantities as Record<string, number> | undefined)?.[String(item.id)] ?? 0) || undefined,
       }))
       .filter((item) => Number(item.quantity ?? 0) > 0 || Number(item.packageQty ?? 0) > 0 || Number(item.looseQty ?? 0) > 0)
-    const outItems = (values.exchangeItems ?? [])
-      .map((item: Record<string, unknown>) => ({
+
+    const outItems = ((values.exchangeItems as Array<Record<string, unknown>> | undefined) ?? [])
+      .map((item) => ({
         productId: Number(item.productId),
         quantity: Number(item.quantity) || undefined,
         packageQty: Number(item.packageQty) || undefined,
         looseQty: Number(item.looseQty) || undefined,
         unitPrice: Number(item.unitPrice),
       }))
-      .filter((item: { productId: number; quantity?: number; packageQty?: number; looseQty?: number; unitPrice: number }) => item.productId && (Number(item.quantity ?? 0) > 0 || Number(item.packageQty ?? 0) > 0 || Number(item.looseQty ?? 0) > 0))
+      .filter((item) => item.productId && (Number(item.quantity ?? 0) > 0 || Number(item.packageQty ?? 0) > 0 || Number(item.looseQty ?? 0) > 0))
 
-    if (returnItems.length === 0) {
+    return {
+      returnItems,
+      exchangeItems: outItems,
+      refundAmount: Number(values.refundAmount ?? 0),
+      receiveAmount: Number(values.receiveAmount ?? 0),
+      method: (values.method as string | undefined),
+      reasonCode: (values.reasonCode as string | undefined),
+      reasonNote: (values.reasonNote as string | undefined),
+      remark: (values.remark as string | undefined),
+    }
+  }
+
+  const handleCreateExchange = async () => {
+    if (!exchangeRecord) return
+    if (editingExchangeDraftId) {
+      message.warning('草稿编辑中请使用“保存草稿”按钮保存修改')
+      return
+    }
+    const values = await exchangeForm.validateFields()
+    const payload = buildExchangePayload(values as Record<string, unknown>, exchangeRecord)
+
+    if (payload.returnItems.length === 0) {
       message.error('请至少填写一条换回商品数量')
       return
     }
-    if (outItems.length === 0) {
+    if (payload.exchangeItems.length === 0) {
       message.error('请至少填写一条换出商品')
       return
     }
 
-    const order = await saleOrderApi.createExchange(exchangeRecord.id, {
-      returnItems,
-      exchangeItems: outItems,
-      refundAmount: values.refundAmount ?? 0,
-      receiveAmount: values.receiveAmount ?? 0,
-      method: values.method,
-      reasonCode: values.reasonCode,
-      reasonNote: values.reasonNote,
-      remark: values.remark,
-    })
+    const order = await saleOrderApi.createExchange(exchangeRecord.id, payload)
     message.success('换货处理成功')
     setExchangeOpen(false)
     setExchangeRecord(null)
+    setEditingExchangeDraftId(null)
     setDetailRecord(order)
+    loadData()
+  }
+
+  const handleCreateExchangeDraft = async () => {
+    if (!exchangeRecord) return
+    const values = await exchangeForm.validateFields()
+    const payload = buildExchangePayload(values as Record<string, unknown>, exchangeRecord)
+
+    if (payload.returnItems.length === 0) {
+      message.error('请至少填写一条换回商品数量')
+      return
+    }
+    if (payload.exchangeItems.length === 0) {
+      message.error('请至少填写一条换出商品')
+      return
+    }
+
+    if (editingExchangeDraftId) {
+      await saleOrderApi.updateExchangeDraft(exchangeRecord.id, editingExchangeDraftId, payload)
+      message.success('换货草稿修改成功')
+    } else {
+      await saleOrderApi.createExchangeDraft(exchangeRecord.id, payload)
+      message.success('换货草稿保存成功')
+    }
+    setExchangeOpen(false)
+    setExchangeRecord(null)
+    setEditingExchangeDraftId(null)
+    const updated = await saleOrderApi.getById(exchangeRecord.id)
+    setDetailRecord(updated)
+    loadData()
+  }
+
+  const handleEditExchangeDraft = (order: SaleOrder, exchange: SaleExchange) => {
+    const returnItems = (exchange.items ?? []).filter((item) => item.direction === 'return')
+    const outItems = (exchange.items ?? []).filter((item) => item.direction === 'out')
+
+    const returnQuantityMap = Object.fromEntries(
+      (order.items ?? []).map((item) => {
+        const target = returnItems.find((row) => row.saleOrderItemId === item.id)
+        return [String(item.id), Number(target?.quantity ?? 0)]
+      }),
+    )
+
+    const returnPackageQtyMap = Object.fromEntries(
+      (order.items ?? []).map((item) => {
+        const target = returnItems.find((row) => row.saleOrderItemId === item.id)
+        return [String(item.id), Number(target?.packageQty ?? 0)]
+      }),
+    )
+
+    const returnLooseQtyMap = Object.fromEntries(
+      (order.items ?? []).map((item) => {
+        const target = returnItems.find((row) => row.saleOrderItemId === item.id)
+        return [String(item.id), Number(target?.looseQty ?? 0)]
+      }),
+    )
+
+    setExchangeRecord(order)
+    setEditingExchangeDraftId(exchange.id)
+    setExchangeOpen(true)
+    exchangeForm.setFieldsValue({
+      returnQuantities: returnQuantityMap,
+      returnPackageQuantities: returnPackageQtyMap,
+      returnLooseQuantities: returnLooseQtyMap,
+      exchangeItems: outItems.length
+        ? outItems.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            packageQty: item.packageQty,
+            looseQty: item.looseQty,
+            unitPrice: item.unitPrice,
+          }))
+        : [{}],
+      refundAmount: exchange.refundAmount ?? 0,
+      receiveAmount: exchange.receiveAmount ?? 0,
+      reasonCode: exchange.reasonCode,
+      reasonNote: exchange.reasonNote,
+      method: exchange.method,
+      remark: exchange.remark,
+    })
+  }
+
+  const handleCancelExchangeDraft = async (orderId: number, exchangeId: number) => {
+    await saleOrderApi.cancelExchange(orderId, exchangeId)
+    message.success('换货草稿已取消')
+    const updated = await saleOrderApi.getById(orderId)
+    setDetailRecord(updated)
+    loadData()
+  }
+
+  const handleShipExchangeDraft = async (orderId: number, exchangeId: number) => {
+    await saleOrderApi.shipExchangeDraft(orderId, exchangeId)
+    message.success('换货发货已执行')
+    const updated = await saleOrderApi.getById(orderId)
+    setDetailRecord(updated)
+    loadData()
+  }
+
+  const handleSettleExchangeDraft = async (orderId: number, exchangeId: number) => {
+    await saleOrderApi.settleExchangeDraft(orderId, exchangeId)
+    message.success('换货结算已执行')
+    const updated = await saleOrderApi.getById(orderId)
+    setDetailRecord(updated)
     loadData()
   }
 
@@ -636,7 +1105,7 @@ export default function SalePage() {
       exchangeForm.setFieldValue('refundAmount', 0)
       exchangeForm.setFieldValue('receiveAmount', 0)
     }
-    exchangeForm.validateFields(['method']).catch(() => {})
+    exchangeForm.validateFields(['method']).catch(() => { })
   }, [exchangeReturnAmount, exchangeOutAmount])
 
   const renderProductCell = (productName: string | undefined, productId: number) => {
@@ -661,6 +1130,26 @@ export default function SalePage() {
             ))}
           </Space>
         )}
+      </div>
+    )
+  }
+
+  /** 渲染单价 + 参考价对比 */
+  const renderPriceWithRef = (unitPrice: number, productId?: number) => {
+    const sellPrice = productId ? productMap.get(productId)?.sellPrice : undefined
+    if (sellPrice == null || unitPrice === sellPrice) {
+      return `¥${unitPrice.toLocaleString()}`
+    }
+    const diff = unitPrice - sellPrice
+    const color = diff > 0 ? '#52c41a' : '#ff4d4f'
+    const arrow = diff > 0 ? '↑' : '↓'
+    return (
+      <div>
+        <div>¥{unitPrice.toLocaleString()}</div>
+        <div style={{ fontSize: 11, color, lineHeight: '16px' }}>
+          {arrow}¥{Math.abs(diff).toLocaleString()}
+          <span style={{ color: '#999', marginLeft: 4 }}>参考 ¥{sellPrice.toLocaleString()}</span>
+        </div>
       </div>
     )
   }
@@ -753,15 +1242,38 @@ export default function SalePage() {
 
   return (
     <div>
-      <AiRecognizeLoading visible={aiRecognizing} />
+      <AiRecognizeLoading visible={aiRecognizing} current={aiBatchCurrent} total={aiBatchTotal} />
 
-      {/* 隐藏的 AI 识别文件选择框 */}
+      {/* 隐藏的 AI 识别文件选择框（单张） */}
       <input
         ref={aiFileInputRef}
         type="file"
         accept="image/*,.txt,.md,.csv"
         style={{ display: 'none' }}
         onChange={(e) => void handleAiFileSelect(e)}
+      />
+      {/* 隐藏的 AI 识别文件选择框（批量） */}
+      <input
+        ref={aiBatchFileInputRef}
+        type="file"
+        accept="image/*,.txt,.md,.csv"
+        multiple
+        style={{ display: 'none' }}
+        onChange={(e) => void handleAiBatchFiles(e)}
+      />
+
+      <AiBatchPreview
+        open={batchPreviewOpen}
+        results={batchResults}
+        products={products}
+        customers={customers}
+        loading={batchSubmitting}
+        onClose={() => { setBatchPreviewOpen(false); setBatchResults([]) }}
+        onRemove={handleBatchRemove}
+        onUpdate={handleBatchUpdate}
+        onUpdateItem={handleBatchUpdateItem}
+        onSaveDraft={handleBatchSaveDraft}
+        onQuickComplete={handleBatchQuickComplete}
       />
 
       <PageHeader
@@ -770,13 +1282,19 @@ export default function SalePage() {
         className="page-header"
         extra={
           <Space>
-            <Button
-              icon={<RobotOutlined />}
-              loading={aiRecognizing}
-              onClick={() => aiFileInputRef.current?.click()}
+            <Dropdown
+              menu={{
+                items: [
+                  { key: 'single', label: '识别单张', onClick: () => aiFileInputRef.current?.click() },
+                  { key: 'batch', label: '批量识别', onClick: () => aiBatchFileInputRef.current?.click() },
+                ],
+              }}
+              trigger={['click']}
             >
-              AI 识别录单
-            </Button>
+              <Button icon={<RobotOutlined />} loading={aiRecognizing}>
+                AI 识别录单 <DownOutlined />
+              </Button>
+            </Dropdown>
             <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreate} className="page-primary-button">新建销售单</Button>
           </Space>
         }
@@ -805,10 +1323,10 @@ export default function SalePage() {
           <Space style={{ justifyContent: 'flex-end', width: '100%' }}>
             <Button onClick={handleCloseCreate}>取消</Button>
             <Button onClick={handleCreate} style={{ borderColor: '#2D6A4F', color: '#2D6A4F' }}>保存草稿</Button>
-              <Button type="primary" onClick={handleQuickComplete}
-                style={{ background: '#fa8c16', borderColor: '#fa8c16' }}>
-                保存并完成
-              </Button>
+            <Button type="primary" onClick={handleQuickComplete}
+              style={{ background: '#fa8c16', borderColor: '#fa8c16' }}>
+              保存并完成
+            </Button>
           </Space>
         )}
         okText="保存"
@@ -823,12 +1341,12 @@ export default function SalePage() {
             onValuesChange={(changedValues) => {
               if (Object.prototype.hasOwnProperty.call(changedValues, 'paidAmount') && !syncingPaidAmountRef.current) {
                 setPaidAmountTouched(true)
-                void form.validateFields(['method']).catch(() => {})
+                void form.validateFields(['method']).catch(() => { })
               }
             }}
           >
             <Form.Item name="customerId" label="客户（可为空，即散客）">
-              <Select placeholder="选择客户（散客可不填）" allowClear showSearch optionFilterProp="label" options={customers.map((c) => ({ value: c.id, label: c.name }))} />
+              <CustomerSelect customers={customers} placeholder="选择客户（散客可不填）" />
             </Form.Item>
             <div style={{ background: '#f9f9f9', borderRadius: 10, padding: 16, marginBottom: 16 }}>
               <Text type="secondary" style={{ fontSize: 12 }}>商品明细（保存后为草稿，点击出库才会扣库存）</Text>
@@ -839,16 +1357,18 @@ export default function SalePage() {
                       <Space key={`${key}-${fieldProps.name}`} style={{ width: '100%', marginBottom: 8 }} align="start">
                         <Form.Item {...fieldProps} name={[fieldProps.name, 'productId']} rules={[{ required: true, message: '请选择商品' }]} style={{ flex: 1, marginBottom: 0 }}>
                           <ProductSelect
-                            products={products}
+                            lazy
                             onProductChange={(p) => {
-                              if (p) form.setFieldValue(['items', fieldProps.name, 'unitPrice'], p.sellPrice)
+                              if (p) {
+                                form.setFieldValue(['items', fieldProps.name, 'unitPrice'], p.sellPrice)
+                                form.setFieldValue(['items', fieldProps.name, '_product'], p)
+                              }
                             }}
                           />
                         </Form.Item>
                         <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.items?.[fieldProps.name]?.productId !== cur?.items?.[fieldProps.name]?.productId}>
                           {({ getFieldValue }) => {
-                            const selectedProductId = getFieldValue(['items', fieldProps.name, 'productId'])
-                            const selectedProduct = productMap.get(selectedProductId)
+                            const selectedProduct = getFieldValue(['items', fieldProps.name, '_product'])
                             const stockQty = Number(selectedProduct?.stockQty ?? 0)
                             const packageConfig = getProductPackageConfig(selectedProduct)
                             return (
@@ -856,10 +1376,10 @@ export default function SalePage() {
                                 {packageConfig.unit && packageConfig.size > 0 ? (
                                   <>
                                     <Form.Item {...fieldProps} name={[fieldProps.name, 'packageQty']} style={{ marginBottom: 0 }}>
-                                      <InputNumber placeholder={packageConfig.unit} min={0} style={{ width: 82 }} />
+                                       <InputNumber placeholder={packageConfig.unit} min={0} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} style={{ width: 82 }} />
                                     </Form.Item>
                                     <Form.Item {...fieldProps} name={[fieldProps.name, 'looseQty']} style={{ marginBottom: 0 }}>
-                                      <InputNumber placeholder={packageConfig.baseUnit || '散'} min={0} style={{ width: 82 }} />
+                                       <InputNumber placeholder={packageConfig.baseUnit || '散'} min={0} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} style={{ width: 82 }} />
                                     </Form.Item>
                                   </>
                                 ) : (
@@ -874,7 +1394,7 @@ export default function SalePage() {
                                           if (!Number.isFinite(num) || num <= 0) {
                                             return Promise.reject(new Error('数量需大于 0'))
                                           }
-                                          if (selectedProductId && num > stockQty) {
+                                          if (selectedProduct?.id && num > stockQty) {
                                             return Promise.reject(new Error(`数量不能超过库存（${stockQty}）`))
                                           }
                                           return Promise.resolve()
@@ -883,7 +1403,7 @@ export default function SalePage() {
                                     ]}
                                     style={{ marginBottom: 0 }}
                                   >
-                                    <InputNumber placeholder="数量" min={1} max={stockQty} style={{ width: 90 }} />
+                                     <InputNumber placeholder="数量" min={QUANTITY_STEP} max={stockQty} step={QUANTITY_STEP} precision={QUANTITY_PRECISION} style={{ width: 90 }} />
                                   </Form.Item>
                                 )}
                                 <Text type="secondary" style={{ width: 90, lineHeight: '32px', textAlign: 'center' }}>
@@ -902,15 +1422,60 @@ export default function SalePage() {
                 )}
               </Form.List>
             </div>
+            <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.items !== cur?.items}>
+              {({ getFieldValue }) => {
+                const items = getFieldValue('items') || []
+                const currentTotal = items.reduce((sum: number, item: any) => {
+                  const product = getFieldValue(['items', items.indexOf(item), '_product'])
+                  const pkgSize = product?.packageSize ?? 1
+                  const qty = item.packageQty != null || item.looseQty != null
+                    ? (item.packageQty ?? 0) * pkgSize + (item.looseQty ?? 0)
+                    : (item.quantity ?? 0)
+                  return sum + qty * (item.unitPrice ?? 0)
+                }, 0)
+                return (
+                  <div style={{ background: '#f0f5ff', border: '1px solid #adc6ff', borderRadius: 10, padding: 12, marginBottom: 16 }}>
+                    <Space align="center">
+                      <Text type="secondary">当前总价：</Text>
+                      <Text strong style={{ fontSize: 16 }}>¥{currentTotal.toFixed(2)}</Text>
+                      <Divider type="vertical" />
+                      <Text type="secondary">调整总价：</Text>
+                      <InputNumber
+                        prefix="¥"
+                        min={0}
+                        precision={2}
+                        style={{ width: 140 }}
+                        placeholder="输入总价"
+                        value={adjustTotalPrice}
+                        onChange={(v) => setAdjustTotalPrice(v ?? undefined)}
+                      />
+                      <Button
+                        type="primary"
+                        size="small"
+                        disabled={adjustTotalPrice == null || items.length === 0 || adjustTotalPrice === currentTotal}
+                        onClick={handleAdjustPrices}
+                      >
+                        按总价调整单价
+                      </Button>
+                      {adjustTotalPrice != null && adjustTotalPrice !== currentTotal && (
+                        <Text type="warning" style={{ fontSize: 12 }}>
+                          差额：¥{(adjustTotalPrice - currentTotal).toFixed(2)}
+                        </Text>
+                      )}
+                    </Space>
+                  </div>
+                )
+              }}
+            </Form.Item>
             <Form.Item name="remark" label="备注"><Input.TextArea rows={2} placeholder="备注信息" /></Form.Item>
             {!editId && (
               <div style={{ background: '#fff7e6', border: '1px solid #ffd591', borderRadius: 10, padding: 16, marginTop: 4 }}>
                 <Text style={{ fontSize: 12, color: '#ad6800', display: 'block', marginBottom: 12 }}>
-                  快捷完成时会自动出库并登记收款；不填实收金额时，默认按订单总金额收款。
+                  快捷完成时会自动出库并登记收款；会根据商品与数量自动计算实收金额，必须要选择收款方式。
                 </Text>
                 <Space>
                   <Form.Item name="paidAmount" label="实收金额" style={{ marginBottom: 0 }}>
-                    <InputNumber prefix="¥" min={0} precision={2} style={{ width: 160 }} placeholder="按订单金额自动填充" onChange={() => form.validateFields(['method']).catch(() => {})} />
+                    <InputNumber prefix="¥" min={0} precision={2} style={{ width: 160 }} placeholder="按订单金额自动填充" onChange={() => form.validateFields(['method']).catch(() => { })} />
                   </Form.Item>
                   <Form.Item
                     name="method"
@@ -930,7 +1495,7 @@ export default function SalePage() {
                     ]}
                   >
                     <Select style={{ width: 140 }} placeholder="选择方式" allowClear
-                      options={['现金', '微信', '支付宝', '转账', '其他'].map((m) => ({ value: m, label: m }))} />
+                      options={PAYMENT_METHOD_OPTIONS} />
                   </Form.Item>
                 </Space>
               </div>
@@ -957,7 +1522,7 @@ export default function SalePage() {
               </Descriptions>
 
               <Divider orientation="left">销售明细</Divider>
-              {(detailRecord.items?.length ?? 0) > 0 ? <Table size="small" rowKey="id" pagination={false} dataSource={detailRecord.items} columns={[{ title: '商品', render: (_: unknown, row) => renderProductCell(row.productName, row.productId) }, { title: '销售数量', width: 120, render: (_: unknown, row) => formatCompositeQuantity(row) }, { title: '已退数量', dataIndex: 'returnedQuantity', width: 100, render: (v: number) => v || 0 }, { title: '可退数量', dataIndex: 'remainingQuantity', width: 100, render: (v: number) => v || 0 }, { title: '单价', dataIndex: 'unitPrice', width: 100, render: (v: number) => `¥${v.toLocaleString()}` }, { title: '小计', dataIndex: 'subtotal', width: 120, render: (v: number) => `¥${v.toLocaleString()}` }]} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无销售明细" />}
+              {(detailRecord.items?.length ?? 0) > 0 ? <Table size="small" rowKey="id" pagination={false} dataSource={detailRecord.items} columns={[{ title: '商品', render: (_: unknown, row) => renderProductCell(row.productName, row.productId) }, { title: '销售数量', width: 120, render: (_: unknown, row) => formatCompositeQuantity(row) }, { title: '已退数量', dataIndex: 'returnedQuantity', width: 100, render: (v: number) => v || 0 }, { title: '可退数量', dataIndex: 'remainingQuantity', width: 100, render: (v: number) => v || 0 }, { title: '单价', width: 140, render: (_: unknown, row) => renderPriceWithRef(row.unitPrice, row.productId) }, { title: '小计', dataIndex: 'subtotal', width: 120, render: (v: number) => `¥${v.toLocaleString()}` }]} /> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无销售明细" />}
 
               <Divider orientation="left">退货记录</Divider>
               {(detailRecord.returns?.length ?? 0) > 0 ? detailRecord.returns?.map((item) => (
@@ -971,7 +1536,7 @@ export default function SalePage() {
                     </Space>
                     <Text type="secondary">原因说明：{item.reasonNote || '-'}</Text>
                     <Text type="secondary">备注：{item.remark || '-'}</Text>
-                    <Table size="small" rowKey="id" pagination={false} dataSource={item.items ?? []} columns={[{ title: '商品', render: (_: unknown, row) => renderProductCell(row.productName, row.productId) }, { title: '退货数量', width: 120, render: (_: unknown, row) => formatCompositeQuantity(row) }, { title: '单价', dataIndex: 'unitPrice', width: 100, render: (v: number) => `¥${v.toLocaleString()}` }, { title: '小计', dataIndex: 'subtotal', width: 120, render: (v: number) => `¥${v.toLocaleString()}` }]} />
+                    <Table size="small" rowKey="id" pagination={false} dataSource={item.items ?? []} columns={[{ title: '商品', render: (_: unknown, row) => renderProductCell(row.productName, row.productId) }, { title: '退货数量', width: 120, render: (_: unknown, row) => formatCompositeQuantity(row) }, { title: '单价', width: 140, render: (_: unknown, row) => renderPriceWithRef(row.unitPrice, row.productId) }, { title: '小计', dataIndex: 'subtotal', width: 120, render: (v: number) => `¥${v.toLocaleString()}` }]} />
                   </Space>
                 </Card>
               )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无退货记录" />}
@@ -983,17 +1548,65 @@ export default function SalePage() {
               {(detailRecord.exchanges?.length ?? 0) > 0 ? detailRecord.exchanges?.map((item) => (
                 <Card key={item.id} size="small" style={{ marginBottom: 12, borderRadius: 10 }}>
                   <Space direction="vertical" size={8} style={{ width: '100%' }}>
+                    <Space wrap style={{ width: '100%', justifyContent: 'space-between' }}>
+                      <Space wrap>
+                        <Text strong>{item.exchangeNo}</Text>
+                        <Tag color={EXCHANGE_STATUS_MAP[item.status || 'completed']?.color || 'default'}>
+                          {EXCHANGE_STATUS_MAP[item.status || 'completed']?.label || item.status || '已完成'}
+                        </Tag>
+                        <Text type="secondary">换回金额 ¥{item.returnAmount.toLocaleString()}</Text>
+                        <Text type="secondary">换出金额 ¥{item.exchangeAmount.toLocaleString()}</Text>
+                        <Text type="secondary">退款金额 ¥{item.refundAmount.toLocaleString()}</Text>
+                        <Text type="secondary">补差收款 ¥{(item.receiveAmount ?? 0).toLocaleString()}</Text>
+                        <Tag>{AFTER_SALE_REASON_LABELS[item.reasonCode || ''] || '未分类'}</Tag>
+                      </Space>
+                      {item.status !== 'cancelled' && item.status !== 'completed' && (
+                        <Space>
+                          {item.status === 'draft' && <Button size="small" type="link" onClick={() => handleEditExchangeDraft(detailRecord, item)}>编辑草稿</Button>}
+                          {item.exchangeStockDone !== 1 && (
+                            <Popconfirm
+                              title="确认执行换货发货？"
+                              description="将执行换回入库和换出出库，不处理退款或补差"
+                              okText="确认发货"
+                              cancelText="取消"
+                              onConfirm={() => handleShipExchangeDraft(detailRecord.id, item.id)}
+                            >
+                              <Button size="small" type="link" style={{ color: '#2D6A4F' }}>发货</Button>
+                            </Popconfirm>
+                          )}
+                          {(Number(item.refundAmount ?? 0) > 0 || Number(item.receiveAmount ?? 0) > 0) && item.paymentDone !== 1 && (
+                            <Popconfirm
+                              title={Number(item.refundAmount ?? 0) > 0 ? '确认执行退款？' : '确认执行补差收款？'}
+                              description={Number(item.refundAmount ?? 0) > 0 ? '将按草稿金额执行退款' : '将按草稿金额执行补差收款'}
+                              okText={Number(item.refundAmount ?? 0) > 0 ? '确认退款' : '确认补钱'}
+                              cancelText="取消"
+                              onConfirm={() => handleSettleExchangeDraft(detailRecord.id, item.id)}
+                            >
+                              <Button size="small" type="link" style={{ color: '#1677ff' }}>
+                                {Number(item.refundAmount ?? 0) > 0 ? '退款' : '补钱'}
+                              </Button>
+                            </Popconfirm>
+                          )}
+                          {item.status === 'draft' && (
+                            <Popconfirm
+                              title="确认取消该换货草稿吗？"
+                              okText="确认取消"
+                              cancelText="再想想"
+                              onConfirm={() => handleCancelExchangeDraft(detailRecord.id, item.id)}
+                            >
+                              <Button size="small" type="link" danger>取消草稿</Button>
+                            </Popconfirm>
+                          )}
+                        </Space>
+                      )}
+                    </Space>
                     <Space wrap>
-                      <Text strong>{item.exchangeNo}</Text>
-                      <Text type="secondary">换回金额 ¥{item.returnAmount.toLocaleString()}</Text>
-                      <Text type="secondary">换出金额 ¥{item.exchangeAmount.toLocaleString()}</Text>
-                      <Text type="secondary">退款金额 ¥{item.refundAmount.toLocaleString()}</Text>
-                      <Text type="secondary">补差收款 ¥{(item.receiveAmount ?? 0).toLocaleString()}</Text>
-                      <Tag>{AFTER_SALE_REASON_LABELS[item.reasonCode || ''] || '未分类'}</Tag>
+                      <Text type="secondary">库存：{item.exchangeStockDone === 1 ? '已发货' : '未发货'}</Text>
+                      <Text type="secondary">结算：{item.paymentDone === 1 ? '已处理' : (Number(item.refundAmount ?? 0) > 0 || Number(item.receiveAmount ?? 0) > 0 ? '待处理' : '无需处理')}</Text>
                     </Space>
                     <Text type="secondary">原因说明：{item.reasonNote || '-'}</Text>
                     <Text type="secondary">备注：{item.remark || '-'}</Text>
-                    <Table size="small" rowKey="id" pagination={false} dataSource={item.items ?? []} columns={[{ title: '方向', dataIndex: 'direction', width: 60, render: (v: string) => v === 'return' ? '换回' : '换出' }, { title: '商品', render: (_: unknown, row) => renderProductCell(row.productName, row.productId) }, { title: '数量', width: 120, render: (_: unknown, row) => formatCompositeQuantity(row) }, { title: '单价', dataIndex: 'unitPrice', width: 100, render: (v: number) => `¥${v.toLocaleString()}` }, { title: '小计', dataIndex: 'subtotal', width: 120, render: (v: number) => `¥${v.toLocaleString()}` }]} />
+                    <Table size="small" rowKey="id" pagination={false} dataSource={item.items ?? []} columns={[{ title: '方向', dataIndex: 'direction', width: 60, render: (v: string) => v === 'return' ? '换回' : '换出' }, { title: '商品', render: (_: unknown, row) => renderProductCell(row.productName, row.productId) }, { title: '数量', width: 120, render: (_: unknown, row) => formatCompositeQuantity(row) }, { title: '单价', width: 140, render: (_: unknown, row) => renderPriceWithRef(row.unitPrice, row.productId) }, { title: '小计', dataIndex: 'subtotal', width: 120, render: (v: number) => `¥${v.toLocaleString()}` }]} />
                   </Space>
                 </Card>
               )) : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="暂无换货记录" />}
@@ -1011,9 +1624,9 @@ export default function SalePage() {
                 <Text type="secondary" style={{ fontSize: 12 }}>填写每个商品的本次退货数量，不能超过可退数量</Text>
                 <Space direction="vertical" size={10} style={{ width: '100%', marginTop: 12 }}>
                   {(returnRecord.items ?? []).map((item) => (
-                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 180px', gap: 12, alignItems: 'center' }}>
+                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px 90px 180px', gap: 12, alignItems: 'center' }}>
                       <div><Text strong>{item.productName}</Text><div><Text type="secondary">已售 {formatCompositeQuantity(item)}，可退 {item.remainingQuantity ?? 0}{item.unit || ''}</Text></div></div>
-                      <Text>¥{item.unitPrice.toLocaleString()}</Text>
+                      <div>{renderPriceWithRef(item.unitPrice, item.productId)}</div>
                       <Text type="secondary">可退 {item.remainingQuantity ?? 0}</Text>
                       {item.packageUnit && item.packageSize ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1036,11 +1649,13 @@ export default function SalePage() {
                     name="method"
                     label="退款方式"
                     dependencies={['refundAmount']}
-                    rules={[{ validator(_, value) {
-                      const amount = Number(returnForm.getFieldValue('refundAmount') ?? 0)
-                      if (amount > 0 && !value) return Promise.reject(new Error('有退款金额时必须选择退款方式'))
-                      return Promise.resolve()
-                    } }]}
+                    rules={[{
+                      validator(_, value) {
+                        const amount = Number(returnForm.getFieldValue('refundAmount') ?? 0)
+                        if (amount > 0 && !value) return Promise.reject(new Error('有退款金额时必须选择退款方式'))
+                        return Promise.resolve()
+                      }
+                    }]}
                   >
                     <Select allowClear options={PAYMENT_METHOD_OPTIONS} placeholder="请选择退款方式" />
                   </Form.Item>
@@ -1068,11 +1683,13 @@ export default function SalePage() {
                     name="method"
                     label="退款方式"
                     dependencies={['amount']}
-                    rules={[{ validator(_, value) {
-                      const amount = Number(refundForm.getFieldValue('amount') ?? 0)
-                      if (amount > 0 && !value) return Promise.reject(new Error('有退款金额时必须选择退款方式'))
-                      return Promise.resolve()
-                    } }]}
+                    rules={[{
+                      validator(_, value) {
+                        const amount = Number(refundForm.getFieldValue('amount') ?? 0)
+                        if (amount > 0 && !value) return Promise.reject(new Error('有退款金额时必须选择退款方式'))
+                        return Promise.resolve()
+                      }
+                    }]}
                   >
                     <Select allowClear options={PAYMENT_METHOD_OPTIONS} placeholder="请选择退款方式" />
                   </Form.Item>
@@ -1088,7 +1705,26 @@ export default function SalePage() {
         </Spin>
       </Modal>
 
-      <Modal title={`销售换货：${exchangeRecord?.orderNo ?? ''}`} open={exchangeOpen} onOk={handleCreateExchange} onCancel={() => { setExchangeOpen(false); setExchangeRecord(null) }} width={820} okText="确认换货" okButtonProps={{ style: { background: '#2D6A4F', borderColor: '#2D6A4F' } }} destroyOnHidden>
+      <Modal
+        title={`${editingExchangeDraftId ? '编辑换货草稿' : '销售换货'}：${exchangeRecord?.orderNo ?? ''}`}
+        open={exchangeOpen}
+        onCancel={() => { setExchangeOpen(false); setExchangeRecord(null); setEditingExchangeDraftId(null) }}
+        width={820}
+        destroyOnHidden
+        footer={(
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <Button onClick={() => { setExchangeOpen(false); setExchangeRecord(null); setEditingExchangeDraftId(null) }}>取消</Button>
+            <Button onClick={handleCreateExchangeDraft} style={{ background: '#fa8c16', borderColor: '#fa8c16', color: '#fff' }}>
+              {editingExchangeDraftId ? '保存修改' : '保存草稿'}
+            </Button>
+            {!editingExchangeDraftId && (
+              <Button type="primary" onClick={handleCreateExchange} style={{ background: '#2D6A4F', borderColor: '#2D6A4F' }}>
+                确认换货
+              </Button>
+            )}
+          </div>
+        )}
+      >
         <Spin spinning={afterSaleLoading}>
           {exchangeRecord && (
             <Form form={exchangeForm} layout="vertical">
@@ -1132,9 +1768,9 @@ export default function SalePage() {
               <div style={{ background: '#f9f9f9', borderRadius: 10, padding: 16, marginBottom: 16 }}>
                 <Space direction="vertical" size={10} style={{ width: '100%' }}>
                   {(exchangeRecord.items ?? []).map((item) => (
-                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 90px 90px 180px', gap: 12, alignItems: 'center' }}>
+                    <div key={item.id} style={{ display: 'grid', gridTemplateColumns: '1fr 110px 90px 180px', gap: 12, alignItems: 'center' }}>
                       <div><Text strong>{item.productName}</Text><div><Text type="secondary">已售 {formatCompositeQuantity(item)}，可换回 {item.remainingQuantity ?? 0}{item.unit || ''}</Text></div></div>
-                      <Text>¥{item.unitPrice.toLocaleString()}</Text>
+                      <div>{renderPriceWithRef(item.unitPrice, item.productId)}</div>
                       <Text type="secondary">可退 {item.remainingQuantity ?? 0}</Text>
                       {item.packageUnit && item.packageSize ? (
                         <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -1194,12 +1830,14 @@ export default function SalePage() {
                     name="method"
                     label="结算方式"
                     dependencies={['refundAmount', 'receiveAmount']}
-                    rules={[{ validator(_, value) {
-                      const refund = Number(exchangeForm.getFieldValue('refundAmount') ?? 0)
-                      const receive = Number(exchangeForm.getFieldValue('receiveAmount') ?? 0)
-                      if ((refund > 0 || receive > 0) && !value) return Promise.reject(new Error('有退款或收款金额时必须选择结算方式'))
-                      return Promise.resolve()
-                    } }]}
+                    rules={[{
+                      validator(_, value) {
+                        const refund = Number(exchangeForm.getFieldValue('refundAmount') ?? 0)
+                        const receive = Number(exchangeForm.getFieldValue('receiveAmount') ?? 0)
+                        if ((refund > 0 || receive > 0) && !value) return Promise.reject(new Error('有退款或收款金额时必须选择结算方式'))
+                        return Promise.resolve()
+                      }
+                    }]}
                   >
                     <Select allowClear options={PAYMENT_METHOD_OPTIONS} placeholder="请选择结算方式" />
                   </Form.Item>
@@ -1238,11 +1876,13 @@ export default function SalePage() {
               name="method"
               label="支付方式"
               dependencies={['amount']}
-              rules={[{ validator(_, value) {
-                const amount = Number(collectForm.getFieldValue('amount') ?? 0)
-                if (amount > 0 && !value) return Promise.reject(new Error('有收款金额时必须选择支付方式'))
-                return Promise.resolve()
-              } }]}
+              rules={[{
+                validator(_, value) {
+                  const amount = Number(collectForm.getFieldValue('amount') ?? 0)
+                  if (amount > 0 && !value) return Promise.reject(new Error('有收款金额时必须选择支付方式'))
+                  return Promise.resolve()
+                }
+              }]}
             >
               <Select placeholder="请选择支付方式" allowClear options={PAYMENT_METHOD_OPTIONS} />
             </Form.Item>

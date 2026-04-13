@@ -49,6 +49,9 @@ function flattenCategories(categories: Category[]): Category[] {
 
 export default function ProductsPage() {
   const [list, setList] = useState<Product[]>([])
+  const [total, setTotal] = useState(0)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
   const [categories, setCategories] = useState<Category[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
@@ -242,11 +245,12 @@ export default function ProductsPage() {
     setLoading(true)
     try {
       const [res, cats, meta] = await Promise.all([
-        productApi.list({ keyword, categoryId: categoryFilter }),
+        productApi.list({ keyword, categoryId: categoryFilter, page, pageSize }),
         productApi.categories(),
         productApi.meta(),
       ])
       setList(res.list)
+      setTotal(res.total)
       setCategories(cats)
       setProductMeta(meta)
     } finally {
@@ -254,7 +258,7 @@ export default function ProductsPage() {
     }
   }
 
-  useEffect(() => { loadData() }, [keyword, categoryFilter])
+  useEffect(() => { loadData() }, [keyword, categoryFilter, page, pageSize])
 
   const handleCategoryChange = (value?: number) => {
     if (!value) {
@@ -420,7 +424,7 @@ export default function ProductsPage() {
             prefix={<SearchOutlined />}
             placeholder="搜索商品名称/SKU"
             value={keyword}
-            onChange={(e) => setKeyword(e.target.value)}
+            onChange={(e) => { setKeyword(e.target.value); setPage(1) }}
             style={{ width: 220 }}
             allowClear
           />
@@ -430,7 +434,7 @@ export default function ProductsPage() {
             style={{ width: 220 }}
             treeData={buildTreeData(categories)}
             treeDefaultExpandAll
-            onChange={(value) => setCategoryFilter(value as number | undefined)}
+            onChange={(value) => { setCategoryFilter(value as number | undefined); setPage(1) }}
           />
           <Button icon={<PrinterOutlined />} onClick={handleBatchPrint} disabled={selectedRowKeys.length === 0}>
             批量打印标签 ({selectedRowKeys.length})
@@ -451,10 +455,16 @@ export default function ProductsPage() {
             onChange: (keys) => setSelectedRowKeys(keys),
           }}
           pagination={{
-          pageSize: 10,
+          current: page,
+          pageSize,
+          total,
           showTotal: (t) => `共 ${t} 条`,
           showSizeChanger: true,
           showQuickJumper: true,
+          onChange: (p, ps) => {
+            setPage(p)
+            setPageSize(ps)
+          },
         }}
         />
       </Card>

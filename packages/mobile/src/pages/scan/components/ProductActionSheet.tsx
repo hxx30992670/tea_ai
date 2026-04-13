@@ -5,7 +5,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody, SheetClose } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Badge } from '@/components/ui/badge'
-import { formatMoney, STOCK_IN_REASONS, STOCK_OUT_REASONS } from '@/lib/utils'
+import { formatMoney, formatNumber, parseDecimal, roundQuantity, STOCK_IN_REASONS, STOCK_OUT_REASONS } from '@/lib/utils'
 import type { Product, StockOperationPayload } from '@/types'
 import type { ActionType } from '../hooks/useStockAction'
 
@@ -35,8 +35,8 @@ export function ProductActionSheet({
 
   const handleAction = async (type: ActionType) => {
     if (!product) return
-    const pkg = parseInt(packageQty) || 0
-    const loose = parseInt(looseQty) || 0
+    const pkg = roundQuantity(parseDecimal(packageQty))
+    const loose = roundQuantity(parseDecimal(looseQty))
     if (pkg === 0 && loose === 0) return
 
     const selectedReason = reason || (type === 'in' ? 'surplus' : 'damage')
@@ -228,20 +228,22 @@ function NumberStepper({ value, onChange, min = 0 }: { value: string; onChange: 
   return (
     <div className="flex items-center gap-2">
       <button
-        onClick={() => onChange(String(Math.max(min, parseInt(value) - 1)))}
+        onClick={() => onChange(String(roundQuantity(Math.max(min, parseDecimal(value) - 1))))}
         className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary text-lg font-bold tap-scale"
       >
         −
       </button>
       <Input
         type="number"
+        inputMode="decimal"
+        pattern="[0-9.]*"
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="text-center text-lg font-semibold"
         min={min}
       />
       <button
-        onClick={() => onChange(String(parseInt(value) + 1))}
+        onClick={() => onChange(String(roundQuantity(parseDecimal(value) + 1)))}
         className="flex h-10 w-10 items-center justify-center rounded-lg border border-border bg-secondary text-lg font-bold tap-scale"
       >
         ＋

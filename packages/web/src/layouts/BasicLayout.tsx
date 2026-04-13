@@ -6,7 +6,7 @@
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import {
-  Layout, Menu, Avatar, Dropdown, Space, Badge, Tag,
+  Layout, Menu, Avatar, Dropdown, Space, Tag,
   Typography, Button, theme,
 } from 'antd'
 import {
@@ -14,7 +14,7 @@ import {
   ShoppingCartOutlined, ShoppingOutlined, TeamOutlined,
   BankOutlined, PayCircleOutlined, RobotOutlined,
   SettingOutlined, UserOutlined, LogoutOutlined,
-  KeyOutlined, BellOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
+  KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
 } from '@ant-design/icons'
 import { useAuthStore } from '@/store/auth'
 
@@ -173,10 +173,6 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
           />
 
           <Space size={16}>
-            <Badge count={3} size="small">
-              <Button type="text" icon={<BellOutlined />} />
-            </Badge>
-
             <Dropdown menu={{ items: userMenuItems, onClick: handleUserMenu }} placement="bottomRight">
               <Space style={{ cursor: 'pointer' }}>
                 <Avatar style={{ background: token.colorPrimary }}>

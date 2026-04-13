@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMinSize,
   IsArray,
+  IsIn,
   IsInt,
   IsNumber,
   IsOptional,
@@ -10,8 +11,9 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
+import { PAYMENT_METHOD_VALUES, type PaymentMethod } from '../../../common/constants/order-status';
 
-class SaleExchangeReturnItemDto {
+export class SaleExchangeReturnItemDto {
   @ApiProperty({ description: '原销售明细 ID', example: 1 })
   @Type(() => Number)
   @IsInt()
@@ -21,26 +23,26 @@ class SaleExchangeReturnItemDto {
   @ApiPropertyOptional({ description: '换回数量（基准单位）', example: 1 })
   @Type(() => Number)
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   quantity?: number;
 
   @ApiPropertyOptional({ description: '换回包装数量', example: 1 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   packageQty?: number;
 
   @ApiPropertyOptional({ description: '换回散数量（基准单位）', example: 3 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   looseQty?: number;
 }
 
-class SaleExchangeOutItemDto {
+export class SaleExchangeOutItemDto {
   @ApiProperty({ description: '换出商品 ID', example: 2 })
   @Type(() => Number)
   @IsInt()
@@ -50,21 +52,21 @@ class SaleExchangeOutItemDto {
   @ApiPropertyOptional({ description: '换出数量（基准单位）', example: 1 })
   @Type(() => Number)
   @IsOptional()
-  @IsInt()
+  @IsNumber()
   @Min(0)
   quantity?: number;
 
   @ApiPropertyOptional({ description: '换出包装数量', example: 1 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   packageQty?: number;
 
   @ApiPropertyOptional({ description: '换出散数量（基准单位）', example: 3 })
   @IsOptional()
   @Type(() => Number)
-  @IsInt()
+  @IsNumber()
   @Min(0)
   looseQty?: number;
 
@@ -76,6 +78,10 @@ class SaleExchangeOutItemDto {
 }
 
 export class CreateSaleExchangeDto {
+  @ApiPropertyOptional({ description: '保存为草稿（不立即执行库存与支付动作）', example: false, default: false })
+  @IsOptional()
+  saveAsDraft?: boolean;
+
   @ApiProperty({ description: '换回明细', type: [SaleExchangeReturnItemDto] })
   @IsArray()
   @ArrayMinSize(1)
@@ -104,10 +110,11 @@ export class CreateSaleExchangeDto {
   @Min(0)
   receiveAmount?: number;
 
-  @ApiPropertyOptional({ description: '退款或补差收款方式', example: '微信' })
+  @ApiPropertyOptional({ description: '退款或补差收款方式', example: '微信', enum: PAYMENT_METHOD_VALUES })
   @IsOptional()
   @IsString()
-  method?: string;
+  @IsIn(PAYMENT_METHOD_VALUES)
+  method?: PaymentMethod;
 
   @ApiPropertyOptional({ description: '售后原因编码', example: 'wrong_goods' })
   @IsOptional()

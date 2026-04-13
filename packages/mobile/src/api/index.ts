@@ -1,6 +1,8 @@
 import axios from 'axios'
 import { useAuthStore } from '@/store/auth'
 
+const loginPath = `${import.meta.env.BASE_URL}login`
+
 const request = axios.create({
   baseURL: '/api',
   timeout: 15000,
@@ -24,7 +26,7 @@ request.interceptors.response.use(
   (error) => {
     if (error.response?.status === 401) {
       useAuthStore.getState().logout()
-      window.location.href = '/login'
+      window.location.href = loginPath
     }
     return Promise.reject(error)
   },

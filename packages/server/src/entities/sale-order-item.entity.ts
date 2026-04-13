@@ -11,13 +11,13 @@ export class SaleOrderItemEntity {
   @Column({ name: 'product_id', type: 'integer' })
   productId!: number;
 
-  @Column({ type: 'integer' })
+  @Column({ type: 'real' })
   quantity!: number;
 
-  @Column({ name: 'package_qty', type: 'integer', nullable: true })
+  @Column({ name: 'package_qty', type: 'real', nullable: true })
   packageQty!: number | null;
 
-  @Column({ name: 'loose_qty', type: 'integer', nullable: true })
+  @Column({ name: 'loose_qty', type: 'real', nullable: true })
   looseQty!: number | null;
 
   @Column({ name: 'package_unit', type: 'text', nullable: true })

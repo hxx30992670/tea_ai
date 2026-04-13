@@ -2,6 +2,9 @@ import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from 'react
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/AppLayout'
 
+const appBasePath = import.meta.env.BASE_URL
+const routerBaseName = appBasePath === '/' ? undefined : appBasePath.replace(/\/$/, '')
+
 // 懒加载所有页面
 const LoginPage = lazy(() => import('@/pages/login'))
 const DashboardPage = lazy(() => import('@/pages/dashboard'))
@@ -48,7 +51,7 @@ class AppErrorBoundary extends Component<
           <button
             onClick={() => {
               this.setState({ hasError: false, message: '' })
-              window.location.href = '/'
+              window.location.href = appBasePath
             }}
             className="rounded-lg bg-primary px-5 py-2.5 text-sm font-semibold text-primary-foreground"
           >
@@ -102,7 +105,9 @@ const router = createBrowserRouter([
       { path: '*', element: <Navigate to="/dashboard" replace /> },
     ],
   },
-])
+], {
+  basename: routerBaseName,
+})
 
 export default function App() {
   return (

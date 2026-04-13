@@ -30,10 +30,10 @@ const INTENT_OPTIONS = [
 ]
 
 const INTENT_CONFIG: Record<string, { color: string; text: string }> = {
-  high:   { color: 'green',  text: '高意向' },
-  medium: { color: 'blue',   text: '一般' },
-  low:    { color: 'default', text: '暂无需求' },
-  lost:   { color: 'red',    text: '已流失' },
+  high: { color: 'green', text: '高意向' },
+  medium: { color: 'blue', text: '一般' },
+  low: { color: 'default', text: '暂无需求' },
+  lost: { color: 'red', text: '已流失' },
 }
 
 const FOLLOW_TYPE_LABEL: Record<string, string> = {
@@ -59,6 +59,7 @@ export default function CustomersPage() {
   const [followUpOpen, setFollowUpOpen] = useState(false)
   const [followUps, setFollowUps] = useState<FollowUp[]>([])
   const [followUpCustomer, setFollowUpCustomer] = useState<Customer | null>(null)
+  const [editingFollowUp, setEditingFollowUp] = useState<FollowUp | null>(null)
   const [statementOpen, setStatementOpen] = useState(false)
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null)
   const [statementOrders, setStatementOrders] = useState<SaleOrder[]>([])
@@ -75,7 +76,7 @@ export default function CustomersPage() {
 
   useEffect(() => {
     loadData()
-    systemApi.getSettings().then(s => setShopName(s.shopName)).catch(() => {})
+    systemApi.getSettings().then(s => setShopName(s.shopName)).catch(() => { })
   }, [])
 
   const handleOpenStatement = async (customer: Customer) => {
@@ -109,22 +110,51 @@ export default function CustomersPage() {
   const openFollowUps = async (customer: Customer) => {
     setFollowUpCustomer(customer)
     setFollowUpOpen(true)
+    setEditingFollowUp(null)
+    followUpForm.resetFields()
     const res = await customerApi.followUps({ customerId: customer.id, page: 1, pageSize: 20 })
     setFollowUps(res.list)
   }
 
-  const handleCreateFollowUp = async () => {
+  const handleSaveFollowUp = async () => {
     if (!followUpCustomer) return
     const values = await followUpForm.validateFields()
-    await customerApi.createFollowUp({
-      customerId: followUpCustomer.id,
+    const payload = {
       content: values.content,
       followType: values.followType,
       intentLevel: values.intentLevel,
       nextFollowDate: values.nextFollowDate ? values.nextFollowDate.toISOString() : undefined,
-    })
+    }
+
+    if (editingFollowUp) {
+      await customerApi.updateFollowUp(editingFollowUp.id, payload)
+      message.success('跟进记录已更新')
+    } else {
+      await customerApi.createFollowUp({
+        customerId: followUpCustomer.id,
+        ...payload,
+      })
+      message.success('跟进记录已新增')
+    }
+
+    setEditingFollowUp(null)
     followUpForm.resetFields()
     await openFollowUps(followUpCustomer)
+  }
+
+  const handleEditFollowUp = (record: FollowUp) => {
+    setEditingFollowUp(record)
+    followUpForm.setFieldsValue({
+      followType: record.followType,
+      intentLevel: record.intentLevel,
+      content: record.content,
+      nextFollowDate: record.nextFollowDate ? dayjs(record.nextFollowDate) : undefined,
+    })
+  }
+
+  const handleCancelEditFollowUp = () => {
+    setEditingFollowUp(null)
+    followUpForm.resetFields()
   }
 
   // 从跟进记录推断客户最新意向
@@ -138,20 +168,20 @@ export default function CustomersPage() {
 
   const columns = [
     {
-      title: '客户名称', dataIndex: 'name', width: 160,
+      title: '客户名称', dataIndex: 'name',
       render: (v: string) => <Text strong>{v}</Text>,
     },
-    { title: '联系人', dataIndex: 'contactName', width: 90 },
+    { title: '联系人', dataIndex: 'contactName', },
     {
-      title: '电话', dataIndex: 'phone', width: 130,
+      title: '电话', dataIndex: 'phone',
       render: (v?: string) => v ? <Space size={4}><PhoneOutlined />{v}</Space> : '-',
     },
     {
-      title: '意向', width: 90,
+      title: '意向',
       render: (_: unknown, r: Customer) => <IntentTag level={getLatestIntent(r)} />,
     },
     {
-      title: '下次跟进', width: 110,
+      title: '计划跟进',
       render: (_: unknown, r: Customer) => {
         const d = getNextFollowDate(r)
         if (!d) return <Text type="secondary">-</Text>
@@ -165,11 +195,11 @@ export default function CustomersPage() {
       },
     },
     {
-      title: '累计交易', dataIndex: 'totalAmount', width: 110, align: 'right' as const,
+      title: '累计交易', dataIndex: 'totalAmount', align: 'right' as const,
       render: (v?: number) => v ? <Text strong>¥{v.toLocaleString()}</Text> : '-',
     },
     {
-      title: '应收欠款', dataIndex: 'receivableAmount', width: 110, align: 'right' as const,
+      title: '应收欠款', dataIndex: 'receivableAmount', align: 'right' as const,
       render: (v?: number) => v && v > 0
         ? <Text type="danger">¥{v.toLocaleString()}</Text>
         : <Text type="success">¥0</Text>,
@@ -231,7 +261,7 @@ export default function CustomersPage() {
       </Row>
 
       <Card className="page-card page-card--flat">
-        <Table columns={columns} dataSource={list} rowKey="id" loading={loading} scroll={{ x: 900 }}
+        <Table columns={columns} dataSource={list} rowKey="id" loading={loading} scroll={{ x: true }}
           pagination={{ pageSize: 10 }}
           rowClassName={(r) => isOverdue(getNextFollowDate(r)) ? 'overdue-row' : ''}
         />
@@ -269,7 +299,11 @@ export default function CustomersPage() {
           </Space>
         }
         open={followUpOpen}
-        onCancel={() => setFollowUpOpen(false)}
+        onCancel={() => {
+          setFollowUpOpen(false)
+          setEditingFollowUp(null)
+          followUpForm.resetFields()
+        }}
         footer={null}
         width={700}
       >
@@ -277,31 +311,36 @@ export default function CustomersPage() {
           <Form form={followUpForm} layout="vertical">
             <Row gutter={12}>
               <Col span={12}>
-                <Form.Item name="followType" label="跟进方式">
-                  <Select placeholder="选择方式" options={FOLLOW_TYPE_OPTIONS} allowClear />
+                <Form.Item name="followType" label="跟进方式" rules={[{ required: true, message: '请选择跟进方式' }]}>
+                  <Select placeholder="选择方式" options={FOLLOW_TYPE_OPTIONS} />
                 </Form.Item>
               </Col>
               <Col span={12}>
-                <Form.Item name="intentLevel" label="客户意向">
-                  <Select placeholder="选择意向" options={INTENT_OPTIONS} allowClear />
+                <Form.Item name="intentLevel" label="客户意向" rules={[{ required: true, message: '请选择客户意向' }]}>
+                  <Select placeholder="选择意向" options={INTENT_OPTIONS} />
                 </Form.Item>
               </Col>
             </Row>
             <Form.Item name="content" label="跟进内容" rules={[{ required: true, message: '请填写跟进内容' }]}>
-              <Input.TextArea rows={3} placeholder="记录本次跟进情况、客户反馈等" />
+              <Input.TextArea rows={3} placeholder="准备推销的茶叶、预计沟通的重点等" />
             </Form.Item>
             <Row gutter={12} align="bottom">
               <Col span={14}>
-                <Form.Item name="nextFollowDate" label="下次跟进时间" style={{ marginBottom: 0 }}>
-                  <DatePicker showTime style={{ width: '100%' }} placeholder="选择下次跟进时间" />
+                <Form.Item name="nextFollowDate" label="计划跟进时间" rules={[{ required: true, message: '请选择计划时间' }]} style={{ marginBottom: 0 }}>
+                  <DatePicker showTime style={{ width: '100%' }} placeholder="选择计划跟进的时间" />
                 </Form.Item>
               </Col>
               <Col span={10}>
                 <Form.Item style={{ marginBottom: 0 }}>
-                  <Button type="primary" block onClick={handleCreateFollowUp}
-                    style={{ background: '#2D6A4F', borderColor: '#2D6A4F' }}>
-                    新增跟进记录
-                  </Button>
+                  <Space.Compact block>
+                    <Button type="primary" block onClick={handleSaveFollowUp}
+                      style={{ background: '#2D6A4F', borderColor: '#2D6A4F' }}>
+                      {editingFollowUp ? '保存修改' : '新增跟进记录'}
+                    </Button>
+                    {editingFollowUp && (
+                      <Button onClick={handleCancelEditFollowUp}>取消编辑</Button>
+                    )}
+                  </Space.Compact>
                 </Form.Item>
               </Col>
             </Row>
@@ -312,25 +351,29 @@ export default function CustomersPage() {
           dataSource={followUps}
           locale={{ emptyText: '暂无跟进记录，快去记录第一次跟进吧' }}
           renderItem={(item) => (
-            <List.Item style={{ alignItems: 'flex-start' }}>
+            <List.Item style={{ alignItems: 'flex-start', cursor: 'pointer' }} onClick={() => handleEditFollowUp(item)}>
               <List.Item.Meta
                 title={
                   <Space wrap>
-                    <Text type="secondary" style={{ fontSize: 12 }}>{dayjs(item.createdAt).format('YYYY-MM-DD HH:mm')}</Text>
+                    {item.nextFollowDate ? (
+                      <Tag color={isOverdue(item.nextFollowDate) ? 'red' : 'blue'}>
+                        计划跟进：{dayjs(item.nextFollowDate).format('YYYY-MM-DD HH:mm')}
+                      </Tag>
+                    ) : (
+                      <Tag>未设置计划时间</Tag>
+                    )}
+                    <Text type="secondary" style={{ fontSize: 12 }}>创建时间：{dayjs(item.createdAt).format('YYYY-MM-DD HH:mm')}</Text>
                     {item.followType && <Tag>{FOLLOW_TYPE_LABEL[item.followType] ?? item.followType}</Tag>}
                     <IntentTag level={item.intentLevel} />
+                    {editingFollowUp?.id === item.id && <Tag color="processing">编辑中</Tag>}
                   </Space>
                 }
                 description={
                   <div>
                     <div style={{ color: 'rgba(0,0,0,0.85)', marginTop: 4 }}>{item.content}</div>
-                    {item.nextFollowDate && (
-                      <div style={{ marginTop: 6, color: isOverdue(item.nextFollowDate) ? '#ff4d4f' : '#8c8c8c', fontSize: 12 }}>
-                        <ClockCircleOutlined style={{ marginRight: 4 }} />
-                        下次跟进：{dayjs(item.nextFollowDate).format('YYYY-MM-DD HH:mm')}
-                        {isOverdue(item.nextFollowDate) && <Tag color="red" style={{ marginLeft: 8 }}>已逾期</Tag>}
-                      </div>
-                    )}
+                    <div style={{ marginTop: 6, color: '#8c8c8c', fontSize: 12 }}>
+                      点击该记录可回填到上方表单并编辑
+                    </div>
                   </div>
                 }
               />

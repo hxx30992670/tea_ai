@@ -48,9 +48,9 @@ export const dashboardApi = {
   stockWarnings: async (): Promise<StockWarning[]> => {
     await delay()
     return [
-      { id: '1-safe_stock', productName: '碧螺春（春茶）', type: 'low_stock', stockQty: 3, safeStock: 10, urgency: 'high' },
-      { id: '2-expiry', productName: '白毫银针 2024 批次', type: 'expiring', stockQty: 25, safeStock: 10, shelfDaysLeft: 15, urgency: 'high' },
-      { id: '3-safe_stock', productName: '信阳毛尖', type: 'low_stock', stockQty: 6, safeStock: 10, urgency: 'medium' },
+      { id: '1-safe_stock', productId: 1, productName: '碧螺春（春茶）', type: 'low_stock', stockQty: 3, safeStock: 10, urgency: 'high' },
+      { id: '2-expiry', productId: 2, productName: '白毫银针 2024 批次', type: 'expiring', stockQty: 25, safeStock: 10, shelfDaysLeft: 15, urgency: 'high' },
+      { id: '3-safe_stock', productId: 3, productName: '信阳毛尖', type: 'low_stock', stockQty: 6, safeStock: 10, urgency: 'medium' },
     ]
   },
   afterSalesReasons: async (): Promise<AfterSaleReasonStat[]> => {
@@ -78,6 +78,13 @@ export const productApi = {
       { id: 6, name: '正山小种红茶', sku: 'ZX-2026-001', unit: '斤', costPrice: 88, sellPrice: 130, stockQty: 22, safeStock: 8, status: 1, teaType: '红茶', origin: '福建桐木关', year: 2026, createdAt: '2026-03-08' },
     ]
     return { list, total: list.length }
+  },
+  get: async (id: number): Promise<Product> => {
+    await delay()
+    const res = await productApi.list({})
+    const found = res.list.find((p) => p.id === id)
+    if (!found) throw new Error('not found')
+    return found
   },
   categories: async (): Promise<Category[]> => {
     await delay()
