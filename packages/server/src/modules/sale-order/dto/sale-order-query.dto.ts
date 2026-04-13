@@ -30,6 +30,11 @@ export class SaleOrderQueryDto {
   @IsString()
   status?: string;
 
+  @ApiPropertyOptional({ description: '展示状态筛选，如 processing', example: 'processing' })
+  @IsOptional()
+  @IsString()
+  displayStatus?: string;
+
   @ApiPropertyOptional({ description: '关键字，匹配订单号或客户名', example: '贺超' })
   @IsOptional()
   @IsString()

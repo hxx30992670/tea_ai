@@ -11,7 +11,6 @@ import { AuthUser } from '../../common/types/auth-user.type';
 import { CreateSaleOrderDto } from './dto/create-sale-order.dto';
 import { QuickCompleteSaleOrderDto } from './dto/quick-complete-sale-order.dto';
 import { CreateSaleExchangeDto } from './dto/create-sale-exchange.dto';
-import { UpdateSaleExchangeDraftDto } from './dto/update-sale-exchange.dto';
 import { CreateSaleRefundDto } from './dto/create-sale-refund.dto';
 import { CreateSaleReturnDto } from './dto/create-sale-return.dto';
 import { SaleOrderQueryDto } from './dto/sale-order-query.dto';
@@ -125,68 +124,6 @@ export class SaleOrderController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.saleOrderService.createSaleExchange(id, dto, user);
-  }
-
-  @Roles(ROLE_ADMIN, ROLE_MANAGER)
-  @ApiOperation({ summary: '获取订单关联的换货单列表' })
-  @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
-  @Get(':id/exchanges')
-  getSaleExchangesByOrder(@Param('id', ParseIntPipe) id: number) {
-    return this.saleOrderService.getSaleExchangesByOrder(id);
-  }
-
-  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
-  @ApiOperation({ summary: '编辑换货草稿' })
-  @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
-  @ApiParam({ name: 'exchangeId', description: '换货单 ID', example: 1 })
-  @ApiBody({ type: UpdateSaleExchangeDraftDto })
-  @Put(':id/exchanges/:exchangeId')
-  updateSaleExchangeDraft(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('exchangeId', ParseIntPipe) exchangeId: number,
-    @Body() dto: UpdateSaleExchangeDraftDto,
-    @CurrentUser() user: AuthUser,
-  ) {
-    return this.saleOrderService.updateSaleExchangeDraft(exchangeId, dto, user);
-  }
-
-  @Roles(ROLE_ADMIN, ROLE_MANAGER)
-  @ApiOperation({ summary: '取消换货草稿' })
-  @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
-  @ApiParam({ name: 'exchangeId', description: '换货单 ID', example: 1 })
-  @Delete(':id/exchanges/:exchangeId')
-  cancelSaleExchange(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('exchangeId', ParseIntPipe) exchangeId: number,
-    @CurrentUser() user: AuthUser,
-  ) {
-    return this.saleOrderService.cancelSaleExchange(exchangeId, user);
-  }
-
-  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
-  @ApiOperation({ summary: '执行换货草稿发货动作' })
-  @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
-  @ApiParam({ name: 'exchangeId', description: '换货单 ID', example: 1 })
-  @Post(':id/exchanges/:exchangeId/ship')
-  executeSaleExchangeStock(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('exchangeId', ParseIntPipe) exchangeId: number,
-    @CurrentUser() user: AuthUser,
-  ) {
-    return this.saleOrderService.executeSaleExchangeStock(exchangeId, user);
-  }
-
-  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
-  @ApiOperation({ summary: '执行换货草稿退款或补差动作' })
-  @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
-  @ApiParam({ name: 'exchangeId', description: '换货单 ID', example: 1 })
-  @Post(':id/exchanges/:exchangeId/settle')
-  settleSaleExchangeDraft(
-    @Param('id', ParseIntPipe) id: number,
-    @Param('exchangeId', ParseIntPipe) exchangeId: number,
-    @CurrentUser() user: AuthUser,
-  ) {
-    return this.saleOrderService.settleSaleExchangeDraft(exchangeId, user);
   }
 
   @Roles(ROLE_ADMIN, ROLE_MANAGER)

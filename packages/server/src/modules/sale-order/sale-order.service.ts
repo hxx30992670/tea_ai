@@ -81,6 +81,17 @@ export class SaleOrderService {
     return SALE_EXCHANGE_STATUS.DRAFT;
   }
 
+  private getDisplayStatus(
+    order: Pick<SaleOrderEntity, 'status'>,
+    exchanges?: Array<Pick<SaleExchangeEntity, 'status'>>,
+  ) {
+    if (exchanges?.some((item) => item.status === SALE_EXCHANGE_STATUS.PROCESSING)) {
+      return SALE_EXCHANGE_STATUS.PROCESSING;
+    }
+
+    return order.status;
+  }
+
   private generateOrderNo(prefix: string, id: number) {
     const now = new Date();
     const datePart = [
@@ -249,6 +260,7 @@ export class SaleOrderService {
     return this.serializeSaleOrder(
       {
         ...order,
+        displayStatus: this.getDisplayStatus(order, saleExchanges),
         items: detailItems,
         returns: saleReturns.map((item) => ({
           ...item,
@@ -311,6 +323,17 @@ export class SaleOrderService {
       qb.andWhere('saleOrder.status = :status', { status: query.status });
     }
 
+    const processingExchangeSql = `EXISTS (SELECT 1 FROM sale_exchange saleExchange WHERE saleExchange.sale_order_id = saleOrder.id AND saleExchange.status = :processingExchangeStatus)`;
+
+    if (query.displayStatus) {
+      if (query.displayStatus === SALE_EXCHANGE_STATUS.PROCESSING) {
+        qb.andWhere(processingExchangeSql, { processingExchangeStatus: SALE_EXCHANGE_STATUS.PROCESSING });
+      } else {
+        qb.andWhere('saleOrder.status = :displayStatus', { displayStatus: query.displayStatus });
+        qb.andWhere(`NOT ${processingExchangeSql}`, { processingExchangeStatus: SALE_EXCHANGE_STATUS.PROCESSING });
+      }
+    }
+
     if (query.keyword) {
       qb.andWhere(
         '(saleOrder.order_no LIKE :kw OR customer.name LIKE :kw OR customer.contact_name LIKE :kw)',
@@ -331,8 +354,28 @@ export class SaleOrderService {
 
     const [list, total] = await Promise.all([qb.getRawMany(), qb.getCount()]);
 
+    const orderIds = list.map((item) => Number(item.id)).filter(Boolean);
+    const exchanges = orderIds.length
+      ? await this.dataSource.getRepository(SaleExchangeEntity).find({
+          where: orderIds.map((id) => ({ saleOrderId: id })),
+          select: ['id', 'saleOrderId', 'status'],
+        })
+      : [];
+
+    const exchangeMap = new Map<number, Array<Pick<SaleExchangeEntity, 'status'>>>();
+    for (const item of exchanges) {
+      const related = exchangeMap.get(item.saleOrderId) ?? [];
+      related.push(item);
+      exchangeMap.set(item.saleOrderId, related);
+    }
+
+    const serialized = list.map((order) => this.serializeSaleOrder({
+      ...order,
+      displayStatus: this.getDisplayStatus(order as Pick<SaleOrderEntity, 'status'>, exchangeMap.get(Number(order.id))),
+    }, user));
+
     return {
-      list: list.map((order) => this.serializeSaleOrder(order, user)),
+      list: serialized,
       total,
       page,
       pageSize,
@@ -852,13 +895,20 @@ export class SaleOrderService {
       saleRefund.refundNo = this.generateOrderNo('TF', saleRefund.id);
       saleRefund = await manager.save(SaleRefundEntity, saleRefund);
 
+      order.returnedAmount = addAmount(order.returnedAmount, refundAmount);
       order.receivedAmount = subtractAmount(order.receivedAmount, refundAmount);
-      order.status = this.recalculateStatus({
+      const prevStatus = order.status;
+      const nextStatus = this.recalculateStatus({
         receivedAmount: order.receivedAmount,
         returnedAmount: order.returnedAmount,
         totalAmount: order.totalAmount,
         status: order.status,
       });
+      if (prevStatus === SALE_ORDER_STATUS.DONE && nextStatus === SALE_ORDER_STATUS.SHIPPED) {
+        order.status = SALE_ORDER_STATUS.DONE;
+      } else {
+        order.status = nextStatus;
+      }
       order.operatorId = user.sub;
       await manager.save(SaleOrderEntity, order);
 
@@ -885,9 +935,6 @@ export class SaleOrderService {
   }
 
 async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser) {
-    if (dto.saveAsDraft) {
-      return this.createSaleExchangeDraft(id, dto, user);
-    }
     return this.createSaleExchangeComplete(id, dto, user);
   }
 
