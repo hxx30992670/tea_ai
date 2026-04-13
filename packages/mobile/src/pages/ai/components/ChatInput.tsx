@@ -15,12 +15,18 @@ interface ChatInputProps {
 
 export function ChatInput({ onSend, onStop, disabled, loading, statusPhase }: ChatInputProps) {
   const [text, setText] = useState('')
+  const [speechError, setSpeechError] = useState<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const { isListening, isSupported, toggle: toggleSpeech } = useSpeech({
     onResult: (transcript) => {
       setText((prev) => prev + transcript)
       textareaRef.current?.focus()
+      setSpeechError(null)
+    },
+    onError: (error) => {
+      setSpeechError(error)
+      setTimeout(() => setSpeechError(null), 3000)
     },
   })
 
@@ -41,7 +47,12 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase }: Ch
   return (
     <div className="border-t border-border bg-card/95 backdrop-blur-md px-3 py-3 pb-safe">
       {/* 状态提示 */}
-      {statusPhase && (
+      {speechError && (
+        <p className="mb-2 text-center text-xs text-red-500 animate-pulse">
+          {speechError}
+        </p>
+      )}
+      {statusPhase && !speechError && (
         <p className="mb-2 text-center text-xs text-muted-foreground animate-pulse">
           {statusPhase}
         </p>
@@ -67,7 +78,7 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase }: Ch
         {/* 文字输入框 */}
         <Textarea
           ref={textareaRef}
-          placeholder={isListening ? '正在监听...' : '问任何关于茶叶经营的问题'}
+          placeholder={isListening ? '正在监听，说完后点击红色按钮停止...' : '问任何关于茶叶经营的问题'}
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={handleKeyDown}
