@@ -232,6 +232,7 @@ export interface SaleOrder {
   receivedAmount: number
   returnedAmount: number
   status: SaleOrderStatus
+  displayStatus?: SaleOrderStatus | 'processing'
   remark?: string
   createdAt: string
   items?: SaleOrderItem[]

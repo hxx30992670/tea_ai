@@ -8,6 +8,7 @@ import { customerApi, type FollowUp } from '@/api/customers'
 import { saleOrderApi } from '@/api/sale'
 import { systemApi } from '@/api/system'
 import CustomerStatement from '@/components/CustomerStatement'
+import { CustomerFormModal } from './components/CustomerFormModal'
 import type { Customer, SaleOrder } from '@/types'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
@@ -64,7 +65,6 @@ export default function CustomersPage() {
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null)
   const [statementOrders, setStatementOrders] = useState<SaleOrder[]>([])
   const [shopName, setShopName] = useState<string | undefined>(undefined)
-  const [form] = Form.useForm()
   const [followUpForm] = Form.useForm()
 
   const loadData = async () => {
@@ -89,16 +89,7 @@ export default function CustomersPage() {
 
   const openEdit = (r?: Customer) => {
     setEditRecord(r || null)
-    form.setFieldsValue(r || {})
     setModalOpen(true)
-  }
-
-  const handleSubmit = async () => {
-    const values = await form.validateFields()
-    if (editRecord) await customerApi.update(editRecord.id, values)
-    else await customerApi.create(values)
-    setModalOpen(false)
-    loadData()
   }
 
   const handleDelete = async (id: number) => {
@@ -238,7 +229,7 @@ export default function CustomersPage() {
         description="管理客户信息、交易历史和跟进记录"
         className="page-header"
         extra={(
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); openEdit() }} className="page-primary-button">
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => openEdit()} className="page-primary-button">
             新增客户
           </Button>
         )}
@@ -267,28 +258,12 @@ export default function CustomersPage() {
         />
       </Card>
 
-      {/* 编辑客户 */}
-      <Modal title={editRecord ? '编辑客户' : '新增客户'} open={modalOpen}
-        onOk={handleSubmit} onCancel={() => setModalOpen(false)} okText="保存"
-        okButtonProps={{ style: { background: '#2D6A4F', borderColor: '#2D6A4F' } }}>
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="name" label="客户名称" rules={[{ required: true }]}>
-            <Input placeholder="如：杭州茶庄" />
-          </Form.Item>
-          <Form.Item name="contactName" label="联系人">
-            <Input placeholder="联系人姓名" />
-          </Form.Item>
-          <Form.Item name="phone" label="联系电话">
-            <Input placeholder="手机号" />
-          </Form.Item>
-          <Form.Item name="address" label="地址">
-            <Input placeholder="详细地址" />
-          </Form.Item>
-          <Form.Item name="remark" label="备注">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <CustomerFormModal
+        open={modalOpen}
+        editRecord={editRecord}
+        onClose={() => setModalOpen(false)}
+        onSuccess={() => loadData()}
+      />
 
       {/* 跟进记录 */}
       <Modal

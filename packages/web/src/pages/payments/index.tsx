@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import {
-  Table, Button, Space, Tag, Card, Modal, Form, Input,
-  Select, InputNumber, Row, Col, Statistic, Typography, Tabs, DatePicker,
+  Table, Button, Space, Tag, Card, Select, Row, Col, Statistic, Typography, Tabs, DatePicker,
 } from 'antd'
 import { PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, SearchOutlined } from '@ant-design/icons'
 import { paymentApi, type PayableSummary, type ReceivableSummary } from '@/api/payments'
@@ -10,6 +9,7 @@ import type { PaymentRecord } from '@/types'
 import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import type { Dayjs } from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
+import { PaymentRecordModal } from './components/PaymentRecordModal'
 import '@/styles/page.less'
 
 const { Title, Text } = Typography
@@ -19,8 +19,6 @@ const METHOD_OPTIONS_FILTER = [
   { value: '', label: '全部方式' },
   ...PAYMENT_METHOD_OPTIONS,
 ]
-
-const METHOD_OPTIONS = PAYMENT_METHOD_OPTIONS
 
 const TYPE_OPTIONS_FILTER = [
   { value: '', label: '全部类型' },
@@ -37,9 +35,6 @@ export default function PaymentsPage() {
   const [payables, setPayables] = useState<PayableSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
-  const [form] = Form.useForm()
-  const paymentType = Form.useWatch('type', form)
-  const relatedType = Form.useWatch('relatedType', form)
 
   const [filterType, setFilterType] = useState('')
   const [filterMethod, setFilterMethod] = useState('')
@@ -79,20 +74,9 @@ export default function PaymentsPage() {
     loadData({ type: undefined, method: undefined, dateFrom: undefined, dateTo: undefined, page: 1 })
   }
 
-  const handleSubmit = async () => {
-    const values = await form.validateFields()
-    await paymentApi.create(values)
-    setModalOpen(false)
-    loadData()
-  }
-
   const totalReceive = list.filter((p) => p.type === PAYMENT_RECORD_TYPE.RECEIVE).reduce((sum, p) => sum + p.amount, 0)
   const totalPay = list.filter((p) => p.type === PAYMENT_RECORD_TYPE.PAY || p.type === PAYMENT_RECORD_TYPE.REFUND).reduce((sum, p) => sum + p.amount, 0)
   const totalSupplierRefund = list.filter((p) => p.type === PAYMENT_RECORD_TYPE.SUPPLIER_REFUND).reduce((sum, p) => sum + p.amount, 0)
-
-  const relatedOptions = relatedType === 'sale_order'
-    ? receivables.map((item) => ({ value: item.id, label: `${item.orderNo}｜${item.customerName ?? '散客'}｜待收 ¥${item.receivableAmount}` }))
-    : payables.map((item) => ({ value: item.id, label: `${item.orderNo}｜${item.supplierName}｜待付 ¥${item.payableAmount}` }))
 
   const columns = [
     {
@@ -134,7 +118,7 @@ export default function PaymentsPage() {
         description="主要用于查询流水、核对应收应付，以及补录漏记的收付款。"
         className="page-header"
         extra={(
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => { form.resetFields(); setModalOpen(true) }} className="page-primary-button">
+          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} className="page-primary-button">
             补录收付款
           </Button>
         )}
@@ -220,66 +204,13 @@ export default function PaymentsPage() {
         />
       </Card>
 
-      <Modal title="补录收/付款" open={modalOpen} onOk={handleSubmit} onCancel={() => setModalOpen(false)}
-        okText="保存" okButtonProps={{ style: { background: '#2D6A4F', borderColor: '#2D6A4F' } }}>
-        <Form form={form} layout="vertical" style={{ marginTop: 16 }}>
-          <Form.Item name="type" label="类型" rules={[{ required: true }]}>
-            <Select
-              options={[{ value: 'receive', label: '💰 收款' }, { value: 'pay', label: '💸 付款' }]}
-              placeholder="选择类型"
-              onChange={(value) => {
-                form.setFieldsValue({
-                  relatedType: value === 'receive' ? 'sale_order' : 'purchase_order',
-                  relatedId: undefined,
-                  amount: undefined,
-                })
-              }}
-            />
-          </Form.Item>
-          <Form.Item name="relatedType" label="关联类型" rules={[{ required: true }]}>
-            <Select
-              allowClear
-              options={[
-                { value: 'sale_order', label: '销售订单' },
-                { value: 'purchase_order', label: '采购订单' },
-              ]}
-              placeholder="选择关联业务"
-              onChange={() => {
-                form.setFieldsValue({ relatedId: undefined, amount: undefined })
-              }}
-            />
-          </Form.Item>
-          <Form.Item name="relatedId" label="关联单据" rules={[{ required: true }]}>
-            <Select
-              placeholder={relatedType === 'sale_order' ? '选择销售订单' : '选择采购订单'}
-              options={relatedOptions}
-              disabled={!paymentType || !relatedType}
-              showSearch
-              optionFilterProp="label"
-              onChange={(id: number) => {
-                if (relatedType === 'sale_order') {
-                  const row = receivables.find((r) => r.id === id)
-                  if (row) form.setFieldsValue({ amount: row.receivableAmount })
-                  return
-                }
-                if (relatedType === 'purchase_order') {
-                  const row = payables.find((p) => p.id === id)
-                  if (row) form.setFieldsValue({ amount: row.payableAmount })
-                }
-              }}
-            />
-          </Form.Item>
-          <Form.Item name="amount" label="金额" rules={[{ required: true }]}>
-            <InputNumber style={{ width: '100%' }} prefix="¥" min={0.01} precision={2} />
-          </Form.Item>
-          <Form.Item name="method" label="支付方式">
-            <Select options={METHOD_OPTIONS} placeholder="选择支付方式" />
-          </Form.Item>
-          <Form.Item name="remark" label="备注">
-            <Input.TextArea rows={2} />
-          </Form.Item>
-        </Form>
-      </Modal>
+      <PaymentRecordModal
+        open={modalOpen}
+        receivables={receivables}
+        payables={payables}
+        onCancel={() => setModalOpen(false)}
+        onSuccess={() => { setModalOpen(false); loadData() }}
+      />
     </div>
   )
 }

@@ -94,36 +94,6 @@ export const saleOrderApi = {
     return res.data
   },
 
-  createExchangeDraft: async (id: number, data: CreateSaleExchangePayload): Promise<{ exchangeId: number; exchangeNo: string; status: string }> => {
-    const res = await request.post<never, ApiResponse<{ exchangeId: number; exchangeNo: string; status: string }>>(`/sale-orders/${id}/exchanges`, { ...data, saveAsDraft: true })
-    return res.data
-  },
-
-  getExchanges: async (orderId: number): Promise<Array<{ id: number; exchangeNo: string; status: string; returnAmount: number; exchangeAmount: number; refundAmount: number; receiveAmount: number; createdAt: string; items: unknown[] }>> => {
-    const res = await request.get<never, ApiResponse<Array<{ id: number; exchangeNo: string; status: string; returnAmount: number; exchangeAmount: number; refundAmount: number; receiveAmount: number; createdAt: string; items: unknown[] }>>>(`/sale-orders/${orderId}/exchanges`)
-    return res.data
-  },
-
-  updateExchangeDraft: async (orderId: number, exchangeId: number, data: Partial<CreateSaleExchangePayload>): Promise<{ exchangeId: number; exchangeNo: string; status: string }> => {
-    const res = await request.put<never, ApiResponse<{ exchangeId: number; exchangeNo: string; status: string }>>(`/sale-orders/${orderId}/exchanges/${exchangeId}`, data)
-    return res.data
-  },
-
-  cancelExchange: async (orderId: number, exchangeId: number): Promise<{ success: boolean }> => {
-    const res = await request.delete<never, ApiResponse<{ success: boolean }>>(`/sale-orders/${orderId}/exchanges/${exchangeId}`)
-    return res.data
-  },
-
-  shipExchangeDraft: async (orderId: number, exchangeId: number): Promise<{ success: boolean; exchangeId: number; status: string }> => {
-    const res = await request.post<never, ApiResponse<{ success: boolean; exchangeId: number; status: string }>>(`/sale-orders/${orderId}/exchanges/${exchangeId}/ship`)
-    return res.data
-  },
-
-  settleExchangeDraft: async (orderId: number, exchangeId: number): Promise<{ success: boolean; exchangeId: number; status: string }> => {
-    const res = await request.post<never, ApiResponse<{ success: boolean; exchangeId: number; status: string }>>(`/sale-orders/${orderId}/exchanges/${exchangeId}/settle`)
-    return res.data
-  },
-
   remove: async (id: number): Promise<void> => {
     await request.delete(`/sale-orders/${id}`)
   },
