@@ -1,0 +1,20 @@
+node_modules/
+dist/
+.DS_Store
+.env
+packages/*/.env
+packages/server/data/*.db
+!packages/server/data/.gitkeep
+
+# AI Assistant
+CLAUDE.md
+.claude/
+.cursor/
+
+# Documentation
+docs/
+
+# Prompt Center
+packages/prompt-center/
+.gitignore
+.idea
