@@ -58,6 +58,10 @@ export const productApi = {
     return res.data
   },
 
+  deleteCategory: async (id: number): Promise<void> => {
+    await request.delete(`/categories/${id}`)
+  },
+
   create: async (data: Partial<Product>): Promise<Product> => {
     const res = await request.post<never, ApiResponse<Product>>('/products', data)
     return res.data

@@ -62,14 +62,7 @@ export class ProductService {
   }
 
   async createCategory(dto: CreateCategoryDto) {
-    if (dto.parentId) {
-      const parent = await this.categoryRepository.findOne({
-        where: { id: dto.parentId },
-      });
-      if (!parent) {
-        throw new BadRequestException('父分类不存在');
-      }
-    }
+    await this.assertValidCategoryParent(undefined, dto.parentId);
 
     const category = this.categoryRepository.create({
       name: dto.name,
@@ -86,11 +79,8 @@ export class ProductService {
       throw new NotFoundException('分类不存在');
     }
 
-    if (dto.parentId) {
-      const parent = await this.categoryRepository.findOne({ where: { id: dto.parentId } });
-      if (!parent) {
-        throw new BadRequestException('父分类不存在');
-      }
+    if (dto.parentId !== undefined) {
+      await this.assertValidCategoryParent(id, dto.parentId ?? null);
     }
 
     if (dto.name !== undefined) category.name = dto.name;
@@ -98,6 +88,26 @@ export class ProductService {
     if (dto.sortOrder !== undefined) category.sortOrder = dto.sortOrder;
 
     return this.categoryRepository.save(category);
+  }
+
+  async deleteCategory(id: number) {
+    const category = await this.categoryRepository.findOne({ where: { id } });
+    if (!category) {
+      throw new NotFoundException('分类不存在');
+    }
+
+    const hasChildren = await this.categoryRepository.findOne({ where: { parentId: id } });
+    if (hasChildren) {
+      throw new BadRequestException('该分类下还有子分类，请先删除子分类');
+    }
+
+    const hasProducts = await this.productRepository.findOne({ where: { categoryId: id } });
+    if (hasProducts) {
+      throw new BadRequestException('该分类下还有商品，请先移除或修改商品分类');
+    }
+
+    await this.categoryRepository.delete(id);
+    return { success: true };
   }
 
   getProductMeta() {
@@ -146,7 +156,17 @@ export class ProductService {
     }
 
     if (query.categoryId) {
-      qb.andWhere('product.category_id = :categoryId', { categoryId: query.categoryId });
+      const categoryIds = await this.getCategoryAndDescendantIds(query.categoryId);
+      if (categoryIds.length === 0) {
+        return {
+          list: [],
+          total: 0,
+          page,
+          pageSize,
+        };
+      }
+
+      qb.andWhere('product.category_id IN (:...categoryIds)', { categoryIds });
     }
 
     if (query.teaType) {
@@ -224,6 +244,85 @@ export class ProductService {
     }
 
     return pathMap;
+  }
+
+  private async assertValidCategoryParent(categoryId: number | undefined, parentId: number | null | undefined) {
+    if (!parentId) {
+      return;
+    }
+
+    if (categoryId && categoryId === parentId) {
+      throw new BadRequestException('父分类不能选择当前分类');
+    }
+
+    const categories = await this.categoryRepository.find({
+      select: ['id', 'parentId'],
+    });
+
+    const categoryMap = new Map(categories.map((category) => [category.id, category]));
+    if (!categoryMap.has(parentId)) {
+      throw new BadRequestException('父分类不存在');
+    }
+
+    if (!categoryId) {
+      return;
+    }
+
+    let currentId: number | null = parentId;
+    const visited = new Set<number>();
+    while (currentId) {
+      if (visited.has(currentId)) {
+        break;
+      }
+      if (currentId === categoryId) {
+        throw new BadRequestException('不能将分类移动到自己的子分类下');
+      }
+
+      visited.add(currentId);
+      currentId = categoryMap.get(currentId)?.parentId ?? null;
+    }
+  }
+
+  private async getCategoryAndDescendantIds(categoryId: number) {
+    const categories = await this.categoryRepository.find({
+      select: ['id', 'parentId'],
+    });
+
+    const categoryMap = new Map<number, number[]>();
+    let exists = false;
+    for (const category of categories) {
+      if (category.id === categoryId) {
+        exists = true;
+      }
+
+      if (!category.parentId) {
+        continue;
+      }
+
+      const siblingIds = categoryMap.get(category.parentId) ?? [];
+      siblingIds.push(category.id);
+      categoryMap.set(category.parentId, siblingIds);
+    }
+
+    if (!exists) {
+      return [];
+    }
+
+    const ids: number[] = [];
+    const queue = [categoryId];
+    const visited = new Set<number>();
+    while (queue.length > 0) {
+      const currentId = queue.shift();
+      if (!currentId || visited.has(currentId)) {
+        continue;
+      }
+
+      visited.add(currentId);
+      ids.push(currentId);
+      queue.push(...(categoryMap.get(currentId) ?? []));
+    }
+
+    return ids;
   }
 
   async createProduct(dto: CreateProductDto, user: AuthUser) {

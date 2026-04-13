@@ -122,6 +122,15 @@ export class ProductController {
   }
 
   @Roles(ROLE_ADMIN, ROLE_MANAGER)
+  @ApiOperation({ summary: '删除分类' })
+  @ApiParam({ name: 'id', description: '分类 ID', example: 1 })
+  @ApiOkResponse({ description: '删除结果' })
+  @Delete('categories/:id')
+  deleteCategory(@Param('id', ParseIntPipe) id: number) {
+    return this.productService.deleteCategory(id);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
   @ApiOperation({ summary: '软删除商品' })
   @ApiParam({ name: 'id', description: '商品 ID', example: 1 })
   @ApiOkResponse({ description: '软删除结果' })
