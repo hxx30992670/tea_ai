@@ -88,6 +88,16 @@ export function detectVisualization(
   const hasDetailIdentityField = DETAIL_RECORD_FIELDS.some((field) => cols.includes(field))
   const hasPreferredMetric = Boolean(pickPreferredNumericField(numericCols))
 
+  const hasEnoughPointsForTrend = rows.length >= 2
+  const hasNonZeroMetricValues = (() => {
+    const yField = pickPreferredNumericField(numericCols)
+    if (!yField) return false
+    return rows.some((row) => {
+      const value = Number(row[yField])
+      return Number.isFinite(value) && value !== 0
+    })
+  })()
+
   if (hasDetailIdentityField && !isChartRequest) {
     return { type: 'table' }
   }
@@ -101,7 +111,10 @@ export function detectVisualization(
 
     const xField = dateCols[0] || stringCols[0]
     if (xField && preferredYField) {
-      return { type: dateCols.length > 0 ? 'line' : 'bar', xField, yField: preferredYField }
+      if (dateCols.length > 0) {
+        return hasEnoughPointsForTrend && hasNonZeroMetricValues ? { type: 'line', xField, yField: preferredYField } : { type: 'table' }
+      }
+      return { type: 'bar', xField, yField: preferredYField }
     }
   }
 
@@ -113,7 +126,9 @@ export function detectVisualization(
   if (isTrend && hasPreferredMetric) {
     const xField = dateCols[0] || stringCols[0]
     const yField = pickPreferredNumericField(numericCols)
-    if (xField && yField) return { type: 'line', xField, yField }
+    if (xField && yField) {
+      return hasEnoughPointsForTrend && hasNonZeroMetricValues ? { type: 'line', xField, yField } : { type: 'table' }
+    }
   }
 
   // 有分类列 + 数值列 → 柱状图（行数 ≤ 20）
@@ -125,7 +140,9 @@ export function detectVisualization(
   // 有日期列 + 数值列 → 折线图
   if (dateCols.length >= 1 && hasPreferredMetric) {
     const yField = pickPreferredNumericField(numericCols)
-    if (yField) return { type: 'line', xField: dateCols[0], yField }
+    if (yField) {
+      return hasEnoughPointsForTrend && hasNonZeroMetricValues ? { type: 'line', xField: dateCols[0], yField } : { type: 'table' }
+    }
   }
 
   // 列数多或行数多 → 表格

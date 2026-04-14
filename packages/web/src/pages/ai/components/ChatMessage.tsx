@@ -48,6 +48,13 @@ export function AssistantCard({ message, isStreaming }: AssistantCardProps) {
   const [copied, setCopied] = useState(false)
   const isLoading = message.content === '' || message.content.startsWith('⏳')
   const isError = message.content.startsWith('⚠️')
+  const shouldShowVisualization =
+    !isStreaming &&
+    !isLoading &&
+    !isError &&
+    !!message.rows?.length &&
+    !!message.visualization &&
+    message.visualization.type !== 'none'
 
   const handleCopy = async () => {
     await navigator.clipboard.writeText(message.content)
@@ -85,9 +92,9 @@ export function AssistantCard({ message, isStreaming }: AssistantCardProps) {
           ) : null}
         </div>
 
-        {!isLoading && message.rows && message.rows.length > 0 && message.visualization && message.visualization.type !== 'none' ? (
+        {shouldShowVisualization ? (
           <div className="ai-message__visualization">
-            <AiVisualization rows={message.rows} spec={message.visualization} />
+            <AiVisualization rows={message.rows!} spec={message.visualization!} />
           </div>
         ) : null}
       </Card>

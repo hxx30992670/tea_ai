@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
+import { AI_BINDING_ERROR_CODES, AI_CAPABILITY_CODES, AI_KEY_INVALID_CODES, type AiCapabilityCode } from '@shared/constants'
 import {
   Button,
   Card,
@@ -395,8 +396,35 @@ export default function SalePage() {
   }
 
   /** 处理 AI 识别失败的提示逻辑 */
-  const handleAiRecognizeError = (reason: string) => {
-    if (reason.includes('禁用') || reason.includes('授权') || reason.includes('apiKey') || reason.includes('配置')) {
+  const handleAiRecognizeError = (reason: string, code?: AiCapabilityCode) => {
+    if (code === AI_CAPABILITY_CODES.QUOTA_EXCEEDED) {
+      void message.warning(reason)
+      return
+    }
+
+    if (code === AI_CAPABILITY_CODES.FEATURE_DISABLED) {
+      void message.warning(`AI 功能未开通：${reason}`)
+      return
+    }
+
+    if (code && AI_BINDING_ERROR_CODES.includes(code)) {
+      void message.error(`AI 授权绑定异常：${reason}`)
+      return
+    }
+
+    if (code && AI_KEY_INVALID_CODES.includes(code)) {
+      void message.error(`AI 授权不可用：${reason}`)
+      return
+    }
+
+    if (
+      reason.includes('未配置')
+      || reason.includes('服务实例标识')
+      || reason.includes('模型 API Key')
+      || reason.includes('Prompt 服务')
+      || reason.includes('Agent 服务地址')
+      || reason.includes('AI 授权 Key')
+    ) {
       void message.warning(`AI 功能不可用：${reason}，请前往系统设置 > AI配置 完成配置`)
     } else {
       void message.error(reason)
@@ -421,7 +449,7 @@ export default function SalePage() {
       )
 
       if (!res.ok || !res.data) {
-        handleAiRecognizeError(res.reason ?? '识别失败，请换一张更清晰的图片')
+        handleAiRecognizeError(res.reason ?? '识别失败，请换一张更清晰的图片', res.code)
         return
       }
 

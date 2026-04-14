@@ -1,5 +1,5 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsNotEmpty, IsString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { IsNotEmpty, IsOptional, IsString } from 'class-validator';
 
 export class AiTestDto {
   @ApiProperty({ description: 'AI 授权 Key', example: 'sk-tea-demo-local' })
@@ -11,6 +11,16 @@ export class AiTestDto {
   @IsString()
   @IsNotEmpty()
   promptServiceUrl!: string;
+
+  @ApiPropertyOptional({ description: '服务实例唯一标识，由后端自动生成并持久化', example: 'smartstock-shop-001' })
+  @IsOptional()
+  @IsString()
+  serviceUniqueId?: string;
+
+  @ApiPropertyOptional({ description: '实例令牌，由后端自动生成并持久化', example: 'inst-demo-001' })
+  @IsOptional()
+  @IsString()
+  instanceToken?: string;
 
   @ApiProperty({ description: '提供商', example: 'qwen' })
   @IsString()

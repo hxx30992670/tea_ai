@@ -8,6 +8,7 @@ import {
   CheckCircleOutlined, LockOutlined, ApiOutlined,
 } from '@ant-design/icons'
 import { systemApi } from '@/api/system'
+import type { SystemSettings, UpdateAiSettingsPayload } from '@/api/system'
 import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import PageHeader from '@/components/page/PageHeader'
@@ -61,24 +62,36 @@ export default function SettingsPage() {
   const [testMsg, setTestMsg] = useState('')
   const [testChecks, setTestChecks] = useState<TestCheck[]>([])
   const [currentProvider, setCurrentProvider] = useState<string>('')
+  const [settings, setSettings] = useState<SystemSettings>({})
+  const [showAiForm, setShowAiForm] = useState(false)
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin'
 
+  const loadSettings = async () => {
+    const data = await systemApi.getSettings()
+    setSettings(data)
+    shopForm.setFieldsValue(data)
+
+    const defaultAiFields = getDefaultAiFields(data.aiProvider)
+    const nextAiValues = {
+      aiApiKey: '',
+      aiPromptServiceUrl: '',
+      aiModelApiKey: '',
+      aiProvider: data.aiProvider || defaultAiFields.aiProvider,
+      aiModelName: data.aiModelName || defaultAiFields.aiModelName,
+      aiModelBaseUrl: defaultAiFields.aiModelBaseUrl,
+    }
+
+    aiForm.setFieldsValue(nextAiValues)
+    setCurrentProvider(nextAiValues.aiProvider)
+    setShowAiForm(!data.aiConfigured)
+    setTestStatus('idle')
+    setTestMsg('')
+    setTestChecks([])
+  }
+
   useEffect(() => {
-    systemApi.getSettings().then((data) => {
-      shopForm.setFieldsValue(data)
-
-      const defaultAiFields = getDefaultAiFields(data.aiProvider)
-      const nextAiValues = {
-        ...data,
-        aiProvider: data.aiProvider || defaultAiFields.aiProvider,
-        aiModelName: data.aiModelName || defaultAiFields.aiModelName,
-        aiModelBaseUrl: data.aiModelBaseUrl || defaultAiFields.aiModelBaseUrl,
-      }
-
-      aiForm.setFieldsValue(nextAiValues)
-      setCurrentProvider(nextAiValues.aiProvider)
-    })
+    void loadSettings()
   }, [])
 
   const handleProviderChange = (provider: string) => {
@@ -112,8 +125,10 @@ export default function SettingsPage() {
     }
     setAiLoading(true)
     try {
-      await systemApi.updateSettings(aiForm.getFieldsValue())
-      message.success('AI 配置已保存，刷新页面后生效')
+      const values = aiForm.getFieldsValue() as UpdateAiSettingsPayload
+      await systemApi.updateSettings(values)
+      message.success('AI 配置已保存')
+      await loadSettings()
     } catch { /* interceptor 处理 */ } finally {
       setAiLoading(false)
     }
@@ -182,6 +197,7 @@ export default function SettingsPage() {
 
   const testTagColor = testStatus === 'success' ? 'success' : testStatus === 'fail' ? 'error' : testStatus === 'testing' ? 'processing' : 'default'
   const testTagText = testStatus === 'success' ? '✓ 连接成功' : testStatus === 'fail' ? '✗ 连接失败' : testStatus === 'testing' ? '测试中...' : '未测试'
+  const aiConfigured = Boolean(settings.aiConfigured)
 
   const tabItems = [
     {
@@ -256,6 +272,20 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {aiConfigured && !showAiForm ? (
+            <div>
+              <Alert
+                type="success"
+                showIcon
+                message="AI 已开通"
+                description={`当前使用模型：${settings.aiModelName || '-'}${settings.aiProvider ? `（${PROVIDERS.find((item) => item.value === settings.aiProvider)?.label || settings.aiProvider}）` : ''}`}
+                style={{ marginBottom: 20 }}
+              />
+              <Button onClick={() => setShowAiForm(true)}>
+                重新配置
+              </Button>
+            </div>
+          ) : (
           <Form form={aiForm} layout="vertical">
             {/* Agent 配置 */}
             <Form.Item name="aiApiKey" label="Agent 授权 Key" rules={[{ required: true, message: '请填写 AI 授权 Key' }]}>
@@ -266,7 +296,7 @@ export default function SettingsPage() {
                 prefix={<ApiOutlined />}
                 placeholder="https://..."
                 onChange={() => setTestStatus('idle')}
-              />
+                />
             </Form.Item>
 
             {/* 大模型配置 */}
@@ -330,6 +360,19 @@ export default function SettingsPage() {
               >
                 测试连接
               </Button>
+              {aiConfigured && (
+                <Button
+                  onClick={() => {
+                    setShowAiForm(false)
+                    setTestStatus('idle')
+                    setTestMsg('')
+                    setTestChecks([])
+                    void loadSettings()
+                  }}
+                >
+                  取消重配
+                </Button>
+              )}
               <Button
                 type="primary"
                 loading={aiLoading}
@@ -364,6 +407,7 @@ export default function SettingsPage() {
               }]}
             /> */}
           </Form>
+          )}
         </Card>
       ),
     },

@@ -24,6 +24,7 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   status: "状态",
   // 商品
   product_id: "商品ID",
+  productId: "商品ID",
   product_name: "商品名称",
   productName: "商品名称",
   sku: "SKU",
@@ -46,11 +47,20 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   season: "季节",
   // 客户
   customer_id: "客户ID",
+  customerId: "客户ID",
   customer_name: "客户名称",
   customerName: "客户名称",
   contact_name: "联系人",
   contactName: "联系人",
   phone: "电话",
+  mobile: "手机号码",
+  tel: "联系电话",
+  contact_phone: "联系人电话",
+  contactPhone: "联系人电话",
+  customer_phone: "联系电话",
+  customerPhone: "联系电话",
+  supplier_phone: "供应商电话",
+  supplierPhone: "供应商电话",
   address: "地址",
   total_amount: "总金额",
   totalAmount: "总金额",
@@ -58,6 +68,7 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   receivableAmount: "应收金额",
   // 供应商
   supplier_id: "供应商ID",
+  supplierId: "供应商ID",
   supplier_name: "供应商名称",
   supplierName: "供应商名称",
   supply_category: "供货品类",
@@ -65,6 +76,8 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   // 订单通用
   order_no: "订单编号",
   orderNo: "订单编号",
+  order_id: "订单ID",
+  orderId: "订单ID",
   received_amount: "已收金额",
   receivedAmount: "已收金额",
   paid_amount: "已付金额",
@@ -76,6 +89,7 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   unreceived_amount: "未收金额",
   unreceivedAmount: "未收金额",
   total_sales_amount: "销售额",
+  totalSalesAmount: "销售额",
   done: "已完成",
   shipped: "已出货",
   returned: "已退完",
@@ -87,6 +101,7 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   expired: "已过期",
   // 销售订单
   sale_order_id: "销售单ID",
+  saleOrderId: "销售单ID",
   quantity: "数量",
   package_qty: "包装数",
   packageQty: "包装数",
@@ -99,6 +114,8 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   unit_price: "单价",
   unitPrice: "单价",
   subtotal: "小计",
+  item_subtotal: "小计",
+  itemSubtotal: "小计",
   cost_amount: "成本金额",
   costAmount: "成本金额",
   gross_profit: "毛利",
@@ -107,6 +124,7 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   profitRate: "毛利率",
   // 采购订单
   purchase_order_id: "采购单ID",
+  purchaseOrderId: "采购单ID",
   // 退货/售后
   return_no: "退货单号",
   returnNo: "退货单号",
@@ -126,6 +144,7 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   reason_code: "原因",
   reasonCode: "原因",
   sale_exchange_out: "换货出库",
+  saleExchangeOut: "换货出库",
   // 商品属性（product 表字段及常用别名）
   batch_no: "批次号",
   batchNo: "批次号",
@@ -182,7 +201,9 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   total_qty: "总数量",
   totalQty: "总数量",
   supplier_count: "供应商数",
+  supplierCount: "供应商数",
   customer_count: "客户数",
+  customerCount: "客户数",
   // 库存计算字段
   available_qty: "可用库存",
   availableQty: "可用库存",
@@ -231,6 +252,8 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   rowType: "记录类型",
   // 时间/日期别名
   date: "日期",
+  base_unit: "基础单位",
+  baseUnit: "基础单位",
   sale_date: "销售日期",
   saleDate: "销售日期",
   order_date: "订单日期",
@@ -240,11 +263,22 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   month: "月份",
   week: "周",
   year_month: "年月",
+  yearMonth: "年月",
   day: "日期",
   orders: "订单数",
   // 其他（从 mobile 端补充）
   total_received: "已收款总额",
   totalReceived: "已收款总额",
+  today_revenue: "今日营收",
+  todayRevenue: "今日营收",
+  month_revenue: "本月营收",
+  monthRevenue: "本月营收",
+  inventory_value: "库存价值",
+  inventoryValue: "库存价值",
+  receivable_total: "当前应收",
+  receivableTotal: "当前应收",
+  sale_return_total: "销售退货金额",
+  saleReturnTotal: "销售退货金额",
 };
 
 // ─── 方向字段值映射 ────────────────────────────────────────────────────────────

@@ -22,35 +22,44 @@ export class AiConfigService {
     }
 
     const settings = await this.systemService.getAllSettings();
+    const instanceToken = settings.aiInstanceToken?.trim() || await this.systemService.ensureAiInstanceToken();
     const config: AiRuntimeConfig = {
       provider: settings.aiProvider?.trim() ?? '',
       modelName: settings.aiModelName?.trim() ?? '',
       modelApiKey: settings.aiModelApiKey?.trim() ?? '',
       modelBaseUrl: settings.aiModelBaseUrl?.trim() ?? '',
       apiKey: settings.aiApiKey?.trim() ?? '',
+      serviceUniqueId: settings.aiServiceUniqueId?.trim() ?? '',
+      instanceToken,
       promptServiceUrl: settings.aiPromptServiceUrl?.trim() ?? '',
       industry: settings.aiIndustry?.trim() || 'tea',
     };
 
     if (!config.provider) {
-      const r = { enabled: false as const, reason: '未配置 AI 提供商', config: null };
+      const r = { enabled: false as const, code: 'AI_PROVIDER_MISSING' as const, reason: '未配置 AI 提供商', config: null };
       this.cachedResult = r; this.cachedAt = now;
       return r;
     }
 
     if (!config.apiKey) {
-      const r = { enabled: false as const, reason: '未配置 AI 授权 Key', config: null };
+      const r = { enabled: false as const, code: 'AI_AUTH_KEY_MISSING' as const, reason: '未配置 AI 授权 Key', config: null };
       this.cachedResult = r; this.cachedAt = now;
       return r;
     }
 
     if (!config.modelApiKey) {
-      const r = { enabled: false as const, reason: '未配置模型 API Key', config: null };
+      const r = { enabled: false as const, code: 'AI_MODEL_API_KEY_MISSING' as const, reason: '未配置模型 API Key', config: null };
       this.cachedResult = r; this.cachedAt = now;
       return r;
     }
 
-    const result: AiAvailability = { enabled: true, reason: '', config };
+    if (!config.serviceUniqueId) {
+      const r = { enabled: false as const, code: 'SERVICE_ID_MISSING' as const, reason: '未配置服务实例标识', config: null };
+      this.cachedResult = r; this.cachedAt = now;
+      return r;
+    }
+
+    const result: AiAvailability = { enabled: true, code: 'OK', reason: '', config };
     this.cachedResult = result;
     this.cachedAt = now;
     return result;

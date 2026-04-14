@@ -1,11 +1,13 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { Input, Button, Card, Typography, Tag, Spin, Alert, List, Tooltip } from 'antd'
+import { AI_BINDING_ERROR_CODES, AI_CAPABILITY_CODES, AI_KEY_INVALID_CODES, type AiCapabilityCode } from '@shared/constants'
 import {
   SendOutlined, RobotOutlined, BulbOutlined, StopOutlined, PaperClipOutlined, CloseCircleOutlined,
 } from '@ant-design/icons'
 import type { AiMessage, AiVisualizationSpec } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { aiApi, type AiSuggestion, type AiSession, type AiAttachment } from '@/api/ai'
+import { systemApi } from '@/api/system'
 import { detectVisualization } from '@/components/AiVisualization'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
@@ -30,7 +32,40 @@ const WELCOME_MSG: AiMessage = {
   timestamp: Date.now(),
 }
 
-const VISUALIZATION_FOLLOW_UP_RE = /^(用|改成|切换成|换成|转成)?(可视化|图表|柱状图|条形图|折线图|饼图|趋势图|对比图)(来)?(表示|展示)?$/
+const VISUALIZATION_FOLLOW_UP_RE = /^(?:(?:用|改成|切换成|换成|转成)?(?:可视化|图表|柱状图|条形图|折线图|饼图|趋势图|对比图)(?:来)?(?:表示|展示)?|(?:用)?图表展示一下|全部展示出来|都展示出来|全部画出来|都画出来|全部用图表展示|都用图表展示)$/
+const AUTO_SCROLL_THRESHOLD = 80
+
+function pickVisualizationSourceRows(messages: AiMessage[], question: string) {
+  const visualizable = [...messages]
+    .filter((msg) => msg.role === 'assistant' && msg.rows && msg.rows.length > 0)
+    .map((msg) => msg.rows!)
+
+  if (visualizable.length === 0) {
+    return undefined
+  }
+
+  if (/全部|都/.test(question)) {
+    return [...visualizable].sort((a, b) => b.length - a.length)[0]
+  }
+
+  return visualizable[visualizable.length - 1]
+}
+
+function isNearBottom(element: HTMLDivElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_THRESHOLD
+}
+
+function getRuntimeAlertTitle(code?: AiCapabilityCode) {
+  if (code === AI_CAPABILITY_CODES.QUOTA_EXCEEDED) return 'AI 已配置，但今日额度已用尽'
+  if (code === AI_CAPABILITY_CODES.FEATURE_DISABLED) return 'AI 已配置，但当前授权未开通所需功能'
+  if (code && AI_BINDING_ERROR_CODES.includes(code)) {
+    return 'AI 已配置，但当前授权绑定异常'
+  }
+  if (code && AI_KEY_INVALID_CODES.includes(code)) {
+    return 'AI 已配置，但当前授权 Key 不可用'
+  }
+  return 'AI 已配置，但当前能力校验未通过'
+}
 
 export default function AiPage() {
   const [messages, setMessages] = useState<AiMessage[]>([WELCOME_MSG])
@@ -40,7 +75,9 @@ export default function AiPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [streamingIdx, setStreamingIdx] = useState<number | null>(null)
+  const [aiConfigured, setAiConfigured] = useState(false)
   const [aiEnabled, setAiEnabled] = useState(false)
+  const [aiCode, setAiCode] = useState<AiCapabilityCode | undefined>()
   const [aiReason, setAiReason] = useState('')
   const [pendingAttachment, setPendingAttachment] = useState<AiAttachment | null>(null)
   const [pendingAttachmentPreview, setPendingAttachmentPreview] = useState<{ imageUrl?: string; name?: string } | null>(null)
@@ -48,24 +85,37 @@ export default function AiPage() {
   // 保存当前问题用于可视化检测
   const currentQuestion = useRef('')
   const bottomRef = useRef<HTMLDivElement>(null)
+  const messagesRef = useRef<HTMLDivElement>(null)
   const abortControllerRef = useRef<AbortController | null>(null)
+  const shouldAutoScrollRef = useRef(true)
   const { user, accessToken } = useAuthStore()
 
   const isAdmin = user?.role === 'admin'
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (shouldAutoScrollRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages])
+
+  const handleMessagesScroll = useCallback(() => {
+    const element = messagesRef.current
+    if (!element) return
+    shouldAutoScrollRef.current = isNearBottom(element)
+  }, [])
 
   useEffect(() => {
     if (!isAdmin) return
     void (async () => {
       try {
-        const [sessionRes, suggestionRes] = await Promise.all([
+        const [sessionRes, suggestionRes, settingsRes] = await Promise.all([
           aiApi.sessions(),
           aiApi.suggestions(),
+          systemApi.getSettings(),
         ])
+        setAiConfigured(Boolean(settingsRes.aiConfigured))
         setAiEnabled(suggestionRes.enabled)
+        setAiCode(suggestionRes.code)
         setAiReason(suggestionRes.reason)
         setSuggestions(suggestionRes.suggestions)
         setSessions(sessionRes)
@@ -74,12 +124,14 @@ export default function AiPage() {
         }
       } catch {
         setAiEnabled(false)
+        setAiCode(AI_CAPABILITY_CODES.AI_RUNTIME_ERROR)
       }
     })()
   }, [isAdmin])
 
   const loadSession = async (sessionId: string) => {
     setActiveSessionId(sessionId)
+    shouldAutoScrollRef.current = true
     try {
       const list = await aiApi.sessionMessages(sessionId)
       if (list.length === 0) { setMessages([WELCOME_MSG]); return }
@@ -101,6 +153,7 @@ export default function AiPage() {
 
   const handleNewChat = () => {
     setActiveSessionId(undefined)
+    shouldAutoScrollRef.current = true
     setMessages([WELCOME_MSG])
     setInput('')
   }
@@ -147,11 +200,11 @@ export default function AiPage() {
   }
 
   const sendMessage = useCallback(async (text: string) => {
-    if ((!text.trim() && !pendingAttachment) || loading || !isAdmin || !aiEnabled) return
+    if ((!text.trim() && !pendingAttachment) || loading || !isAdmin || !aiConfigured) return
+    shouldAutoScrollRef.current = true
 
     const normalizedText = text.trim()
-    const latestVisualizableAssistant = [...messages].reverse().find((msg) => msg.role === 'assistant' && msg.rows && msg.rows.length > 0)
-    const previousRows = latestVisualizableAssistant?.rows
+    const previousRows = pickVisualizationSourceRows(messages, normalizedText)
 
     if (!pendingAttachment && normalizedText && VISUALIZATION_FOLLOW_UP_RE.test(normalizedText) && previousRows) {
       setMessages((prev) => ([
@@ -248,7 +301,7 @@ export default function AiPage() {
         attachmentToSend ?? undefined,
       )
 
-      setAiEnabled(result.enabled)
+      setAiCode(result.code)
       setAiReason(result.reason)
 
       if (!result.enabled && result.reason) {
@@ -290,7 +343,7 @@ export default function AiPage() {
       setLoading(false)
       setStreamingIdx(null)
     }
-  }, [loading, isAdmin, aiEnabled, messages, activeSessionId, accessToken, pendingAttachment, pendingAttachmentPreview])
+  }, [loading, isAdmin, aiConfigured, messages, activeSessionId, accessToken, pendingAttachment, pendingAttachmentPreview])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -307,7 +360,7 @@ export default function AiPage() {
         className="page-header"
         extra={(
           <Tag color={aiEnabled ? 'success' : 'default'} className="ai-page__status">
-          {aiEnabled ? 'AI 已开通' : 'AI 未开通'}
+          {aiConfigured ? 'AI 已开通' : 'AI 未开通'}
           </Tag>
         )}
       />
@@ -317,11 +370,20 @@ export default function AiPage() {
         <Alert type="warning" showIcon message="当前账号没有 AI 权限"
           description="AI 助手仅对老板账号开放。" style={{ marginBottom: 16, borderRadius: 12 }} />
       )}
-      {isAdmin && !aiEnabled && (
+      {isAdmin && !aiConfigured && (
         <Alert type="info" showIcon message="AI 当前不可用"
           description={aiReason || '请前往 系统设置 > AI配置 完成授权、Prompt 服务和模型配置。'}
           style={{ marginBottom: 16, borderRadius: 12 }}
           action={<Button size="small" href="/system/settings">去配置</Button>}
+        />
+      )}
+      {isAdmin && aiConfigured && !aiEnabled && aiReason && (
+        <Alert
+          type="warning"
+          showIcon
+          message={getRuntimeAlertTitle(aiCode)}
+          description={aiReason}
+          style={{ marginBottom: 16, borderRadius: 12 }}
         />
       )}
 
@@ -345,7 +407,7 @@ export default function AiPage() {
           className="ai-chat-card"
           styles={{ body: { padding: 0 } }}
         >
-          <div className="ai-chat-card__messages">
+          <div className="ai-chat-card__messages" ref={messagesRef} onScroll={handleMessagesScroll}>
             {messages.map((msg, idx) =>
               msg.role === 'user'
                 ? <UserBubble key={idx} content={msg.content} imageUrl={msg.imageUrl} attachmentName={msg.attachmentName} />
@@ -364,7 +426,7 @@ export default function AiPage() {
               <Tag key={q}
                 className="ai-chat-card__question"
                 color="green"
-                onClick={() => isAdmin && aiEnabled && void sendMessage(q)}
+                onClick={() => isAdmin && aiConfigured && void sendMessage(q)}
               >
                 <BulbOutlined style={{ marginRight: 3 }} />{q}
               </Tag>
@@ -406,14 +468,14 @@ export default function AiPage() {
               placeholder={pendingAttachment ? '描述图片内容或直接发送识别...' : '输入问题，Enter 发送，Shift+Enter 换行...'}
               autoSize={{ minRows: 1, maxRows: 5 }}
               className="ai-chat-card__input"
-              disabled={loading || !isAdmin || !aiEnabled}
+              disabled={loading || !isAdmin || !aiConfigured}
             />
             <Tooltip title="上传图片或文件（发票、订单截图、文本等）">
               <Button
                 type="text"
                 icon={<PaperClipOutlined />}
                 onClick={() => fileInputRef.current?.click()}
-                disabled={loading || !isAdmin || !aiEnabled}
+                disabled={loading || !isAdmin || !aiConfigured}
                 className="ai-chat-card__attach"
               />
             </Tooltip>
@@ -431,7 +493,7 @@ export default function AiPage() {
                 type="primary"
                 icon={<SendOutlined />}
                 onClick={() => void sendMessage(input)}
-                disabled={(!input.trim() && !pendingAttachment) || !isAdmin || !aiEnabled}
+                disabled={(!input.trim() && !pendingAttachment) || !isAdmin || !aiConfigured}
                 className="ai-chat-card__send"
               >
                 发送

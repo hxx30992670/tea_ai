@@ -1,17 +1,18 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { AiConversationEntity } from '../../entities/ai-conversation.entity';
 import { ProductEntity } from '../../entities/product.entity';
 import { DashboardService } from '../dashboard/dashboard.service';
+import { SystemService } from '../system/system.service';
 import { AiConfigService } from './ai-config.service';
 import { AiPromptClientService } from './ai-prompt-client.service';
 import { AiSqlService } from './ai-sql.service';
 import { extractSqlFromContent, formatRowsForSummary } from './ai-sql.util';
 import { AiHistoryQueryDto } from './dto/ai-history-query.dto';
 import { AiTestDto } from './dto/ai-test.dto';
-import { AiAttachment, AiChatHistoryItem, AiContentPart, AiPromptMessage, AiRuntimeConfig, AiStructuredContext } from './ai.types';
+import { AiAttachment, AiCapabilityCode, AiChatHistoryItem, AiContentPart, AiPromptMessage, AiRuntimeConfig, AiStructuredContext } from './ai.types';
 import { ModelProviderClient } from './model-provider.interface';
 import { ModelProviderRegistry } from './model-provider.registry';
 
@@ -72,7 +73,8 @@ const STRATEGY_CITY_FOLLOWUP_HINTS = [
   STRATEGY_CITY_CLARIFY_ANSWER,
   '补充城市名后，可进一步细化到天气、茶文化和活动节奏',
 ];
-const LOCAL_GROUNDING_FOLLOWUP_RE = /(落地|具体怎么弄|怎么落地|哪边比较好|预算|费用|多少钱|对接|联系人|联系电话|公开电话|商圈|茶城|商场|广场|摆点|快闪|地推|物业|招商)/;
+const LOCAL_GROUNDING_FOLLOWUP_RE = /(落地|实地落地|具体怎么弄|怎么落地|如何落地|具体如何落地|具体一些如何落地|具体一些如何实地落地|哪边比较好|预算|费用|多少钱|对接|公开电话|商圈|茶城|商场|广场|摆点|快闪|地推|物业|招商|执行清单|话术模板|异业合作|合作对象|招商主管|市场部)/;
+const STRATEGY_REFINE_FOLLOWUP_RE = /(思考(一下|下)?再回答|思考了再回答|重新思考|再想想|再分析(一下)?|深入分析|深度思考|重新回答|换个思路|换个角度|详细一点|展开讲讲|具体一点)/;
 
 function buildCurrentDateAnchor() {
   const now = new Date();
@@ -86,12 +88,12 @@ function detectQuestionMode(question: string): AiQuestionMode {
   const normalized = question.trim();
   if (!normalized) return 'data';
 
-  const strategyRe = /(营销|促销|活动|推广|运营|经营).*(方案|建议|策略|计划)|根据.*(销售|销量|订单|经营|客户|退货|复购).*(方案|建议|策略|计划)|怎么做活动|怎么促销|如何提高销量|如何提升复购|哪里适合搞活动|去哪里搞活动|哪些商圈|哪些茶城|哪些商场|哪些广场|人流量|租金|租一块|摆点|快闪|地推|对接部门|联系人|联系电话|怎么落地|具体落地/;
+  const strategyRe = /(营销|促销|活动|推广|运营|经营).*(方案|建议|策略|计划)|根据.*(销售|销量|订单|经营|客户|退货|复购).*(方案|建议|策略|计划)|根据.*来制定|结合.*来制定|怎么做活动|怎么促销|如何提高销量|如何提升复购|哪里适合搞活动|去哪里搞活动|哪些商圈|哪些茶城|哪些商场|哪些广场|人流量|租金|租一块|摆点|快闪|地推|对接部门|公开电话|怎么落地|如何落地|具体落地|实地落地/;
   return strategyRe.test(normalized) ? 'strategy' : 'data';
 }
 
 function isLocalGroundingStrategy(question: string) {
-  return /(哪里适合搞活动|去哪里搞活动|哪些商圈|哪些茶城|哪些商场|哪些广场|人流量|租金|租一块|摆点|快闪|地推|对接部门|联系人|联系电话|公开电话|招商|物业|市场部|怎么落地|具体落地|哪边比较好)/.test(question);
+  return /(哪里适合搞活动|去哪里搞活动|哪些商圈|哪些茶城|哪些商场|哪些广场|人流量|租金|租一块|摆点|快闪|地推|对接部门|公开电话|招商|物业|市场部|怎么落地|如何落地|具体落地|实地落地|具体如何落地|哪边比较好|执行清单|话术模板|异业合作|合作对象|招商主管)/.test(question);
 }
 
 function findRecentStrategyQuestion(history: AiChatHistoryItem[]) {
@@ -193,8 +195,7 @@ function resolveStrategyQuestion(question: string, history: AiChatHistoryItem[])
       return 'need_city';
     }
 
-    const localGroundingMark = isLocalGroundingStrategy(question) ? '\n【本地落地模式】请优先结合公开网络信息给出真实可执行的本地点位、预算区间、对接对象与可核实线索' : '';
-    const effectiveQuestion = city ? `${question}\n【当前城市】${city}${localGroundingMark}` : `${question}${localGroundingMark}`;
+    const effectiveQuestion = city ? `${question}\n【当前城市】${city}` : `${question}`;
     return { mode: 'strategy', effectiveQuestion, summaryQuestion: effectiveQuestion };
   }
 
@@ -202,11 +203,21 @@ function resolveStrategyQuestion(question: string, history: AiChatHistoryItem[])
   if (!pendingQuestion) {
     const recentStrategyQuestion = findRecentStrategyQuestion(history);
     const recentCity = findRecentCityInHistory(history);
+    const currentCity = extractCityFromQuestion(question, true);
+
+    if (recentStrategyQuestion && currentCity && detectQuestionMode(question) === 'data') {
+      const summaryQuestion = `${recentStrategyQuestion}\n【用户补充城市】${currentCity}`;
+      return { mode: 'strategy', effectiveQuestion: summaryQuestion, summaryQuestion };
+    }
+
+    if (recentStrategyQuestion && STRATEGY_REFINE_FOLLOWUP_RE.test(question)) {
+      const cityMark = recentCity ? `\n【当前城市】${recentCity}` : '';
+      const summaryQuestion = `${recentStrategyQuestion}\n【延续追问】${question}${cityMark}`;
+      return { mode: 'strategy', effectiveQuestion: summaryQuestion, summaryQuestion };
+    }
+
     if (recentStrategyQuestion && recentCity && LOCAL_GROUNDING_FOLLOWUP_RE.test(question)) {
-      const localGroundingMark = isLocalGroundingStrategy(question) || isLocalGroundingStrategy(recentStrategyQuestion)
-        ? '\n【本地落地模式】请优先结合公开网络信息给出真实可执行的本地点位、预算区间、对接对象与可核实线索'
-        : '';
-      const summaryQuestion = `${recentStrategyQuestion}\n【延续追问】${question}\n【当前城市】${recentCity}${localGroundingMark}`;
+      const summaryQuestion = `${recentStrategyQuestion}\n【延续追问】${question}\n【当前城市】${recentCity}`;
       return { mode: 'strategy', effectiveQuestion: summaryQuestion, summaryQuestion };
     }
 
@@ -218,8 +229,7 @@ function resolveStrategyQuestion(question: string, history: AiChatHistoryItem[])
     return 'need_city';
   }
 
-  const localGroundingMark = isLocalGroundingStrategy(pendingQuestion) ? '\n【本地落地模式】请优先结合公开网络信息给出真实可执行的本地点位、预算区间、对接对象与可核实线索' : '';
-  const summaryQuestion = `${pendingQuestion}\n【用户补充城市】${city}${localGroundingMark}`;
+  const summaryQuestion = `${pendingQuestion}\n【用户补充城市】${city}`;
   return { mode: 'strategy', effectiveQuestion: summaryQuestion, summaryQuestion };
 }
 
@@ -251,8 +261,9 @@ type AttachmentSaleOrderCandidateRow = {
 };
 
 @Injectable()
-export class AiService {
+export class AiService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AiService.name);
+  private heartbeatTimer: NodeJS.Timeout | null = null;
 
   constructor(
     @InjectRepository(AiConversationEntity)
@@ -264,22 +275,95 @@ export class AiService {
     private readonly aiSqlService: AiSqlService,
     private readonly modelProviderRegistry: ModelProviderRegistry,
     private readonly dashboardService: DashboardService,
+    private readonly systemService: SystemService,
   ) {}
+
+  onModuleInit() {
+    this.heartbeatTimer = setInterval(() => {
+      void this.reportLicenseHeartbeat();
+    }, 60_000);
+  }
+
+  onModuleDestroy() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  private resolveAvailabilityCode(reason: string): AiCapabilityCode {
+    if (reason.includes('AI 提供商')) return 'AI_PROVIDER_MISSING';
+    if (reason.includes('AI 授权 Key')) return 'AI_AUTH_KEY_MISSING';
+    if (reason.includes('模型 API Key')) return 'AI_MODEL_API_KEY_MISSING';
+    if (reason.includes('服务实例标识')) return 'SERVICE_ID_MISSING';
+    return 'AI_RUNTIME_ERROR';
+  }
+
+  private resolveRequiredFeature(questionMode: AiQuestionMode, question: string) {
+    if (questionMode === 'strategy') {
+      return 'allowStrategyMode';
+    }
+
+    return 'allowLocalQuery';
+  }
+
+  private buildDisabledResult(code: AiCapabilityCode, reason: string, answer?: string) {
+    return { enabled: false as const, code, reason, answer: answer ?? reason };
+  }
+
+  private buildRecognizeError(code: AiCapabilityCode, reason: string) {
+    return { ok: false as const, code, reason };
+  }
+
+  private buildSuggestionDisabled(code: AiCapabilityCode, reason: string) {
+    return { enabled: false as const, code, reason, suggestions: [] };
+  }
+
+  private async reportUsageLogSafe(config: AiRuntimeConfig, payload: {
+    phase: string;
+    sessionId?: string;
+    question?: string;
+    answer?: string;
+    questionMode?: 'data' | 'strategy';
+    usedSearch?: boolean;
+    usedThinking?: boolean;
+    decisionTrace?: Record<string, unknown>;
+    latencyMs?: number;
+    status?: 'success' | 'rejected' | 'error';
+    rejectReason?: string;
+    errorMessage?: string;
+  }) {
+    try {
+      await this.aiPromptClientService.reportUsageLog(config, payload);
+    } catch (error) {
+      this.logger.warn(`调用日志补写失败: ${error instanceof Error ? error.message : 'unknown error'}`);
+    }
+  }
+
+  private logAiSqlFailure(stage: 'execute_failed' | 'retrying' | 'retry_failed' | 'retry_success', reason?: string) {
+    const suffix = reason ? `; reason=${reason}` : '';
+    if (stage === 'retry_success') {
+      this.logger.log(`AI SQL 自动修正重试成功。stage=${stage}`);
+      return;
+    }
+
+    this.logger.warn(`AI SQL 处理异常。stage=${stage}${suffix}`);
+  }
 
   async getSuggestions() {
     const availability = await this.aiConfigService.getAvailability();
 
     if (!availability.enabled) {
-      return { enabled: false, reason: availability.reason, suggestions: [] };
+      return this.buildSuggestionDisabled(availability.code ?? this.resolveAvailabilityCode(availability.reason), availability.reason);
     }
 
     if (!availability.config) {
-      return { enabled: false, reason: 'AI 配置不可用', suggestions: [] };
+      return this.buildSuggestionDisabled('AI_RUNTIME_ERROR', 'AI 配置不可用');
     }
 
-    const authCheck = await this.aiPromptClientService.verifyAuthorization(availability.config);
+    const authCheck = await this.aiPromptClientService.verifyAuthorization(availability.config, 'allowLocalQuery');
     if (!authCheck.ok) {
-      return { enabled: false, reason: authCheck.reason, suggestions: [] };
+      return this.buildSuggestionDisabled(authCheck.code, authCheck.reason);
     }
 
     const lowStockProducts = await this.productRepository.find({
@@ -300,7 +384,7 @@ export class AiService {
       suggestions.push({ type: 'info', content: 'AI 助手已启用，当前暂无紧急补货建议' });
     }
 
-    return { enabled: true, reason: '', suggestions };
+    return { enabled: true, code: 'OK' as const, reason: '', suggestions };
   }
 
   async getHistory(user: AuthUser, query: AiHistoryQueryDto) {
@@ -358,7 +442,8 @@ export class AiService {
     sessionId?: string,
   ) {
     const currentSessionId = sessionId || `sess_${Date.now()}`;
-    const resolvedQuestion = resolveStrategyQuestion(question, history);
+    const effectiveHistory = await this.resolveRuntimeHistory(user.sub, currentSessionId, history);
+    const resolvedQuestion = resolveStrategyQuestion(question, effectiveHistory);
     if (resolvedQuestion === 'need_city') {
       await this.saveConversation(user.sub, question, STRATEGY_CITY_CLARIFY_ANSWER, null, undefined, currentSessionId);
       emitter?.('token', { content: STRATEGY_CITY_CLARIFY_ANSWER });
@@ -370,7 +455,7 @@ export class AiService {
       effectiveQuestion: resolvedQuestion.effectiveQuestion,
       saveQuestion: question,
       user,
-      history,
+      history: effectiveHistory,
       emitter,
       sessionId: currentSessionId,
       questionMode,
@@ -401,6 +486,7 @@ export class AiService {
       summaryQuestionOverride,
     } = params;
     const currentSessionId = sessionId || `sess_${Date.now()}`;
+    const startedAt = Date.now();
     const emit = (event: string, data: unknown) => emitter?.(event, data);
     // ── 1. 并行获取上下文 + AI 配置 ─────────────────────────────────────────
     const [structuredContext, availability] = await Promise.all([
@@ -411,8 +497,9 @@ export class AiService {
     if (!availability.enabled || !availability.config) {
       const answer = `AI 模块当前已禁用：${availability.reason}`;
       await this.saveConversation(user.sub, saveQuestion, answer, null, undefined, currentSessionId);
-      emit('error', { message: availability.reason });
-      return { enabled: false, reason: availability.reason, answer };
+      const code = availability.code ?? this.resolveAvailabilityCode(availability.reason);
+      emit('error', { code, message: availability.reason });
+      return this.buildDisabledResult(code, availability.reason, answer);
     }
 
     const providerClient = this.modelProviderRegistry.get(availability.config.provider);
@@ -420,16 +507,19 @@ export class AiService {
       const reason = `当前提供商 ${availability.config.provider} 暂未接入`;
       const answer = `AI 模块当前已禁用：${reason}`;
       await this.saveConversation(user.sub, saveQuestion, answer, null, undefined, currentSessionId);
-      emit('error', { message: reason });
-      return { enabled: false, reason, answer };
+      emit('error', { code: 'PROVIDER_NOT_SUPPORTED', message: reason });
+      return this.buildDisabledResult('PROVIDER_NOT_SUPPORTED', reason, answer);
     }
 
-    const authCheck = await this.aiPromptClientService.verifyAuthorization(availability.config);
+    const authCheck = await this.aiPromptClientService.verifyAuthorization(
+      availability.config,
+      this.resolveRequiredFeature(questionMode, `${saveQuestion}\n${effectiveQuestion}`),
+    );
     if (!authCheck.ok) {
       const answer = `AI 模块当前已禁用：${authCheck.reason}`;
       await this.saveConversation(user.sub, saveQuestion, answer, null, undefined, currentSessionId);
-      emit('error', { message: authCheck.reason });
-      return { enabled: false, reason: authCheck.reason, answer };
+      emit('error', { code: authCheck.code, message: authCheck.reason });
+      return this.buildDisabledResult(authCheck.code, authCheck.reason, answer);
     }
 
     const attachmentFollowUpResult = await this.tryResolveSaleOrderFollowUp(user.sub, saveQuestion);
@@ -445,7 +535,7 @@ export class AiService {
         currentSessionId,
         attachmentFollowUpResult.rows,
       );
-      return { enabled: true, reason: '', answer: attachmentFollowUpResult.answer };
+      return { enabled: true, code: 'OK' as const, reason: '', answer: attachmentFollowUpResult.answer };
     }
 
     const queryResult = questionMode === 'strategy'
@@ -466,16 +556,11 @@ export class AiService {
       return queryResult;
     }
 
-    // ── 3.5 把原始查询结果推给前端（用于渲染图表/表格）─────────────────────────
-    if (questionMode === 'data') {
-      emit('rows', { rows: queryResult.rows });
-    }
-
     if (this.isContactQuestion(`${saveQuestion}\n${effectiveQuestion}`) && !this.hasContactColumns(queryResult.rows)) {
       const answer = this.buildUnavailableContactAnswer(questionMode);
       await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql, undefined, currentSessionId);
       emit('token', { content: answer });
-      return { enabled: true, reason: '', answer };
+      return { enabled: true, code: 'OK' as const, reason: '', answer };
     }
 
     const deterministicAnswer = questionMode === 'data'
@@ -487,9 +572,14 @@ export class AiService {
         structuredContext,
         queryResult.rows,
       );
-      await this.saveConversation(user.sub, saveQuestion, deterministicAnswer, queryResult.sql, nextStructuredContext, currentSessionId, queryResult.rows);
+      await this.saveConversation(user.sub, saveQuestion, deterministicAnswer, queryResult.sql, nextStructuredContext, currentSessionId);
       emit('token', { content: deterministicAnswer });
-      return { enabled: true, reason: '', answer: deterministicAnswer };
+      return { enabled: true, code: 'OK' as const, reason: '', answer: deterministicAnswer };
+    }
+
+    // ── 3.5 把原始查询结果推给前端（用于渲染图表/表格）─────────────────────────
+    if (questionMode === 'data') {
+      emit('rows', { rows: queryResult.rows });
     }
 
     // ── 4. 总结回答（流式）────────────────────────────────────────────────────
@@ -507,6 +597,13 @@ export class AiService {
     // 只需前 30 行供 LLM 描述，减少 token 消耗和传输延迟
     const summaryRows = queryResult.rows.length > 30 ? queryResult.rows.slice(0, 30) : queryResult.rows;
 
+    const summaryOptions = questionMode === 'strategy' && availability.config.provider === 'qwen'
+      ? {
+        enableSearch: Boolean(authCheck.features?.allowWebSearch),
+        enableThinking: Boolean(authCheck.features?.allowThinking),
+      }
+      : undefined;
+
     const summaryPromptResult = await this.aiPromptClientService.fetchSummaryMessages(
       summaryQuestion,
       queryResult.sql,
@@ -515,6 +612,14 @@ export class AiService {
       history,
       structuredContext,
       user.sub,
+      {
+        sessionId: currentSessionId,
+        questionMode,
+        provider: availability.config.provider,
+        model: availability.config.modelName,
+        usedSearch: Boolean(summaryOptions?.enableSearch),
+        usedThinking: Boolean(summaryOptions?.enableThinking),
+      },
     );
 
     let answer: string;
@@ -526,14 +631,11 @@ export class AiService {
       queryResult.rows,
     );
 
-    const summaryOptions = questionMode === 'strategy' && availability.config.provider === 'qwen'
-      ? { enableSearch: true, enableThinking: true }
-      : undefined;
-
     if (!summaryPromptResult.ok) {
-      // 提示词获取失败，降级展示原始结果
-      answer = this.buildRawResultAnswer(queryResult.sql, queryResult.rows);
-      emit('token', { content: answer });
+      const reason = summaryPromptResult.reason || 'AI 总结不可用';
+      await this.saveConversation(user.sub, saveQuestion, reason, queryResult.sql, undefined, currentSessionId);
+      emit('error', { code: summaryPromptResult.code ?? 'AI_RUNTIME_ERROR', message: reason });
+      return this.buildDisabledResult(summaryPromptResult.code ?? 'AI_RUNTIME_ERROR', reason, reason);
     } else if (providerClient.invokeStream) {
       // 流式总结（SSE 逐 token 推送）
       const streamResult = await providerClient.invokeStream(
@@ -557,6 +659,14 @@ export class AiService {
       emit('token', { content: answer });
     }
 
+    answer = await this.aiPromptClientService.guardAnswer(availability.config, {
+      phase: 'summary',
+      sessionId: currentSessionId,
+      question: saveQuestion,
+      answer,
+      questionMode,
+    });
+
     const nextStructuredContext = await contextPromise;
 
     await this.saveConversation(
@@ -569,10 +679,29 @@ export class AiService {
       questionMode === 'data' ? queryResult.rows : undefined,
     );
 
+    await this.reportUsageLogSafe(availability.config, {
+      phase: 'summary',
+      sessionId: currentSessionId,
+      question: saveQuestion,
+      answer,
+      questionMode,
+      usedSearch: Boolean(summaryOptions?.enableSearch),
+      usedThinking: Boolean(summaryOptions?.enableThinking),
+      latencyMs: Date.now() - startedAt,
+      status: 'success',
+      decisionTrace: {
+        mode: questionMode,
+        summaryPromptOk: summaryPromptResult.ok,
+        localGrounding: questionMode === 'strategy' && isLocalGroundingStrategy(`${saveQuestion}\n${effectiveQuestion}`),
+        sqlGenerated: queryResult.sql,
+        rowsCount: Array.isArray(queryResult.rows) ? queryResult.rows.length : 0,
+      },
+    });
+
     // 异步检测用户是否设定了回答偏好规则（不阻塞返回）
     this.detectAndSaveUserRule(saveQuestion, answer, user.sub, availability.config, history, structuredContext).catch(() => {});
 
-    return { enabled: true, reason: '', answer };
+    return { enabled: true, code: 'OK' as const, reason: '', answer };
   }
 
   /**
@@ -585,31 +714,49 @@ export class AiService {
     attachment: AiAttachment,
     products?: Array<{ id: number; name: string; teaType?: string; year?: string; spec?: string; sellPrice?: number; unit?: string; packageUnit?: string }>,
   ) {
+    const startedAt = Date.now();
+    const recognizeQuestion = attachment.filename ? `识别附件：${attachment.filename}` : '识别销售单附件';
     const availability = await this.aiConfigService.getAvailability();
     if (!availability.enabled || !availability.config) {
-      return { ok: false as const, reason: availability.reason };
+      return this.buildRecognizeError(availability.code ?? this.resolveAvailabilityCode(availability.reason), availability.reason);
     }
 
     const providerClient = this.modelProviderRegistry.get(availability.config.provider);
     if (!providerClient) {
-      return { ok: false as const, reason: `提供商 ${availability.config.provider} 暂未接入` };
+      return this.buildRecognizeError('PROVIDER_NOT_SUPPORTED', `提供商 ${availability.config.provider} 暂未接入`);
     }
 
     const attachmentValidation = this.validateAttachment(attachment);
     if (!attachmentValidation.ok) {
-      return { ok: false as const, reason: attachmentValidation.reason };
+      return this.buildRecognizeError('ATTACHMENT_INVALID', attachmentValidation.reason);
     }
 
-    const authCheck = await this.aiPromptClientService.verifyAuthorization(availability.config);
+    const authCheck = await this.aiPromptClientService.verifyAuthorization(availability.config, 'allowAttachmentRecognition');
     if (!authCheck.ok) {
-      return { ok: false as const, reason: authCheck.reason };
+      return this.buildRecognizeError(authCheck.code, authCheck.reason);
     }
 
     // 从 prompt-center 获取 system prompt + user 文字部分
-    const promptResult = await this.aiPromptClientService.fetchRecognizeMessages(products ?? [], availability.config);
+    const promptResult = await this.aiPromptClientService.fetchRecognizeMessages(products ?? [], availability.config, {
+      questionMode: 'data',
+      provider: availability.config.provider,
+      model: availability.config.modelName,
+      usedSearch: false,
+      usedThinking: false,
+    });
     if (!promptResult.ok || promptResult.messages.length < 2) {
       const reason = promptResult.ok ? 'Prompt 服务未返回有效消息' : promptResult.reason;
-      return { ok: false as const, reason };
+      await this.reportUsageLogSafe(availability.config, {
+        phase: 'recognize',
+        question: recognizeQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: reason,
+      });
+      return this.buildRecognizeError(promptResult.ok ? 'PROMPT_RESPONSE_INVALID' : (promptResult.code ?? 'PROMPT_SERVICE_REQUEST_FAILED'), reason);
     }
 
     const systemPrompt = String(promptResult.messages.find((m) => m.role === 'system')?.content ?? '');
@@ -622,24 +769,82 @@ export class AiService {
 
     const result = await providerClient.invoke(messages, availability.config);
     if (!result.ok) {
-      return { ok: false as const, reason: result.reason };
+      await this.reportUsageLogSafe(availability.config, {
+        phase: 'recognize',
+        question: recognizeQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: result.reason,
+      });
+      return this.buildRecognizeError(result.code ?? 'MODEL_INVOKE_FAILED', result.reason);
     }
 
     // 从模型输出中提取 JSON（有时模型会包裹 markdown 代码块）
     const jsonText = this.extractJson(result.content);
     if (!jsonText) {
-      return { ok: false as const, reason: '模型未返回有效 JSON，请换一张更清晰的图片' };
+      await this.reportUsageLogSafe(availability.config, {
+        phase: 'recognize',
+        question: recognizeQuestion,
+        answer: result.content,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: '模型未返回有效 JSON，请换一张更清晰的图片',
+      });
+      return this.buildRecognizeError('MODEL_RESPONSE_INVALID', '模型未返回有效 JSON，请换一张更清晰的图片');
     }
 
     try {
       const parsed = JSON.parse(jsonText) as unknown;
       const normalized = this.normalizeRecognizeResult(module, parsed);
       if (!normalized.ok) {
-        return { ok: false as const, reason: normalized.reason };
+        await this.reportUsageLogSafe(availability.config, {
+          phase: 'recognize',
+          question: recognizeQuestion,
+          answer: jsonText,
+          questionMode: 'data',
+          usedSearch: false,
+          usedThinking: false,
+          latencyMs: Date.now() - startedAt,
+          status: 'error',
+          errorMessage: normalized.reason,
+        });
+        return this.buildRecognizeError('MODEL_RESULT_INVALID', normalized.reason);
       }
+      await this.reportUsageLogSafe(availability.config, {
+        phase: 'recognize',
+        question: recognizeQuestion,
+        answer: jsonText,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'success',
+        decisionTrace: {
+          module,
+          itemCount: normalized.data.items.length,
+          hasCustomerName: Boolean(normalized.data.customerName),
+        },
+      });
       return { ok: true as const, data: normalized.data };
     } catch {
-      return { ok: false as const, reason: '模型返回的 JSON 格式有误，请重试' };
+      await this.reportUsageLogSafe(availability.config, {
+        phase: 'recognize',
+        question: recognizeQuestion,
+        answer: jsonText,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: '模型返回的 JSON 格式有误，请重试',
+      });
+      return this.buildRecognizeError('MODEL_RESPONSE_INVALID', '模型返回的 JSON 格式有误，请重试');
     }
   }
 
@@ -888,7 +1093,7 @@ export class AiService {
   > {
     const catalog = await this.getRecognizeProductCatalog();
     const recognizeResult = await this.buildRecognizeResponse('sale-order', attachment, catalog);
-    if (!recognizeResult.ok || !recognizeResult.data) {
+    if (!recognizeResult.ok) {
       return { ok: false, reason: recognizeResult.reason ?? '附件识别失败' };
     }
 
@@ -1214,6 +1419,8 @@ export class AiService {
     sessionId?: string,
   ) {
     const currentSessionId = sessionId || `sess_${Date.now()}`;
+    const effectiveHistory = await this.resolveRuntimeHistory(user.sub, currentSessionId, history);
+    const startedAt = Date.now();
     const emit = (event: string, data: unknown) => emitter?.(event, data);
 
     // ── 1. 检查 AI 配置 ──────────────────────────────────────────────────────
@@ -1221,8 +1428,9 @@ export class AiService {
     if (!availability.enabled || !availability.config) {
       const answer = `AI 模块当前已禁用：${availability.reason}`;
       await this.saveConversation(user.sub, question, answer, null, undefined, currentSessionId);
-      emit('error', { message: availability.reason });
-      return { enabled: false, reason: availability.reason, answer };
+      const code = availability.code ?? this.resolveAvailabilityCode(availability.reason);
+      emit('error', { code, message: availability.reason });
+      return this.buildDisabledResult(code, availability.reason, answer);
     }
 
     const providerClient = this.modelProviderRegistry.get(availability.config.provider);
@@ -1230,15 +1438,23 @@ export class AiService {
       const reason = `当前提供商 ${availability.config.provider} 暂未接入`;
       const answer = `AI 模块当前已禁用：${reason}`;
       await this.saveConversation(user.sub, question, answer, null, undefined, currentSessionId);
-      emit('error', { message: reason });
-      return { enabled: false, reason, answer };
+      emit('error', { code: 'PROVIDER_NOT_SUPPORTED', message: reason });
+      return this.buildDisabledResult('PROVIDER_NOT_SUPPORTED', reason, answer);
     }
 
     const attachmentValidation = this.validateAttachment(attachment);
     if (!attachmentValidation.ok) {
       await this.saveConversation(user.sub, question, attachmentValidation.reason, null, undefined, currentSessionId);
-      emit('error', { message: attachmentValidation.reason });
-      return { enabled: false, reason: attachmentValidation.reason, answer: attachmentValidation.reason };
+      emit('error', { code: 'ATTACHMENT_INVALID', message: attachmentValidation.reason });
+      return this.buildDisabledResult('ATTACHMENT_INVALID', attachmentValidation.reason);
+    }
+
+    const authCheck = await this.aiPromptClientService.verifyAuthorization(availability.config, 'allowAttachmentRecognition');
+    if (!authCheck.ok) {
+      const answer = `AI 模块当前已禁用：${authCheck.reason}`;
+      await this.saveConversation(user.sub, question, answer, null, undefined, currentSessionId);
+      emit('error', { code: authCheck.code, message: authCheck.reason });
+      return this.buildDisabledResult(authCheck.code, authCheck.reason, answer);
     }
 
     emit('status', { phase: 'attachment-route', message: '正在理解附件内容和查询意图...' });
@@ -1249,7 +1465,7 @@ export class AiService {
       availability.config,
     );
     if (!routeResult.ok) {
-      this.logger.warn(`附件路由失败，降级为纯识别模式。question=${question}; reason=${routeResult.reason}`);
+      this.logger.warn(`附件路由失败，降级为纯识别模式。reason=${routeResult.reason}`);
     }
     if (routeResult.ok && routeResult.data.intent !== 'recognize' && routeResult.data.queryRewrite) {
       if (routeResult.data.intent === 'query_sale_order') {
@@ -1266,7 +1482,7 @@ export class AiService {
             currentSessionId,
             localMatch.rows,
           );
-          return { enabled: true, reason: '', answer: localMatch.answer };
+          return { enabled: true, code: 'OK' as const, reason: '', answer: localMatch.answer };
         }
       }
 
@@ -1274,20 +1490,28 @@ export class AiService {
         effectiveQuestion: routeResult.data.queryRewrite,
         saveQuestion: question,
         user,
-        history,
+        history: effectiveHistory,
         emitter,
         sessionId: currentSessionId,
         useRecentStructuredContext: false,
       });
     }
 
-    const promptResult = await this.aiPromptClientService.fetchVisionMessages(question, availability.config);
+    const promptResult = await this.aiPromptClientService.fetchVisionMessages(question, availability.config, {
+      sessionId: currentSessionId,
+      questionMode: 'data',
+      provider: availability.config.provider,
+      model: availability.config.modelName,
+      usedSearch: false,
+      usedThinking: false,
+    });
     if (!promptResult.ok || promptResult.messages.length < 2) {
       const reason = promptResult.ok ? 'Prompt 服务未返回有效消息' : promptResult.reason;
       const answer = `AI 模块当前不可用：${reason}`;
       await this.saveConversation(user.sub, question, answer, null, undefined, currentSessionId);
-      emit('error', { message: reason });
-      return { enabled: false, reason, answer };
+      const code = promptResult.ok ? 'PROMPT_RESPONSE_INVALID' : (promptResult.code ?? 'PROMPT_SERVICE_REQUEST_FAILED');
+      emit('error', { code, message: reason });
+      return this.buildDisabledResult(code, reason, answer);
     }
 
     // ── 2. 构建多模态消息 ─────────────────────────────────────────────────────
@@ -1311,6 +1535,8 @@ export class AiService {
     emit('status', { phase: 'vision', message: '正在整理识别结果...' });
 
     let answer: string;
+    let visionStatus: 'success' | 'error' = 'success';
+    let visionErrorMessage: string | undefined;
 
     if (providerClient.invokeStream) {
       const streamResult = await providerClient.invokeStream(
@@ -1320,23 +1546,46 @@ export class AiService {
       );
       answer = streamResult.ok ? streamResult.content : `识别失败：${streamResult.reason}`;
       if (!streamResult.ok) {
-        emit('error', { message: streamResult.reason });
+        visionStatus = 'error';
+        visionErrorMessage = streamResult.reason;
+        emit('error', { code: streamResult.code ?? 'MODEL_INVOKE_FAILED', message: streamResult.reason });
       }
     } else {
       const result = await providerClient.invoke(messages, availability.config);
       answer = result.ok ? result.content : `识别失败：${result.reason}`;
       emit('token', { content: answer });
       if (!result.ok) {
-        emit('error', { message: result.reason });
+        visionStatus = 'error';
+        visionErrorMessage = result.reason;
+        emit('error', { code: result.code ?? 'MODEL_INVOKE_FAILED', message: result.reason });
       }
     }
 
     await this.saveConversation(user.sub, question || '(文件识别)', answer, null, undefined, currentSessionId);
-    return { enabled: true, reason: '', answer };
+
+    await this.reportUsageLogSafe(availability.config, {
+      phase: 'vision',
+      sessionId: currentSessionId,
+      question: question || '(文件识别)',
+      answer,
+      questionMode: 'data',
+      usedSearch: false,
+      usedThinking: false,
+      latencyMs: Date.now() - startedAt,
+      status: visionStatus,
+      errorMessage: visionErrorMessage,
+      decisionTrace: {
+        routeIntent: routeResult.ok ? routeResult.data.intent : 'recognize',
+        routeUsed: routeResult.ok,
+        attachmentType: attachment.type,
+      },
+    });
+
+    return { enabled: true, code: 'OK' as const, reason: '', answer };
   }
 
   /** 测试大模型连接（使用表单直传参数，不依赖已保存配置） */
-  async testConnection(dto: AiTestDto): Promise<{
+  async testConnection(dto: AiTestDto, _user: AuthUser): Promise<{
     ok: boolean;
     message: string;
     checks: Array<{ key: string; label: string; ok: boolean; message: string }>;
@@ -1352,12 +1601,17 @@ export class AiService {
       };
     }
 
+    const serviceUniqueId = dto.serviceUniqueId?.trim() || await this.systemService.ensureAiServiceUniqueId();
+    const instanceToken = dto.instanceToken?.trim() || await this.systemService.ensureAiInstanceToken();
+
     const runtimeConfig: AiRuntimeConfig = {
       provider: dto.provider,
       modelApiKey: dto.modelApiKey,
       modelName: dto.modelName,
       modelBaseUrl: dto.modelBaseUrl,
       apiKey: dto.apiKey,
+      serviceUniqueId,
+      instanceToken,
       promptServiceUrl: dto.promptServiceUrl,
       industry: availability.config?.industry ?? 'tea',
     };
@@ -1413,6 +1667,20 @@ export class AiService {
     return { ok: false, message: result.reason, checks };
   }
 
+  private async reportLicenseHeartbeat() {
+    try {
+      const availability = await this.aiConfigService.getAvailability();
+      if (!availability.enabled || !availability.config) {
+        return;
+      }
+
+      await this.aiPromptClientService.heartbeatLicense(availability.config);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.logger.warn(`AI 心跳任务执行失败: ${message}`);
+    }
+  }
+
   /**
    * 调用 prompt-center 提取用户长期回答偏好，并在识别成功后异步落库
    */
@@ -1455,7 +1723,7 @@ export class AiService {
 
     const rule = normalized.data.rule;
 
-    this.logger.log(`检测到用户偏好规则: userId=${userId}, rule="${rule}"`);
+    this.logger.log(`检测到用户偏好规则: userId=${userId}`);
 
     await this.aiPromptClientService.pushUserRule(
       config,
@@ -1502,7 +1770,7 @@ export class AiService {
       return { ok: true as const, sql: '[strategy-snapshot]', rows };
     }
 
-    this.logger.warn(`AI strategy snapshot empty. question=${question}`);
+      this.logger.warn('AI strategy snapshot empty.');
     return {
       ok: true as const,
       sql: '[strategy-snapshot-empty]',
@@ -1521,6 +1789,7 @@ export class AiService {
     sessionId: string,
     emit: SseEmitter,
   ) {
+    const startedAt = Date.now();
     emit('status', { phase: 'sql', message: '正在理解问题，生成查询语句...' });
 
     const sqlPromptResult = await this.aiPromptClientService.fetchSqlMessages(
@@ -1529,30 +1798,72 @@ export class AiService {
       history,
       structuredContext,
       userId,
+      {
+        sessionId,
+        questionMode: 'data',
+        provider: config.provider,
+        model: config.modelName,
+        usedSearch: false,
+        usedThinking: false,
+      },
     );
 
     if (!sqlPromptResult.ok) {
-      const answer = `提示词获取失败：${sqlPromptResult.reason}`;
+      const answer = sqlPromptResult.reason;
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql',
+        sessionId,
+        question: saveQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: sqlPromptResult.reason,
+      });
       await this.saveConversation(userId, saveQuestion, answer, null, undefined, sessionId);
-      emit('error', { message: sqlPromptResult.reason });
-      return { enabled: false, reason: sqlPromptResult.reason, answer };
+      emit('error', { code: sqlPromptResult.code ?? 'AI_RUNTIME_ERROR', message: sqlPromptResult.reason });
+      return this.buildDisabledResult(sqlPromptResult.code ?? 'AI_RUNTIME_ERROR', sqlPromptResult.reason, answer);
     }
 
     const sqlModelResult = await providerClient.invoke(sqlPromptResult.messages, config);
 
     if (!sqlModelResult.ok) {
       const answer = `模型调用失败：${sqlModelResult.reason}`;
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql',
+        sessionId,
+        question: saveQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: sqlModelResult.reason,
+      });
       await this.saveConversation(userId, saveQuestion, answer, null, undefined, sessionId);
-      emit('error', { message: sqlModelResult.reason });
-      return { enabled: false, reason: sqlModelResult.reason, answer };
+      emit('error', { code: sqlModelResult.code ?? 'MODEL_INVOKE_FAILED', message: sqlModelResult.reason });
+      return this.buildDisabledResult(sqlModelResult.code ?? 'MODEL_INVOKE_FAILED', sqlModelResult.reason, answer);
     }
 
     const sql = extractSqlFromContent(sqlModelResult.content);
     if (!sql) {
       const answer = 'AI 未能生成有效的查询语句，请换一种问法试试';
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql',
+        sessionId,
+        question: saveQuestion,
+        answer: sqlModelResult.content,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: answer,
+      });
       await this.saveConversation(userId, saveQuestion, answer, null, undefined, sessionId);
-      emit('error', { message: answer });
-      return { enabled: false, reason: 'AI 未生成有效 SQL', answer };
+      emit('error', { code: 'PROMPT_RESPONSE_INVALID', message: answer });
+      return this.buildDisabledResult('PROMPT_RESPONSE_INVALID', 'AI 未生成有效 SQL', answer);
     }
 
     emit('status', { phase: 'execute', message: '正在查询数据库...' });
@@ -1565,11 +1876,13 @@ export class AiService {
       history,
       structuredContext,
       userId,
+      sessionId,
+      saveQuestion,
       emit,
     );
 
     if (!queryResult.ok) {
-      this.logger.warn(`AI SQL 执行失败。question=${effectiveQuestion}; sql=${queryResult.sql ?? sql}; reason=${queryResult.reason}`);
+      this.logAiSqlFailure('execute_failed', queryResult.reason);
       const answer = await this.buildFriendlyQueryErrorAnswer(
         saveQuestion,
         queryResult.reason,
@@ -1579,10 +1892,42 @@ export class AiService {
         structuredContext,
         userId,
       );
+      await this.reportUsageLogSafe(config, {
+        phase: 'query-error',
+        sessionId,
+        question: saveQuestion,
+        answer,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        latencyMs: Date.now() - startedAt,
+        status: 'error',
+        errorMessage: queryResult.reason,
+        decisionTrace: {
+          sql: queryResult.sql ?? sql,
+          retried: Boolean((queryResult as { retried?: boolean }).retried),
+        },
+      });
       await this.saveConversation(userId, saveQuestion, answer, queryResult.sql ?? sql, undefined, sessionId);
       emit('error', { message: answer });
       return { enabled: false, reason: answer, answer };
     }
+
+    await this.reportUsageLogSafe(config, {
+      phase: (queryResult as { retried?: boolean }).retried ? 'sql-retry' : 'sql',
+      sessionId,
+      question: saveQuestion,
+      questionMode: 'data',
+      usedSearch: false,
+      usedThinking: false,
+      latencyMs: Date.now() - startedAt,
+      status: 'success',
+      decisionTrace: {
+        sql: queryResult.sql,
+        retried: Boolean((queryResult as { retried?: boolean }).retried),
+        rowsCount: Array.isArray(queryResult.rows) ? queryResult.rows.length : 0,
+      },
+    });
 
     return queryResult;
   }
@@ -1644,14 +1989,16 @@ export class AiService {
     history: AiChatHistoryItem[],
     structuredContext: AiStructuredContext | undefined,
     userId: number,
+    sessionId: string,
+    saveQuestion: string,
     emit: SseEmitter,
   ) {
     const firstResult = await this.aiSqlService.executeSelect(sql);
     if (firstResult.ok) {
-      return firstResult;
+      return { ...firstResult, retried: false as const };
     }
 
-    this.logger.warn(`AI SQL 首次执行失败，准备重试。question=${question}; sql=${firstResult.sql ?? sql}; reason=${firstResult.reason}`);
+    this.logAiSqlFailure('retrying', firstResult.reason);
     emit('status', { phase: 'execute', message: '第一次查询失败，正在自动修正后重试...' });
 
     const retryPromptResult = await this.aiPromptClientService.fetchSqlRetryMessages(
@@ -1662,29 +2009,95 @@ export class AiService {
       history,
       structuredContext,
       userId,
+      {
+        sessionId,
+        questionMode: 'data',
+        provider: config.provider,
+        model: config.modelName,
+        usedSearch: false,
+        usedThinking: false,
+      },
     );
     if (!retryPromptResult.ok) {
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql-retry',
+        sessionId,
+        question: saveQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        status: 'error',
+        errorMessage: retryPromptResult.reason,
+        decisionTrace: {
+          failedSql: firstResult.sql ?? sql,
+          firstError: firstResult.reason,
+        },
+      });
       return firstResult;
     }
 
     const retryModelResult = await providerClient.invoke(retryPromptResult.messages, config);
     if (!retryModelResult.ok) {
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql-retry',
+        sessionId,
+        question: saveQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        status: 'error',
+        errorMessage: retryModelResult.reason,
+        decisionTrace: {
+          failedSql: firstResult.sql ?? sql,
+          firstError: firstResult.reason,
+        },
+      });
       return firstResult;
     }
 
     const retrySql = extractSqlFromContent(retryModelResult.content);
     if (!retrySql) {
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql-retry',
+        sessionId,
+        question: saveQuestion,
+        answer: retryModelResult.content,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        status: 'error',
+        errorMessage: 'AI 未生成有效 SQL',
+        decisionTrace: {
+          failedSql: firstResult.sql ?? sql,
+          firstError: firstResult.reason,
+        },
+      });
       return firstResult;
     }
 
     const secondResult = await this.aiSqlService.executeSelect(retrySql);
     if (!secondResult.ok) {
-      this.logger.warn(`AI SQL 二次执行仍失败。question=${question}; sql=${secondResult.sql ?? retrySql}; reason=${secondResult.reason}`);
+      this.logAiSqlFailure('retry_failed', secondResult.reason);
+      await this.reportUsageLogSafe(config, {
+        phase: 'sql-retry',
+        sessionId,
+        question: saveQuestion,
+        questionMode: 'data',
+        usedSearch: false,
+        usedThinking: false,
+        status: 'error',
+        errorMessage: secondResult.reason,
+        decisionTrace: {
+          failedSql: firstResult.sql ?? sql,
+          retrySql,
+          firstError: firstResult.reason,
+        },
+      });
       return secondResult;
     }
 
-    this.logger.log(`AI SQL 自动修正重试成功。question=${question}; sql=${secondResult.sql}`);
-    return secondResult;
+    this.logAiSqlFailure('retry_success');
+    return { ...secondResult, retried: true as const };
   }
 
   private async buildFriendlyQueryErrorAnswer(
@@ -1782,12 +2195,62 @@ export class AiService {
       return null;
     }
 
+    const contactAnswer = this.buildContactAnswer(question, rows);
+    if (contactAnswer) {
+      return contactAnswer;
+    }
+
     const exchangeAnswer = this.buildExchangeAnswer(question, rows);
     if (exchangeAnswer) {
       return exchangeAnswer;
     }
 
     return null;
+  }
+
+  private buildContactAnswer(question: string, rows: Record<string, unknown>[]) {
+    if (!this.isContactQuestion(question) || !this.hasContactColumns(rows)) {
+      return null;
+    }
+
+    const contactRows = rows
+      .map((row) => {
+        const orderNo = this.getText(row, ['order_no', 'orderNo']);
+        const customerName = this.getText(row, ['customer_name', 'customerName']) || '散客';
+        const contactName = this.getText(row, ['contact_name', 'contactName']);
+        const phone = this.getText(row, ['phone', 'customerPhone']);
+        const unpaidAmount = this.getNumber(row, ['unpaid_amount', 'unpaidAmount']);
+        return { orderNo, customerName, contactName, phone, unpaidAmount };
+      })
+      .filter((row) => row.contactName || row.phone);
+
+    if (contactRows.length === 0) {
+      return null;
+    }
+
+    const uniqueRows = contactRows.filter((row, index, list) => {
+      return list.findIndex((item) => item.orderNo === row.orderNo && item.contactName === row.contactName && item.phone === row.phone) === index;
+    });
+
+    if (uniqueRows.length === 1) {
+      const item = uniqueRows[0];
+      const contactText = [item.contactName, item.phone ? `(${item.phone})` : ''].filter(Boolean).join(' ');
+      const prefix = item.orderNo
+        ? `${item.orderNo} 的联系人是`
+        : `${item.customerName} 的联系人是`;
+      const unpaidText = item.unpaidAmount > 0 ? `，当前未收款 ¥${item.unpaidAmount.toLocaleString()}` : '';
+      return `${prefix}${contactText || '暂无记录'}${unpaidText}。`;
+    }
+
+    return [
+      '当前查询到的联系人如下：',
+      ...uniqueRows.slice(0, 5).map((item) => {
+        const base = item.orderNo ? `${item.orderNo}` : item.customerName;
+        const contactText = [item.contactName || '未登记联系人', item.phone ? `(${item.phone})` : ''].filter(Boolean).join(' ');
+        const unpaidText = item.unpaidAmount > 0 ? `，未收款 ¥${item.unpaidAmount.toLocaleString()}` : '';
+        return `- ${base}：${contactText}${unpaidText}`;
+      }),
+    ].join('\n');
   }
 
   private buildExchangeAnswer(question: string, rows: Record<string, unknown>[]) {
@@ -1984,6 +2447,26 @@ export class AiService {
       .delete()
       .where('user_id = :userId AND session_id IN (:...ids)', { userId, ids: oldSessionIds })
       .execute();
+  }
+
+  private async resolveRuntimeHistory(
+    userId: number,
+    sessionId: string,
+    history: AiChatHistoryItem[],
+  ) {
+    if (history.length > 0) {
+      return history;
+    }
+
+    const list = await this.aiConversationRepository.find({
+      where: { userId, sessionId },
+      order: { id: 'ASC' },
+    });
+
+    return list.flatMap<AiChatHistoryItem>((item) => ([
+      { role: 'user', content: item.question },
+      { role: 'assistant', content: item.answer },
+    ]));
   }
 
   private serializeConversation(item: AiConversationEntity) {

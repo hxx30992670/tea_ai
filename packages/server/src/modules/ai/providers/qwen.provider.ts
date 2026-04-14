@@ -38,9 +38,9 @@ export class QwenProviderClient implements ModelProviderClient {
       }, MODEL_TIMEOUT_MS);
 
       if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        this.logger.warn(`Qwen invoke HTTP ${response.status}: ${errText}`);
-        return { ok: false, reason: `Qwen 调用失败 (HTTP ${response.status}): ${errText}` };
+        await response.text().catch(() => '');
+        this.logger.warn(`Qwen invoke HTTP ${response.status}`);
+        return { ok: false, reason: `Qwen 调用失败 (HTTP ${response.status})` };
       }
 
       const data = (await response.json()) as {
@@ -84,8 +84,9 @@ export class QwenProviderClient implements ModelProviderClient {
       }, MODEL_TIMEOUT_MS);
 
       if (!response.ok) {
-        const errText = await response.text().catch(() => '');
-        return { ok: false, reason: `Qwen 流式调用失败 (HTTP ${response.status}): ${errText}` };
+        await response.text().catch(() => '');
+        this.logger.warn(`Qwen invokeStream HTTP ${response.status}`);
+        return { ok: false, reason: `Qwen 流式调用失败 (HTTP ${response.status})` };
       }
       if (!response.body) return { ok: false, reason: 'Qwen 返回流为空' };
 

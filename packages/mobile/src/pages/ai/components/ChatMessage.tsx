@@ -87,6 +87,8 @@ export function ChatMessage({ message }: ChatMessageProps) {
 
   const hasChart =
     !isUser &&
+    !isThinking &&
+    !isError &&
     message.status === 'done' &&
     message.rows &&
     message.rows.length > 0 &&

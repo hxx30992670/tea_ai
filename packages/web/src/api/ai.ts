@@ -1,4 +1,5 @@
 import type { AiConversation, ApiResponse } from '@/types'
+import { AI_CAPABILITY_CODES, isAiCapabilityCode, type AiCapabilityCode } from '@shared/constants'
 import request from './index'
 
 const AI_RECOGNIZE_TIMEOUT = 60000
@@ -11,12 +12,14 @@ export interface AiSuggestion {
 
 export interface AiSuggestionResponse {
   enabled: boolean
+  code?: AiCapabilityCode
   reason: string
   suggestions: AiSuggestion[]
 }
 
 export interface AiChatResult {
   enabled: boolean
+  code?: AiCapabilityCode
   reason: string
   answer: string
 }
@@ -85,8 +88,8 @@ export const aiApi = {
   },
 
   /** AI 结构化识别，用于自动填表 */
-  recognizeSaleOrder: async (attachment: AiAttachment, products?: AiRecognizeProduct[]): Promise<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string }> => {
-    const res = await request.post<never, ApiResponse<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string }>>(
+  recognizeSaleOrder: async (attachment: AiAttachment, products?: AiRecognizeProduct[]): Promise<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string; code?: AiCapabilityCode }> => {
+    const res = await request.post<never, ApiResponse<{ ok: boolean; data?: AiRecognizedSaleOrder; reason?: string; code?: AiCapabilityCode }>>(
       '/ai/recognize',
       { module: 'sale-order', attachment, products },
       { timeout: AI_RECOGNIZE_TIMEOUT },
@@ -138,6 +141,7 @@ export const aiApi = {
     const decoder = new TextDecoder()
     let buffer = ''
     let enabled = true
+    let code: AiCapabilityCode = AI_CAPABILITY_CODES.OK
     let reason = ''
     const answerChunks: string[] = []
 
@@ -174,6 +178,9 @@ export const aiApi = {
 
           if (eventName === 'error') {
             enabled = false
+            code = isAiCapabilityCode(String(payload.code ?? ''))
+              ? String(payload.code) as AiCapabilityCode
+              : AI_CAPABILITY_CODES.AI_RUNTIME_ERROR
             reason = String(payload.message ?? '出现错误')
           }
         } catch {
@@ -184,6 +191,7 @@ export const aiApi = {
 
     return {
       enabled,
+      code,
       reason,
       answer: answerChunks.join(''),
     }

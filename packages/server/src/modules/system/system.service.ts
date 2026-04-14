@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import * as bcrypt from 'bcryptjs';
+import { randomUUID } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { getRoleProfile, isAppRole, ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF } from '../../common/constants/roles';
@@ -22,6 +23,8 @@ const SYSTEM_SETTING_KEYS = [
   'aiModelName',
   'aiModelBaseUrl',
   'aiPromptServiceUrl',
+  'aiServiceUniqueId',
+  'aiInstanceToken',
   'aiIndustry',
 ] as const;
 
@@ -48,38 +51,96 @@ export class SystemService {
     }, {});
   }
 
+  private isAiConfigured(settings: Record<string, string>) {
+    return Boolean(
+      settings.aiApiKey?.trim()
+      && settings.aiPromptServiceUrl?.trim()
+      && settings.aiProvider?.trim()
+      && settings.aiModelApiKey?.trim()
+      && settings.aiModelName?.trim()
+      && settings.aiModelBaseUrl?.trim()
+      && settings.aiServiceUniqueId?.trim(),
+    );
+  }
+
+  private buildAiSettingsResponse(settings: Record<string, string>) {
+    const aiConfigured = this.isAiConfigured(settings);
+
+    return {
+      shopName: settings.shopName,
+      aiConfigured,
+      aiProvider: aiConfigured ? settings.aiProvider : '',
+      aiModelName: aiConfigured ? settings.aiModelName : '',
+    };
+  }
+
+  private async upsertSetting(key: string, value: string | null) {
+    const existing = await this.systemSettingRepository.findOne({ where: { key } });
+
+    if (existing) {
+      existing.value = value;
+      await this.systemSettingRepository.save(existing);
+      return;
+    }
+
+    const created = this.systemSettingRepository.create({ key, value });
+    await this.systemSettingRepository.save(created);
+  }
+
+  async ensureAiServiceUniqueId() {
+    const existing = await this.systemSettingRepository.findOne({ where: { key: 'aiServiceUniqueId' } });
+    const currentValue = existing?.value?.trim();
+
+    if (currentValue) {
+      return currentValue;
+    }
+
+    const serviceUniqueId = `smartstock-${randomUUID().replace(/-/g, '').slice(0, 16)}`;
+    await this.upsertSetting('aiServiceUniqueId', serviceUniqueId);
+    return serviceUniqueId;
+  }
+
+  async ensureAiInstanceToken() {
+    const existing = await this.systemSettingRepository.findOne({ where: { key: 'aiInstanceToken' } });
+    const currentValue = existing?.value?.trim();
+
+    if (currentValue) {
+      return currentValue;
+    }
+
+    const instanceToken = `inst-${randomUUID().replace(/-/g, '')}`;
+    await this.upsertSetting('aiInstanceToken', instanceToken);
+    return instanceToken;
+  }
+
   async getSettings(user?: AuthUser) {
     const settingMap = await this.getAllSettings();
+    const sanitized = this.buildAiSettingsResponse(settingMap);
 
     if (user?.role === ROLE_ADMIN) {
-      return settingMap;
+      return sanitized;
     }
 
     return {
-      shopName: settingMap.shopName,
-      aiProvider: user?.role === ROLE_MANAGER ? settingMap.aiProvider : '',
-      aiModelName: user?.role === ROLE_MANAGER ? settingMap.aiModelName : '',
+      shopName: sanitized.shopName,
+      aiConfigured: sanitized.aiConfigured,
+      aiProvider: user?.role === ROLE_MANAGER ? sanitized.aiProvider : '',
+      aiModelName: user?.role === ROLE_MANAGER ? sanitized.aiModelName : '',
       aiIndustry: user?.role === ROLE_MANAGER ? settingMap.aiIndustry : '',
     };
   }
 
   async updateSettings(dto: UpdateSystemSettingsDto, user: AuthUser) {
     const entries = Object.entries(dto).filter(([, value]) => value !== undefined);
+    const touchedAiSettings = entries.some(([key]) => key.startsWith('ai'));
+
+    if (touchedAiSettings) {
+      await this.ensureAiServiceUniqueId();
+      await this.ensureAiInstanceToken();
+    }
 
     for (const [key, value] of entries) {
-      const existing = await this.systemSettingRepository.findOne({ where: { key } });
-
-      if (existing) {
-        existing.value = value ?? null;
-        await this.systemSettingRepository.save(existing);
-        continue;
-      }
-
-      const created = this.systemSettingRepository.create({
-        key,
-        value: value ?? null,
-      });
-      await this.systemSettingRepository.save(created);
+      await this.upsertSetting(key, value ?? null);
     }
 
     await this.operationLogService.createLog({

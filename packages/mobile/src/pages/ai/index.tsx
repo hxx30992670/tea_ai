@@ -11,6 +11,12 @@ import { ChatInput } from './components/ChatInput'
 import { QuickSuggestions } from './components/QuickSuggestions'
 import { SessionDrawer } from './components/SessionDrawer'
 
+const AUTO_SCROLL_THRESHOLD = 80
+
+function isNearBottom(element: HTMLDivElement) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_THRESHOLD
+}
+
 interface AiPageProps {
   speechConfig?: SpeechConfig
 }
@@ -24,11 +30,32 @@ export default function AiPage({ speechConfig }: AiPageProps) {
 
   const [showSessions, setShowSessions] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const shouldAutoScrollRef = useRef(true)
 
   // 新消息时自动滚到底部
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    if (shouldAutoScrollRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
   }, [messages])
+
+  useEffect(() => {
+    const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]')
+    if (!(viewport instanceof HTMLDivElement)) return
+
+    const handleScroll = () => {
+      shouldAutoScrollRef.current = isNearBottom(viewport)
+    }
+
+    handleScroll()
+    viewport.addEventListener('scroll', handleScroll)
+    return () => viewport.removeEventListener('scroll', handleScroll)
+  }, [])
+
+  useEffect(() => {
+    shouldAutoScrollRef.current = true
+  }, [activeSessionId])
 
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId)
 
@@ -57,7 +84,7 @@ export default function AiPage({ speechConfig }: AiPageProps) {
       />
 
       {/* 消息列表 */}
-      <ScrollArea className="min-h-0 flex-1">
+      <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
         <div className="min-h-full overflow-x-hidden px-4 py-4 space-y-4">
           {loadingHistory ? (
             <div className="space-y-4 py-4">

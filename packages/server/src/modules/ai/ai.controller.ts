@@ -75,7 +75,7 @@ export class AiController {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : '服务内部错误';
-      write('error', { message });
+      write('error', { code: 'AI_INTERNAL_ERROR', message });
     } finally {
       write('done', { success: true });
       response.end();
@@ -94,8 +94,8 @@ export class AiController {
   @ApiOperation({ summary: '测试大模型连接（不依赖已保存配置）' })
   @ApiBody({ type: AiTestDto })
   @Post('test')
-  testConnection(@Body() dto: AiTestDto) {
-    return this.aiService.testConnection(dto);
+  testConnection(@Body() dto: AiTestDto, @CurrentUser() user: AuthUser) {
+    return this.aiService.testConnection(dto, user);
   }
 
   @Roles(ROLE_ADMIN)

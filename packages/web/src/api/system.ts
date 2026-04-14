@@ -3,13 +3,19 @@ import type { ApiResponse, PageResult, SysUser, OperationLog } from '@/types'
 
 export interface SystemSettings {
   shopName?: string
-  aiApiKey?: string
+  aiConfigured?: boolean
   aiProvider?: string
-  aiModelApiKey?: string
   aiModelName?: string
-  aiModelBaseUrl?: string
-  aiPromptServiceUrl?: string
   aiIndustry?: string
+}
+
+export interface UpdateAiSettingsPayload {
+  aiApiKey: string
+  aiProvider: string
+  aiModelApiKey: string
+  aiModelName: string
+  aiModelBaseUrl: string
+  aiPromptServiceUrl: string
 }
 
 export const systemApi = {
@@ -42,7 +48,7 @@ export const systemApi = {
     return res.data
   },
 
-  updateSettings: async (data: SystemSettings): Promise<void> => {
+  updateSettings: async (data: Partial<SystemSettings> | UpdateAiSettingsPayload): Promise<void> => {
     await request.put('/system/settings', data)
   },
 

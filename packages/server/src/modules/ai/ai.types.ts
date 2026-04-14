@@ -4,8 +4,62 @@ export type AiRuntimeConfig = {
   modelApiKey: string;
   modelBaseUrl: string;
   apiKey: string;
+  serviceUniqueId: string;
+  instanceToken: string;
   promptServiceUrl: string;
   industry: string;
+};
+
+export type AiCapabilityCode =
+  | 'OK'
+  | 'AI_PROVIDER_MISSING'
+  | 'AI_AUTH_KEY_MISSING'
+  | 'AI_MODEL_API_KEY_MISSING'
+  | 'SERVICE_ID_MISSING'
+  | 'PROMPT_SERVICE_URL_MISSING'
+  | 'PROMPT_SERVICE_UNAVAILABLE'
+  | 'PROMPT_SERVICE_REQUEST_FAILED'
+  | 'PROMPT_RESPONSE_INVALID'
+  | 'INDUSTRY_MISMATCH'
+  | 'API_KEY_NOT_FOUND'
+  | 'API_KEY_DISABLED'
+  | 'API_KEY_EXPIRED'
+  | 'LICENSE_UNBOUND'
+  | 'SERVICE_ID_REQUIRED'
+  | 'SERVICE_ID_MISMATCH'
+  | 'SERVICE_ALREADY_BOUND'
+  | 'INSTANCE_LEASE_CONFLICT'
+  | 'QUOTA_EXCEEDED'
+  | 'PROMPT_INJECTION_BLOCKED'
+  | 'REQUEST_SIGNATURE_MISSING'
+  | 'REQUEST_TIMESTAMP_INVALID'
+  | 'REQUEST_SIGNATURE_INVALID'
+  | 'REQUEST_REPLAYED'
+  | 'REQUEST_RATE_LIMITED'
+  | 'REQUEST_COOLDOWN_ACTIVE'
+  | 'FEATURE_DISABLED'
+  | 'PROVIDER_NOT_SUPPORTED'
+  | 'ATTACHMENT_INVALID'
+  | 'MODEL_RESPONSE_INVALID'
+  | 'MODEL_RESULT_INVALID'
+  | 'MODEL_INVOKE_FAILED'
+  | 'AI_RUNTIME_ERROR'
+  | 'AI_INTERNAL_ERROR'
+
+export type AiFeatureFlags = {
+  allowLocalQuery: boolean;
+  allowStrategyMode: boolean;
+  allowWebSearch: boolean;
+  allowThinking: boolean;
+  allowLocalGrounding: boolean;
+  allowAttachmentRecognition: boolean;
+};
+
+export type AiAuthorizationResult = {
+  ok: boolean;
+  reason: string;
+  code: AiCapabilityCode;
+  features: AiFeatureFlags | null;
 };
 
 export type AiModelInvokeOptions = {
@@ -16,6 +70,7 @@ export type AiModelInvokeOptions = {
 export type AiAvailability = {
   enabled: boolean;
   reason: string;
+  code?: AiCapabilityCode;
   config: AiRuntimeConfig | null;
 };
 
@@ -63,6 +118,7 @@ export type AiPromptFetchResult =
   | {
       ok: false;
       reason: string;
+      code?: AiCapabilityCode;
     };
 
 export type AiModelInvokeResult =
@@ -74,6 +130,7 @@ export type AiModelInvokeResult =
   | {
       ok: false;
       reason: string;
+      code?: AiCapabilityCode;
     };
 
 export type AiQueryExecutionResult =
@@ -85,5 +142,6 @@ export type AiQueryExecutionResult =
   | {
       ok: false;
       reason: string;
+      code?: AiCapabilityCode;
       sql?: string;
     };
