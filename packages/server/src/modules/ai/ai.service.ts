@@ -4,6 +4,7 @@ import { IsNull, Repository } from 'typeorm';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { AiConversationEntity } from '../../entities/ai-conversation.entity';
 import { ProductEntity } from '../../entities/product.entity';
+import { DashboardService } from '../dashboard/dashboard.service';
 import { AiConfigService } from './ai-config.service';
 import { AiPromptClientService } from './ai-prompt-client.service';
 import { AiSqlService } from './ai-sql.service';
@@ -56,6 +57,172 @@ type AiAttachmentRoute = {
   queryRewrite: string | null;
 };
 
+type AiQuestionMode = 'data' | 'strategy';
+
+type StrategyQuestionResolution = {
+  mode: AiQuestionMode;
+  effectiveQuestion: string;
+  summaryQuestion?: string;
+};
+
+const STRATEGY_CITY_CLARIFY_ANSWER = '要按当前城市做本地化方案，我先需要知道城市名。请直接告诉我是哪个城市，比如“贵阳市”或“昆明市”，我再一次性结合销量、天气和当地茶文化给您生成方案。';
+const MUNICIPALITY_CITY_NAMES = ['北京', '上海', '天津', '重庆', '香港', '澳门'];
+const STRATEGY_CITY_KEYWORD_RE = /(当前城市|哪个城市|本地|当地|同城|地域|按城市|城市情况|天气|茶文化|商圈)/;
+const STRATEGY_CITY_FOLLOWUP_HINTS = [
+  STRATEGY_CITY_CLARIFY_ANSWER,
+  '补充城市名后，可进一步细化到天气、茶文化和活动节奏',
+];
+const LOCAL_GROUNDING_FOLLOWUP_RE = /(落地|具体怎么弄|怎么落地|哪边比较好|预算|费用|多少钱|对接|联系人|联系电话|公开电话|商圈|茶城|商场|广场|摆点|快闪|地推|物业|招商)/;
+
+function buildCurrentDateAnchor() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `【系统当前日期】${year}-${month}-${day}`;
+}
+
+function detectQuestionMode(question: string): AiQuestionMode {
+  const normalized = question.trim();
+  if (!normalized) return 'data';
+
+  const strategyRe = /(营销|促销|活动|推广|运营|经营).*(方案|建议|策略|计划)|根据.*(销售|销量|订单|经营|客户|退货|复购).*(方案|建议|策略|计划)|怎么做活动|怎么促销|如何提高销量|如何提升复购|哪里适合搞活动|去哪里搞活动|哪些商圈|哪些茶城|哪些商场|哪些广场|人流量|租金|租一块|摆点|快闪|地推|对接部门|联系人|联系电话|怎么落地|具体落地/;
+  return strategyRe.test(normalized) ? 'strategy' : 'data';
+}
+
+function isLocalGroundingStrategy(question: string) {
+  return /(哪里适合搞活动|去哪里搞活动|哪些商圈|哪些茶城|哪些商场|哪些广场|人流量|租金|租一块|摆点|快闪|地推|对接部门|联系人|联系电话|公开电话|招商|物业|市场部|怎么落地|具体落地|哪边比较好)/.test(question);
+}
+
+function findRecentStrategyQuestion(history: AiChatHistoryItem[]) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index];
+    if (item.role === 'user' && detectQuestionMode(item.content) === 'strategy') {
+      return item.content;
+    }
+  }
+
+  return undefined;
+}
+
+function findRecentCityInHistory(history: AiChatHistoryItem[]) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index];
+    if (item.role !== 'user') {
+      continue;
+    }
+
+    const city = extractCityFromQuestion(item.content, true);
+    if (city) {
+      return city;
+    }
+  }
+
+  return undefined;
+}
+
+function shouldAskCityBeforeStrategy(question: string) {
+  return STRATEGY_CITY_KEYWORD_RE.test(question);
+}
+
+function normalizeCityName(candidate: string) {
+  return candidate
+    .trim()
+    .replace(/^[根据结合按针对围绕就在去了解一下说下讲讲关于的情况是]+/, '')
+    .replace(/(的情况|情况|当地情况|本地情况|天气情况|茶文化|促销活动计划|经营方案|营销方案|方案|计划|活动|当地|本地|当前城市|城市)$/g, '')
+    .trim();
+}
+
+function extractCityFromQuestion(question: string, permissive = false) {
+  const municipality = MUNICIPALITY_CITY_NAMES.find((item) => question.includes(item));
+  if (municipality) {
+    return `${municipality}市`;
+  }
+
+  const explicitPatterns = [
+    /([\u4e00-\u9fa5]{2,10}?(?:市|自治州|州|地区|盟))/,
+    /(?:根据|结合|按|针对|围绕)?([\u4e00-\u9fa5]{2,8})(?:的情况|当地情况|本地情况|天气|茶文化)/,
+  ];
+
+  for (const pattern of explicitPatterns) {
+    const match = question.match(pattern);
+    const city = normalizeCityName(match?.[1] ?? '');
+    if (city && !/当前|本地|当地|城市|天气|茶文化/.test(city)) {
+      return /市|州|地区|盟$/.test(city) ? city : `${city}市`;
+    }
+  }
+
+  if (!permissive) {
+    return undefined;
+  }
+
+  const plain = normalizeCityName(question).replace(/[，。！？、,.!?"]+/g, '').trim();
+  if (/^[\u4e00-\u9fa5]{2,8}$/.test(plain) && !/当前|本地|当地|城市|天气|茶文化|方案|计划/.test(plain)) {
+    return /市|州|地区|盟$/.test(plain) ? plain : `${plain}市`;
+  }
+
+  return undefined;
+}
+
+function findPendingStrategyCityQuestion(history: AiChatHistoryItem[]) {
+  for (let index = history.length - 1; index >= 0; index -= 1) {
+    const item = history[index];
+    if (
+      item.role !== 'assistant'
+      || !STRATEGY_CITY_FOLLOWUP_HINTS.some((hint) => item.content.includes(hint))
+    ) {
+      continue;
+    }
+
+    for (let prevIndex = index - 1; prevIndex >= 0; prevIndex -= 1) {
+      const prev = history[prevIndex];
+      if (prev.role === 'user' && detectQuestionMode(prev.content) === 'strategy') {
+        return prev.content;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function resolveStrategyQuestion(question: string, history: AiChatHistoryItem[]): StrategyQuestionResolution | 'need_city' {
+  const questionMode = detectQuestionMode(question);
+  if (questionMode === 'strategy') {
+    const city = extractCityFromQuestion(question) ?? findRecentCityInHistory(history);
+    if (shouldAskCityBeforeStrategy(question) && !city) {
+      return 'need_city';
+    }
+
+    const localGroundingMark = isLocalGroundingStrategy(question) ? '\n【本地落地模式】请优先结合公开网络信息给出真实可执行的本地点位、预算区间、对接对象与可核实线索' : '';
+    const effectiveQuestion = city ? `${question}\n【当前城市】${city}${localGroundingMark}` : `${question}${localGroundingMark}`;
+    return { mode: 'strategy', effectiveQuestion, summaryQuestion: effectiveQuestion };
+  }
+
+  const pendingQuestion = findPendingStrategyCityQuestion(history);
+  if (!pendingQuestion) {
+    const recentStrategyQuestion = findRecentStrategyQuestion(history);
+    const recentCity = findRecentCityInHistory(history);
+    if (recentStrategyQuestion && recentCity && LOCAL_GROUNDING_FOLLOWUP_RE.test(question)) {
+      const localGroundingMark = isLocalGroundingStrategy(question) || isLocalGroundingStrategy(recentStrategyQuestion)
+        ? '\n【本地落地模式】请优先结合公开网络信息给出真实可执行的本地点位、预算区间、对接对象与可核实线索'
+        : '';
+      const summaryQuestion = `${recentStrategyQuestion}\n【延续追问】${question}\n【当前城市】${recentCity}${localGroundingMark}`;
+      return { mode: 'strategy', effectiveQuestion: summaryQuestion, summaryQuestion };
+    }
+
+    return { mode: 'data', effectiveQuestion: question };
+  }
+
+  const city = extractCityFromQuestion(question, true);
+  if (!city) {
+    return 'need_city';
+  }
+
+  const localGroundingMark = isLocalGroundingStrategy(pendingQuestion) ? '\n【本地落地模式】请优先结合公开网络信息给出真实可执行的本地点位、预算区间、对接对象与可核实线索' : '';
+  const summaryQuestion = `${pendingQuestion}\n【用户补充城市】${city}${localGroundingMark}`;
+  return { mode: 'strategy', effectiveQuestion: summaryQuestion, summaryQuestion };
+}
+
 type AttachmentSaleOrderCandidateRow = {
   orderId: number;
   orderNo: string;
@@ -96,6 +263,7 @@ export class AiService {
     private readonly aiPromptClientService: AiPromptClientService,
     private readonly aiSqlService: AiSqlService,
     private readonly modelProviderRegistry: ModelProviderRegistry,
+    private readonly dashboardService: DashboardService,
   ) {}
 
   async getSuggestions() {
@@ -189,13 +357,24 @@ export class AiService {
     emitter?: SseEmitter,
     sessionId?: string,
   ) {
+    const currentSessionId = sessionId || `sess_${Date.now()}`;
+    const resolvedQuestion = resolveStrategyQuestion(question, history);
+    if (resolvedQuestion === 'need_city') {
+      await this.saveConversation(user.sub, question, STRATEGY_CITY_CLARIFY_ANSWER, null, undefined, currentSessionId);
+      emitter?.('token', { content: STRATEGY_CITY_CLARIFY_ANSWER });
+      return { enabled: true, reason: '', answer: STRATEGY_CITY_CLARIFY_ANSWER };
+    }
+
+    const questionMode = resolvedQuestion.mode;
     return this.runDatabaseChatResponse({
-      effectiveQuestion: question,
+      effectiveQuestion: resolvedQuestion.effectiveQuestion,
       saveQuestion: question,
       user,
       history,
       emitter,
-      sessionId,
+      sessionId: currentSessionId,
+      questionMode,
+      summaryQuestionOverride: resolvedQuestion.summaryQuestion,
     });
   }
 
@@ -207,6 +386,8 @@ export class AiService {
     emitter?: SseEmitter;
     sessionId?: string;
     useRecentStructuredContext?: boolean;
+    questionMode?: AiQuestionMode;
+    summaryQuestionOverride?: string;
   }) {
     const {
       effectiveQuestion,
@@ -216,10 +397,11 @@ export class AiService {
       emitter,
       sessionId,
       useRecentStructuredContext = true,
+      questionMode = 'data',
+      summaryQuestionOverride,
     } = params;
     const currentSessionId = sessionId || `sess_${Date.now()}`;
     const emit = (event: string, data: unknown) => emitter?.(event, data);
-
     // ── 1. 并行获取上下文 + AI 配置 ─────────────────────────────────────────
     const [structuredContext, availability] = await Promise.all([
       useRecentStructuredContext ? this.getRecentStructuredContext(user.sub) : Promise.resolve({}),
@@ -266,84 +448,39 @@ export class AiService {
       return { enabled: true, reason: '', answer: attachmentFollowUpResult.answer };
     }
 
-    // ── 2. 生成 SQL ───────────────────────────────────────────────────────────
-
-    emit('status', { phase: 'sql', message: '正在理解问题，生成查询语句...' });
-
-    const sqlPromptResult = await this.aiPromptClientService.fetchSqlMessages(
-      effectiveQuestion,
-      availability.config,
-      history,
-      structuredContext,
-      user.sub,
-    );
-
-    if (!sqlPromptResult.ok) {
-      const answer = `提示词获取失败：${sqlPromptResult.reason}`;
-      await this.saveConversation(user.sub, saveQuestion, answer, null, undefined, currentSessionId);
-      emit('error', { message: sqlPromptResult.reason });
-      return { enabled: false, reason: sqlPromptResult.reason, answer };
-    }
-
-    const sqlModelResult = await providerClient.invoke(sqlPromptResult.messages, availability.config);
-
-    if (!sqlModelResult.ok) {
-      const answer = `模型调用失败：${sqlModelResult.reason}`;
-      await this.saveConversation(user.sub, saveQuestion, answer, null, undefined, currentSessionId);
-      emit('error', { message: sqlModelResult.reason });
-      return { enabled: false, reason: sqlModelResult.reason, answer };
-    }
-
-    const sql = extractSqlFromContent(sqlModelResult.content);
-    if (!sql) {
-      const answer = 'AI 未能生成有效的查询语句，请换一种问法试试';
-      await this.saveConversation(user.sub, saveQuestion, answer, null, undefined, currentSessionId);
-      emit('error', { message: answer });
-      return { enabled: false, reason: 'AI 未生成有效 SQL', answer };
-    }
-
-    // ── 3. 执行 SQL ───────────────────────────────────────────────────────────
-
-    emit('status', { phase: 'execute', message: '正在查询数据库...' });
-
-    const queryResult = await this.executeSqlWithRetry(
-      sql,
-      effectiveQuestion,
-      providerClient,
-      availability.config,
-      history,
-      structuredContext,
-      user.sub,
-      emit,
-    );
-
-    if (!queryResult.ok) {
-      this.logger.warn(`AI SQL 执行失败。question=${effectiveQuestion}; sql=${queryResult.sql ?? sql}; reason=${queryResult.reason}`);
-      const answer = await this.buildFriendlyQueryErrorAnswer(
+    const queryResult = questionMode === 'strategy'
+      ? await this.buildStrategySnapshotResult(saveQuestion)
+      : await this.buildSqlQueryResult(
+        effectiveQuestion,
         saveQuestion,
-        queryResult.reason,
         providerClient,
         availability.config,
         history,
         structuredContext,
         user.sub,
+        currentSessionId,
+        emit,
       );
-      await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql ?? sql, undefined, currentSessionId);
-      emit('error', { message: answer });
-      return { enabled: false, reason: answer, answer };
+
+    if ('enabled' in queryResult) {
+      return queryResult;
     }
 
     // ── 3.5 把原始查询结果推给前端（用于渲染图表/表格）─────────────────────────
-    emit('rows', { rows: queryResult.rows });
+    if (questionMode === 'data') {
+      emit('rows', { rows: queryResult.rows });
+    }
 
     if (this.isContactQuestion(`${saveQuestion}\n${effectiveQuestion}`) && !this.hasContactColumns(queryResult.rows)) {
-      const answer = '暂无相关数据。当前查询结果里没有该客户的联系人或电话信息，建议先在客户档案里补全联系人资料。';
+      const answer = this.buildUnavailableContactAnswer(questionMode);
       await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql, undefined, currentSessionId);
       emit('token', { content: answer });
       return { enabled: true, reason: '', answer };
     }
 
-    const deterministicAnswer = this.buildDeterministicBusinessAnswer(`${saveQuestion}\n${effectiveQuestion}`, queryResult.rows);
+    const deterministicAnswer = questionMode === 'data'
+      ? this.buildDeterministicBusinessAnswer(`${saveQuestion}\n${effectiveQuestion}`, queryResult.rows)
+      : null;
     if (deterministicAnswer) {
       const nextStructuredContext = await this.aiPromptClientService.buildStructuredContext(
         availability.config,
@@ -357,11 +494,14 @@ export class AiService {
 
     // ── 4. 总结回答（流式）────────────────────────────────────────────────────
 
-    emit('status', { phase: 'summary', message: '正在整理回答...' });
+    emit('status', { phase: 'summary', message: questionMode === 'strategy' ? '正在生成经营方案...' : '正在整理回答...' });
 
-    const summaryQuestion = saveQuestion === effectiveQuestion
-      ? saveQuestion
-      : `${saveQuestion}\n【附件识别线索】${effectiveQuestion}`;
+    const summaryQuestionBody = summaryQuestionOverride ?? (
+      questionMode === 'strategy' || saveQuestion === effectiveQuestion
+        ? saveQuestion
+        : `${saveQuestion}\n【附件识别线索】${effectiveQuestion}`
+    );
+    const summaryQuestion = `${buildCurrentDateAnchor()}\n${summaryQuestionBody}`;
 
     // 统计类问题 SQL 已做聚合，明细类问题前端图表已有完整数据
     // 只需前 30 行供 LLM 描述，减少 token 消耗和传输延迟
@@ -386,6 +526,10 @@ export class AiService {
       queryResult.rows,
     );
 
+    const summaryOptions = questionMode === 'strategy' && availability.config.provider === 'qwen'
+      ? { enableSearch: true, enableThinking: true }
+      : undefined;
+
     if (!summaryPromptResult.ok) {
       // 提示词获取失败，降级展示原始结果
       answer = this.buildRawResultAnswer(queryResult.sql, queryResult.rows);
@@ -396,6 +540,7 @@ export class AiService {
         summaryPromptResult.messages,
         availability.config,
         (chunk) => emit('token', { content: chunk }),
+        summaryOptions,
       );
       answer = streamResult.ok ? streamResult.content : this.buildRawResultAnswer(queryResult.sql, queryResult.rows);
       if (!streamResult.ok) {
@@ -406,6 +551,7 @@ export class AiService {
       const summaryResult = await providerClient.invoke(
         summaryPromptResult.messages,
         availability.config,
+        summaryOptions,
       );
       answer = summaryResult.ok ? summaryResult.content : this.buildRawResultAnswer(queryResult.sql, queryResult.rows);
       emit('token', { content: answer });
@@ -413,7 +559,15 @@ export class AiService {
 
     const nextStructuredContext = await contextPromise;
 
-    await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql, nextStructuredContext, currentSessionId, queryResult.rows);
+    await this.saveConversation(
+      user.sub,
+      saveQuestion,
+      answer,
+      queryResult.sql,
+      nextStructuredContext,
+      currentSessionId,
+      questionMode === 'data' ? queryResult.rows : undefined,
+    );
 
     // 异步检测用户是否设定了回答偏好规则（不阻塞返回）
     this.detectAndSaveUserRule(saveQuestion, answer, user.sub, availability.config, history, structuredContext).catch(() => {});
@@ -1342,6 +1496,146 @@ export class AiService {
     ].join('\n');
   }
 
+  private async buildStrategySnapshotResult(question: string) {
+    const rows = await this.buildStrategySnapshotRows();
+    if (rows.length > 0) {
+      return { ok: true as const, sql: '[strategy-snapshot]', rows };
+    }
+
+    this.logger.warn(`AI strategy snapshot empty. question=${question}`);
+    return {
+      ok: true as const,
+      sql: '[strategy-snapshot-empty]',
+      rows: [{ section: 'meta', label: 'snapshot_status', value: 'empty', question }],
+    };
+  }
+
+  private async buildSqlQueryResult(
+    effectiveQuestion: string,
+    saveQuestion: string,
+    providerClient: ModelProviderClient,
+    config: AiRuntimeConfig,
+    history: AiChatHistoryItem[],
+    structuredContext: AiStructuredContext,
+    userId: number,
+    sessionId: string,
+    emit: SseEmitter,
+  ) {
+    emit('status', { phase: 'sql', message: '正在理解问题，生成查询语句...' });
+
+    const sqlPromptResult = await this.aiPromptClientService.fetchSqlMessages(
+      effectiveQuestion,
+      config,
+      history,
+      structuredContext,
+      userId,
+    );
+
+    if (!sqlPromptResult.ok) {
+      const answer = `提示词获取失败：${sqlPromptResult.reason}`;
+      await this.saveConversation(userId, saveQuestion, answer, null, undefined, sessionId);
+      emit('error', { message: sqlPromptResult.reason });
+      return { enabled: false, reason: sqlPromptResult.reason, answer };
+    }
+
+    const sqlModelResult = await providerClient.invoke(sqlPromptResult.messages, config);
+
+    if (!sqlModelResult.ok) {
+      const answer = `模型调用失败：${sqlModelResult.reason}`;
+      await this.saveConversation(userId, saveQuestion, answer, null, undefined, sessionId);
+      emit('error', { message: sqlModelResult.reason });
+      return { enabled: false, reason: sqlModelResult.reason, answer };
+    }
+
+    const sql = extractSqlFromContent(sqlModelResult.content);
+    if (!sql) {
+      const answer = 'AI 未能生成有效的查询语句，请换一种问法试试';
+      await this.saveConversation(userId, saveQuestion, answer, null, undefined, sessionId);
+      emit('error', { message: answer });
+      return { enabled: false, reason: 'AI 未生成有效 SQL', answer };
+    }
+
+    emit('status', { phase: 'execute', message: '正在查询数据库...' });
+
+    const queryResult = await this.executeSqlWithRetry(
+      sql,
+      effectiveQuestion,
+      providerClient,
+      config,
+      history,
+      structuredContext,
+      userId,
+      emit,
+    );
+
+    if (!queryResult.ok) {
+      this.logger.warn(`AI SQL 执行失败。question=${effectiveQuestion}; sql=${queryResult.sql ?? sql}; reason=${queryResult.reason}`);
+      const answer = await this.buildFriendlyQueryErrorAnswer(
+        saveQuestion,
+        queryResult.reason,
+        providerClient,
+        config,
+        history,
+        structuredContext,
+        userId,
+      );
+      await this.saveConversation(userId, saveQuestion, answer, queryResult.sql ?? sql, undefined, sessionId);
+      emit('error', { message: answer });
+      return { enabled: false, reason: answer, answer };
+    }
+
+    return queryResult;
+  }
+
+  private async buildStrategySnapshotRows() {
+    const [overview, salesTrend, topProducts, stockWarnings, afterSalesReasons] = await Promise.all([
+      this.dashboardService.getOverview(),
+      this.dashboardService.getSalesTrend({ period: 'day' }),
+      this.dashboardService.getTopProducts({ type: 'top', limit: 5 }),
+      this.dashboardService.getStockWarnings(),
+      this.dashboardService.getAfterSalesReasonStats(),
+    ]);
+
+    return [
+      { section: 'overview', metric: 'todayRevenue', label: '今日营收', value: overview.todayRevenue },
+      { section: 'overview', metric: 'monthRevenue', label: '本月营收', value: overview.monthRevenue },
+      { section: 'overview', metric: 'inventoryValue', label: '库存价值', value: overview.inventoryValue },
+      { section: 'overview', metric: 'receivableTotal', label: '当前应收', value: overview.receivableTotal },
+      { section: 'overview', metric: 'saleReturnTotal', label: '销售退货金额', value: overview.saleReturnTotal },
+      { section: 'overview', metric: 'refundTotal', label: '退款金额', value: overview.refundTotal },
+      ...salesTrend.points.map((point) => ({
+        section: 'sales_trend',
+        label: point.label,
+        amount: point.amount,
+        orderCount: point.orderCount,
+      })),
+      ...topProducts.list.map((item, index) => ({
+        section: 'top_product',
+        rank: index + 1,
+        productName: item.productName,
+        teaType: item.teaType,
+        totalQuantity: Number(item.totalQuantity ?? 0),
+        totalSales: Number(item.totalSales ?? 0),
+      })),
+      ...stockWarnings.slice(0, 5).map((warning, index) => ({
+        section: 'stock_warning',
+        rank: index + 1,
+        productName: typeof warning.productName === 'string' ? warning.productName : '',
+        warningType: typeof warning.warningType === 'string' ? warning.warningType : '',
+        stockQty: Number(warning.stockQty ?? 0),
+        safeStock: Number(warning.safeStock ?? 0),
+        level: typeof warning.level === 'string' ? warning.level : '',
+      })),
+      ...afterSalesReasons.slice(0, 5).map((item, index) => ({
+        section: 'after_sales_reason',
+        rank: index + 1,
+        reasonCode: item.reasonCode,
+        count: item.count,
+        amount: item.amount,
+      })),
+    ];
+  }
+
   private async executeSqlWithRetry(
     sql: string,
     question: string,
@@ -1465,6 +1759,14 @@ export class AiService {
 
   private isContactQuestion(question: string) {
     return /(联系人|电话|手机号|联系方式)/.test(question);
+  }
+
+  private buildUnavailableContactAnswer(questionMode: AiQuestionMode) {
+    if (questionMode === 'strategy') {
+      return '暂时不能直接给出联系人或联系电话。当前这类本地落地方案里的公开联系方式还没有经过结构化核验，建议优先通过官方公众号、地图商户页、商场/茶城服务台或现场招商主管再次确认。';
+    }
+
+    return '暂无相关数据。当前查询结果里没有该客户的联系人或电话信息，建议先在客户档案里补全联系人资料。';
   }
 
   private hasContactColumns(rows: Record<string, unknown>[]) {

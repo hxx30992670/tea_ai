@@ -1,206 +1,420 @@
-/**
- * Web Speech API 语音识别 Hook
- * 支持按住说话 / 点击切换模式
- * 注：Web Speech API 无官方 TS 类型，使用 any 绕过
- * 
- * Android 兼容性说明：
- * - Android Chrome 支持 Web Speech API，但需要用户交互触发（点击按钮）
- * - 国内网络可能无法访问 Google 语音服务，导致连接失败
- * - 设置 continuous=true 防止识别过早结束
- * 
- * 已知问题：
- * - Android 设备即使 API 存在，也可能因为缺少 Google Play Services 而无法工作
- * - 需要 HTTPS 环境（localhost 除外）
- */
+import CryptoJS from 'crypto-js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyWindow = Window & Record<string, any>
+const XF_RTASR_URL = 'wss://rtasr.xfyun.cn/v1/ws'
+const PCM_SAMPLE_RATE = 16000
+const PCM_FRAME_SIZE = 1280
+const MIN_SPEECH_RMS = 0.02
+const MAX_SPEECH_ZCR = 0.2
+const MIN_SPEECH_FRAMES = 3
+const AUTO_STOP_SILENCE_MS = 1600
 
-function getSpeechRecognition() {
-  const w = window as AnyWindow
-  return w.SpeechRecognition ?? w.webkitSpeechRecognition ?? null
-}
-
-function getPlatformInfo(): { isAndroid: boolean; isIOS: boolean; isMobile: boolean } {
-  const ua = navigator.userAgent.toLowerCase()
-  return {
-    isAndroid: ua.includes('android'),
-    isIOS: /iphone|ipad|ipod/.test(ua),
-    isMobile: /android|iphone|ipad|ipod|mobile/.test(ua),
-  }
+export interface SpeechConfig {
+  appId: string
+  apiKey: string
 }
 
 interface SpeechOptions {
   onResult: (text: string) => void
+  onPartialResult?: (text: string) => void
+  onStopCapture?: (text: string) => void
   onError?: (error: string) => void
-  lang?: string
+  speechConfig?: SpeechConfig
 }
 
-export function useSpeech({ onResult, onError, lang = 'zh-CN' }: SpeechOptions) {
+type AudioContextCtor = typeof AudioContext
+
+function getAudioContextCtor() {
+  return (window.AudioContext || (window as typeof window & { webkitAudioContext?: AudioContextCtor }).webkitAudioContext)
+}
+
+function hasSpeechPrerequisites() {
+  const mediaDevices = navigator.mediaDevices as MediaDevices | undefined
+  return !!(
+    window.isSecureContext
+    && mediaDevices
+    && typeof mediaDevices.getUserMedia === 'function'
+    && getAudioContextCtor()
+    && window.WebSocket
+  )
+}
+
+function buildWebSocketUrl({ appId, apiKey }: SpeechConfig) {
+  const ts = Math.floor(Date.now() / 1000).toString()
+  const signa = CryptoJS.MD5(`${appId}${ts}`).toString()
+  const signature = CryptoJS.enc.Base64.stringify(CryptoJS.HmacSHA1(signa, apiKey))
+
+  return `${XF_RTASR_URL}?appid=${encodeURIComponent(appId)}&ts=${ts}&signa=${encodeURIComponent(signature)}&vadMdn=2`
+}
+
+function downsampleBuffer(buffer: Float32Array, inputSampleRate: number, outputSampleRate: number) {
+  if (inputSampleRate === outputSampleRate) {
+    return buffer
+  }
+
+  const ratio = inputSampleRate / outputSampleRate
+  const newLength = Math.round(buffer.length / ratio)
+  const result = new Float32Array(newLength)
+  let offsetResult = 0
+  let offsetBuffer = 0
+
+  while (offsetResult < result.length) {
+    const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio)
+    let accum = 0
+    let count = 0
+
+    for (let i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i += 1) {
+      accum += buffer[i]
+      count += 1
+    }
+
+    result[offsetResult] = count > 0 ? accum / count : 0
+    offsetResult += 1
+    offsetBuffer = nextOffsetBuffer
+  }
+
+  return result
+}
+
+function floatTo16BitPCM(input: Float32Array) {
+  const output = new ArrayBuffer(input.length * 2)
+  const view = new DataView(output)
+
+  for (let i = 0; i < input.length; i += 1) {
+    const sample = Math.max(-1, Math.min(1, input[i]))
+    view.setInt16(i * 2, sample < 0 ? sample * 0x8000 : sample * 0x7fff, true)
+  }
+
+  return new Uint8Array(output)
+}
+
+function concatUint8Arrays(left: Uint8Array, right: Uint8Array) {
+  const merged = new Uint8Array(left.length + right.length)
+  merged.set(left, 0)
+  merged.set(right, left.length)
+  return merged
+}
+
+function calculateRms(input: Float32Array) {
+  let sum = 0
+  for (let i = 0; i < input.length; i += 1) {
+    sum += input[i] * input[i]
+  }
+  return Math.sqrt(sum / input.length)
+}
+
+function calculateZcr(input: Float32Array) {
+  let crossings = 0
+  for (let i = 1; i < input.length; i += 1) {
+    const prev = input[i - 1]
+    const current = input[i]
+    if ((prev >= 0 && current < 0) || (prev < 0 && current >= 0)) {
+      crossings += 1
+    }
+  }
+  return crossings / input.length
+}
+
+function isSpeechFrame(input: Float32Array) {
+  const rms = calculateRms(input)
+  const zcr = calculateZcr(input)
+  return rms >= MIN_SPEECH_RMS && zcr <= MAX_SPEECH_ZCR
+}
+
+function extractRecognitionText(payload: string) {
+  const message = JSON.parse(payload) as {
+    action?: string
+    code?: number
+    desc?: string
+    data?: string
+  }
+
+  if (message.action === 'error') {
+    throw new Error(message.desc || '讯飞语音服务异常')
+  }
+
+  if (message.action !== 'result' || !message.data) {
+    return { finalText: '', partialText: '' }
+  }
+
+  const result = JSON.parse(message.data) as {
+    cn?: {
+      st?: {
+        type?: number
+        rt?: Array<{
+          ws?: Array<{
+            cw?: Array<{ w?: string; rl?: number }>
+          }>
+        }>
+      }
+    }
+  }
+
+  const text = result.cn?.st?.rt
+    ?.flatMap((rt) => rt.ws ?? [])
+    .flatMap((ws) => ws.cw ?? [])
+    .map((cw) => cw.w ?? '')
+    .join('') ?? ''
+
+  return result.cn?.st?.type === 0
+    ? { finalText: text, partialText: '' }
+    : { finalText: '', partialText: text }
+}
+
+export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, speechConfig }: SpeechOptions) {
   const [isListening, setIsListening] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
   const [supportInfo, setSupportInfo] = useState<string | null>(null)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const recognitionRef = useRef<any>(null)
+
+  const wsRef = useRef<WebSocket | null>(null)
+  const audioContextRef = useRef<AudioContext | null>(null)
+  const mediaStreamRef = useRef<MediaStream | null>(null)
+  const sourceNodeRef = useRef<MediaStreamAudioSourceNode | null>(null)
+  const processorNodeRef = useRef<ScriptProcessorNode | null>(null)
+  const silentGainRef = useRef<GainNode | null>(null)
+  const pcmBufferRef = useRef<Uint8Array>(new Uint8Array())
   const isStoppingRef = useRef(false)
+  const latestPartialRef = useRef('')
+  const speechDetectedRef = useRef(false)
+  const voicedFramesRef = useRef(0)
+  const lastSpeechAtRef = useRef(0)
+  const autoStoppingRef = useRef(false)
 
-  useEffect(() => {
-    const SR = getSpeechRecognition()
-    const platform = getPlatformInfo()
-    
-    if (!SR) {
-      setIsSupported(false)
-      setSupportInfo('当前浏览器不支持 Web Speech API')
-      return
+  const clearAudioResources = useCallback(async () => {
+    processorNodeRef.current?.disconnect()
+    if (processorNodeRef.current) {
+      processorNodeRef.current.onaudioprocess = null
     }
 
-    // Android 特殊检测
-    if (platform.isAndroid) {
-      setSupportInfo('Android 设备已检测到 API，正在测试可用性...')
-      // Android 上 API 存在但可能不工作，需要实际启动测试
-      setIsSupported(true)
-    } else {
-      setIsSupported(true)
-      setSupportInfo(null)
+    sourceNodeRef.current?.disconnect()
+    silentGainRef.current?.disconnect()
+    mediaStreamRef.current?.getTracks().forEach((track) => track.stop())
+
+    if (audioContextRef.current && audioContextRef.current.state !== 'closed') {
+      await audioContextRef.current.close().catch(() => undefined)
     }
 
-    console.log('[Speech] 平台信息:', platform)
-    console.log('[Speech] API 支持:', !!SR)
+    processorNodeRef.current = null
+    sourceNodeRef.current = null
+    silentGainRef.current = null
+    mediaStreamRef.current = null
+    audioContextRef.current = null
+    pcmBufferRef.current = new Uint8Array()
+    speechDetectedRef.current = false
+    voicedFramesRef.current = 0
+    lastSpeechAtRef.current = 0
+    autoStoppingRef.current = false
   }, [])
 
-  const start = useCallback(() => {
-    const SR = getSpeechRecognition()
-    if (!SR) {
-      onError?.('当前浏览器不支持语音输入')
+  const flushAudioFrames = useCallback(() => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
       return
     }
 
-    // 防止重复启动
-    if (recognitionRef.current && isListening) {
-      console.log('[Speech] 已在监听中，跳过启动')
+    while (pcmBufferRef.current.length >= PCM_FRAME_SIZE) {
+      ws.send(pcmBufferRef.current.slice(0, PCM_FRAME_SIZE))
+      pcmBufferRef.current = pcmBufferRef.current.slice(PCM_FRAME_SIZE)
+    }
+  }, [])
+
+  const stop = useCallback(async () => {
+    isStoppingRef.current = true
+    setSupportInfo('正在结束录音...')
+
+    const partialText = latestPartialRef.current.trim()
+    if (partialText) {
+      onStopCapture?.(partialText)
+      latestPartialRef.current = ''
+      onPartialResult?.('')
+    }
+
+    flushAudioFrames()
+
+    const ws = wsRef.current
+    if (ws?.readyState === WebSocket.OPEN && pcmBufferRef.current.length > 0) {
+      ws.send(pcmBufferRef.current)
+      pcmBufferRef.current = new Uint8Array()
+    }
+
+    await clearAudioResources()
+
+    if (ws?.readyState === WebSocket.OPEN) {
+      ws.send('{"end": true}')
+    } else {
+      setIsListening(false)
+      setSupportInfo(null)
+    }
+  }, [clearAudioResources, flushAudioFrames, onPartialResult, onStopCapture])
+
+  const startRecorder = useCallback(async () => {
+    const AudioContextClass = getAudioContextCtor()
+    if (!AudioContextClass) {
+      throw new Error('当前浏览器不支持音频采集')
+    }
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        channelCount: 1,
+        echoCancellation: true,
+        noiseSuppression: true,
+      },
+    })
+
+    const audioContext = new AudioContextClass()
+    const sourceNode = audioContext.createMediaStreamSource(stream)
+    const processorNode = audioContext.createScriptProcessor(4096, 1, 1)
+    const silentGain = audioContext.createGain()
+    silentGain.gain.value = 0
+
+    processorNode.onaudioprocess = (event) => {
+      const inputData = event.inputBuffer.getChannelData(0)
+      const now = Date.now()
+      const speechFrame = isSpeechFrame(inputData)
+
+      if (!speechDetectedRef.current) {
+        if (speechFrame) {
+          voicedFramesRef.current += 1
+          if (voicedFramesRef.current >= MIN_SPEECH_FRAMES) {
+            speechDetectedRef.current = true
+            lastSpeechAtRef.current = now
+            setSupportInfo('检测到说话，正在识别...')
+          }
+        } else {
+          voicedFramesRef.current = 0
+        }
+      } else if (speechFrame) {
+        lastSpeechAtRef.current = now
+      } else if (!autoStoppingRef.current && now - lastSpeechAtRef.current >= AUTO_STOP_SILENCE_MS) {
+        autoStoppingRef.current = true
+        setSupportInfo('已静音，正在结束识别...')
+        void stop()
+        return
+      }
+
+      if (!speechDetectedRef.current) {
+        return
+      }
+
+      const pcmData = floatTo16BitPCM(downsampleBuffer(inputData, audioContext.sampleRate, PCM_SAMPLE_RATE))
+      pcmBufferRef.current = concatUint8Arrays(pcmBufferRef.current, pcmData)
+      flushAudioFrames()
+    }
+
+    sourceNode.connect(processorNode)
+    processorNode.connect(silentGain)
+    silentGain.connect(audioContext.destination)
+
+    mediaStreamRef.current = stream
+    audioContextRef.current = audioContext
+    sourceNodeRef.current = sourceNode
+    processorNodeRef.current = processorNode
+    silentGainRef.current = silentGain
+  }, [flushAudioFrames, stop])
+
+  const start = useCallback(async () => {
+    if (!speechConfig?.appId || !speechConfig?.apiKey) {
+      onError?.('未配置讯飞语音参数，请在入口注入 APPID 和 API_KEY')
+      return
+    }
+
+    if (!hasSpeechPrerequisites()) {
+      onError?.('当前环境不支持讯飞语音，请使用 HTTPS，并确认浏览器支持麦克风与 WebSocket')
+      return
+    }
+
+    if (wsRef.current || isListening) {
       return
     }
 
     isStoppingRef.current = false
-    setSupportInfo(null)
+    setSupportInfo('正在连接讯飞语音服务...')
 
-    const recognition = new SR()
-    recognition.lang = lang
-    // Android 兼容：开启持续识别，防止过早结束
-    recognition.continuous = true
-    // 开启临时结果，实时反馈用户说话内容
-    recognition.interimResults = true
-    recognition.maxAlternatives = 1
+    const ws = new WebSocket(buildWebSocketUrl(speechConfig))
+    wsRef.current = ws
 
-    recognition.onstart = () => {
-      console.log('[Speech] 识别已启动')
-      setIsListening(true)
-      setSupportInfo('语音识别已启动，请开始说话')
+    ws.onopen = async () => {
+      try {
+        await startRecorder()
+        setIsListening(true)
+        setSupportInfo('请开始说话，停顿后会自动结束')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '麦克风启动失败'
+        onError?.(message)
+        ws.close()
+      }
     }
 
-    recognition.onend = () => {
-      console.log('[Speech] 识别已结束, isStopping:', isStoppingRef.current)
-      // 如果不是用户主动停止，且未收到结果，可能是异常结束
+    ws.onmessage = (event) => {
+      try {
+        const { finalText, partialText } = extractRecognitionText(String(event.data))
+        if (partialText) {
+          latestPartialRef.current = partialText
+          setSupportInfo(`识别中：${partialText}`)
+          onPartialResult?.(partialText)
+        }
+        if (finalText) {
+          latestPartialRef.current = ''
+          onResult(finalText)
+          setSupportInfo('继续说话中，说完后点击红色按钮停止')
+          onPartialResult?.('')
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '解析讯飞识别结果失败'
+        onError?.(message)
+      }
+    }
+
+    ws.onerror = () => {
+      onError?.('讯飞语音连接失败，请检查 APPID/API_KEY 或当前网络环境')
+      ws.close()
+    }
+
+    ws.onclose = async () => {
+      await clearAudioResources()
+      wsRef.current = null
+      setIsListening(false)
+      setSupportInfo(null)
+
       if (!isStoppingRef.current) {
-        const platform = getPlatformInfo()
-        if (platform.isAndroid) {
-          onError?.('Android 设备语音识别意外中断。可能原因：1) 国内网络无法访问 Google 服务；2) 设备缺少 Google Play Services；3) 需要 HTTPS 环境。建议使用 iPhone 或安装支持离线语音的浏览器。')
-        } else {
-          onError?.('语音识别意外中断，请重试')
-        }
-      }
-      setIsListening(false)
-      recognitionRef.current = null
-    }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onresult = (event: any) => {
-      console.log('[Speech] 收到结果:', event.results)
-      const results = event.results as unknown[]
-      let finalTranscript = ''
-      let interimTranscript = ''
-      
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      for (let i = event.resultIndex; i < results.length; i++) {
-        const result = results[i] as any
-        if (result.isFinal) {
-          finalTranscript += result[0].transcript
-        } else {
-          interimTranscript += result[0].transcript
-        }
-      }
-
-      // 只有最终结果才提交
-      if (finalTranscript) {
-        onResult(finalTranscript)
-        setSupportInfo(null)
-      } else if (interimTranscript) {
-        setSupportInfo(`识别中: ${interimTranscript}`)
+        onError?.('讯飞语音连接已中断，请重试')
       }
     }
-
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    recognition.onerror = (event: any) => {
-      console.log('[Speech] 错误:', event.error, event.message)
-      setIsListening(false)
-      recognitionRef.current = null
-
-      const platform = getPlatformInfo()
-      const errMap: Record<string, string> = {
-        'no-speech': '没有检测到声音，请靠近麦克风重试',
-        'audio-capture': '无法访问麦克风，请检查设备是否有麦克风',
-        'not-allowed': '麦克风权限被拒绝。请点击地址栏左侧的锁图标，允许麦克风权限后刷新页面重试',
-        'network': platform.isAndroid 
-          ? 'Android 语音服务连接失败。国内网络无法访问 Google 语音服务，建议：1) 使用 VPN；2) 使用 iPhone；3) 尝试其他浏览器（如 Firefox）'
-          : '语音服务连接失败（国内网络可能无法使用此功能）',
-        'aborted': '语音识别被中断',
-        'service-not-allowed': '语音服务不可用',
-      }
-      
-      // Android 特殊错误处理
-      if (platform.isAndroid && event.error === 'network') {
-        onError?.(errMap['network'])
-      } else if (platform.isAndroid && !event.error) {
-        // Android 上可能直接触发 onend 而不报错
-        onError?.('Android 设备语音识别不可用。建议使用 iPhone 或切换到文字输入。')
-      } else {
-        const errorMsg = errMap[event.error as string] ?? `语音识别失败: ${event.error ?? '未知错误'}`
-        onError?.(errorMsg)
-      }
-    }
-
-    recognitionRef.current = recognition
-    try {
-      console.log('[Speech] 正在启动识别...')
-      recognition.start()
-      setSupportInfo('正在启动语音识别...')
-    } catch (e: unknown) {
-      console.error('[Speech] 启动失败:', e)
-      const errorMessage = e instanceof Error ? e.message : String(e)
-      if (errorMessage.includes('not allowed')) {
-        onError?.('麦克风权限被拒绝，请在浏览器设置中开启')
-      } else {
-        onError?.('语音识别启动失败，请重试')
-      }
-      recognitionRef.current = null
-    }
-  }, [lang, onResult, onError, isListening])
-
-  const stop = useCallback(() => {
-    console.log('[Speech] 用户主动停止')
-    isStoppingRef.current = true
-    setSupportInfo(null)
-    if (recognitionRef.current) {
-      recognitionRef.current.stop()
-    }
-    setIsListening(false)
-  }, [])
+  }, [clearAudioResources, isListening, onError, onPartialResult, onResult, speechConfig, startRecorder])
 
   const toggle = useCallback(() => {
-    if (isListening) stop()
-    else start()
+    if (isListening) {
+      void stop()
+      return
+    }
+
+    void start()
   }, [isListening, start, stop])
+
+  useEffect(() => {
+    if (!speechConfig?.appId || !speechConfig?.apiKey) {
+      setIsSupported(false)
+      setSupportInfo('未配置讯飞语音参数')
+      return
+    }
+
+    if (!hasSpeechPrerequisites()) {
+      setIsSupported(false)
+      setSupportInfo('当前环境不支持讯飞语音，请使用 HTTPS 打开页面')
+      return
+    }
+
+    setIsSupported(true)
+    setSupportInfo(null)
+  }, [speechConfig?.apiKey, speechConfig?.appId])
+
+  useEffect(() => {
+    return () => {
+      void clearAudioResources()
+      wsRef.current?.close()
+      wsRef.current = null
+    }
+  }, [clearAudioResources])
 
   return { isListening, isSupported, supportInfo, start, stop, toggle }
 }

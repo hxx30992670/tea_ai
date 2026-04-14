@@ -4,13 +4,18 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
+import type { SpeechConfig } from '@/hooks/useSpeech'
 import { useChat } from './hooks/useChat'
 import { ChatMessage } from './components/ChatMessage'
 import { ChatInput } from './components/ChatInput'
 import { QuickSuggestions } from './components/QuickSuggestions'
 import { SessionDrawer } from './components/SessionDrawer'
 
-export default function AiPage() {
+interface AiPageProps {
+  speechConfig?: SpeechConfig
+}
+
+export default function AiPage({ speechConfig }: AiPageProps) {
   const {
     messages, loading, loadingHistory, statusPhase,
     sessions, activeSessionId,
@@ -83,6 +88,7 @@ export default function AiPage() {
           loading={loading}
           disabled={loading || loadingHistory}
           statusPhase={statusPhase}
+          speechConfig={speechConfig}
         />
       </div>
 

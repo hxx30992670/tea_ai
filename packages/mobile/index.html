@@ -12,18 +12,34 @@
     <meta name="theme-color" content="#0A0E1A" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta
+      name="apple-mobile-web-app-status-bar-style"
+      content="black-translucent"
+    />
     <meta name="apple-mobile-web-app-title" content="茶掌柜" />
     <meta name="description" content="茶叶批发零售管理助手" />
 
     <!-- Icons -->
     <link rel="icon" type="image/svg+xml" href="./icons/icon.svg" />
-    <!-- 生产环境请用 pwa-asset-generator 生成 PNG 图标以支持 iOS -->
-    <!-- npx pwa-asset-generator public/icons/icon.svg public/icons -->
-    <link rel="apple-touch-icon" href="./icons/icon.svg" />
+    <link
+      rel="icon"
+      type="image/png"
+      sizes="192x192"
+      href="./icons/icon-192.png"
+    />
+    <link rel="apple-touch-icon" href="./icons/icon-192.png" />
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      window.__SMARTSTOCK_MOBILE_CONFIG__ =
+        window.__SMARTSTOCK_MOBILE_CONFIG__ || {
+          speech: {
+            appId: '246e37d6',
+            apiKey: '753540a814ab14be218c0c147685acd6'
+          }
+        };
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

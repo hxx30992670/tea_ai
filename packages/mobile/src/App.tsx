@@ -1,6 +1,7 @@
 import { Component, lazy, Suspense, type ErrorInfo, type ReactNode } from 'react'
 import { createBrowserRouter, RouterProvider, Navigate } from 'react-router-dom'
 import { AppLayout } from '@/components/layout/AppLayout'
+import type { SpeechConfig } from '@/hooks/useSpeech'
 
 const appBasePath = import.meta.env.BASE_URL
 const routerBaseName = appBasePath === '/' ? undefined : appBasePath.replace(/\/$/, '')
@@ -13,6 +14,17 @@ const OrderListPage = lazy(() => import('@/pages/order'))
 const NewOrderPage = lazy(() => import('@/pages/order/NewOrder'))
 const AiPage = lazy(() => import('@/pages/ai'))
 const ProfilePage = lazy(() => import('@/pages/profile'))
+
+function getRuntimeSpeechConfig(): SpeechConfig | undefined {
+  const speech = window.__SMARTSTOCK_MOBILE_CONFIG__?.speech
+  if (!speech?.appId || !speech?.apiKey) {
+    return undefined
+  }
+
+  return speech
+}
+
+const speechConfig = getRuntimeSpeechConfig()
 
 // 页面加载中的占位
 function PageLoader() {
@@ -96,7 +108,7 @@ const router = createBrowserRouter([
       },
       {
         path: 'ai',
-        element: <Suspense fallback={<PageLoader />}><AiPage /></Suspense>,
+        element: <Suspense fallback={<PageLoader />}><AiPage speechConfig={speechConfig} /></Suspense>,
       },
       {
         path: 'profile',

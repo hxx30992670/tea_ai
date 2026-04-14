@@ -4,7 +4,10 @@
  * 支持授权验证、结构化上下文构建及本地降级处理
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { fetchWithTimeout, getTimeoutMessage } from './fetch-timeout.util';
 import { AiChatHistoryItem, AiPromptFetchResult, AiRuntimeConfig, AiStructuredContext } from './ai.types';
+
+const PROMPT_SERVICE_TIMEOUT_MS = 15_000;
 
 @Injectable()
 export class AiPromptClientService {
@@ -166,13 +169,13 @@ export class AiPromptClientService {
     const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/key/verify');
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ apiKey: config.apiKey }),
-      });
+      }, PROMPT_SERVICE_TIMEOUT_MS);
 
       if (!response.ok) {
         return { ok: false, reason: `Agent 授权服务不可用: HTTP ${response.status}` };
@@ -196,7 +199,7 @@ export class AiPromptClientService {
       this.authCache.set(cacheKey, { ok: true, reason: '', expireAt: Date.now() + this.AUTH_CACHE_TTL });
       return { ok: true, reason: '' };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
+      const message = getTimeoutMessage(error, 'Agent 授权服务', PROMPT_SERVICE_TIMEOUT_MS);
       return { ok: false, reason: `Agent 授权服务不可用: ${message}` };
     }
   }
@@ -213,7 +216,7 @@ export class AiPromptClientService {
     const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/context/build');
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -224,7 +227,7 @@ export class AiPromptClientService {
           previousContext,
           rows,
         }),
-      });
+      }, PROMPT_SERVICE_TIMEOUT_MS);
 
       if (!response.ok) {
         this.logger.warn(`Context 服务请求失败，降级为本地模式: HTTP ${response.status}`);
@@ -234,7 +237,7 @@ export class AiPromptClientService {
       const data = (await response.json()) as { data?: AiStructuredContext };
       return data?.data ?? this.localBuildStructuredContext(previousContext, rows);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
+      const message = getTimeoutMessage(error, 'Context 服务', PROMPT_SERVICE_TIMEOUT_MS);
       this.logger.warn(`Context 服务不可用，降级为本地模式: ${message}`);
       return this.localBuildStructuredContext(previousContext, rows);
     }
@@ -248,7 +251,7 @@ export class AiPromptClientService {
     const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/prompt/generate');
 
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -259,7 +262,7 @@ export class AiPromptClientService {
           ...(userId != null ? { userId } : {}),
           ...payload,
         }),
-      });
+      }, PROMPT_SERVICE_TIMEOUT_MS);
 
       if (!response.ok) {
         return { ok: false, reason: `Prompt 服务请求失败: HTTP ${response.status}` };
@@ -284,7 +287,7 @@ export class AiPromptClientService {
         promptVersion: data?.data?.version,
       };
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
+      const message = getTimeoutMessage(error, 'Prompt 服务', PROMPT_SERVICE_TIMEOUT_MS);
       this.logger.error(`Prompt 服务不可用: ${message}`);
       return { ok: false, reason: `Prompt 服务不可用: ${message}` };
     }
@@ -302,7 +305,7 @@ export class AiPromptClientService {
 
     const endpoint = this.normalizeUrl(config.promptServiceUrl, '/api/user-rule/create');
     try {
-      const response = await fetch(endpoint, {
+      const response = await fetchWithTimeout(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -312,7 +315,7 @@ export class AiPromptClientService {
           sourceMessage,
           phase,
         }),
-      });
+      }, PROMPT_SERVICE_TIMEOUT_MS);
       return { ok: response.ok };
     } catch {
       return { ok: false };

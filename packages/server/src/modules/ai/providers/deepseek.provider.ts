@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AiModelInvokeResult, AiPromptMessage, AiRuntimeConfig } from '../ai.types';
+import { fetchWithTimeout, getTimeoutMessage } from '../fetch-timeout.util';
+import { AiModelInvokeOptions, AiModelInvokeResult, AiPromptMessage, AiRuntimeConfig } from '../ai.types';
 import { ModelProviderClient } from '../model-provider.interface';
 
 const DEFAULT_BASE_URL = 'https://api.deepseek.com';
+const MODEL_TIMEOUT_MS = 45_000;
+const STREAM_IDLE_TIMEOUT_MS = 20_000;
 
 function buildEndpoint(baseUrl: string) {
   const base = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, '');
@@ -15,10 +18,10 @@ export class DeepSeekProviderClient implements ModelProviderClient {
   private readonly logger = new Logger(DeepSeekProviderClient.name);
 
   /** 非流式调用（SQL 生成阶段） */
-  async invoke(messages: AiPromptMessage[], config: AiRuntimeConfig): Promise<AiModelInvokeResult> {
+  async invoke(messages: AiPromptMessage[], config: AiRuntimeConfig, _options?: AiModelInvokeOptions): Promise<AiModelInvokeResult> {
     const url = buildEndpoint(config.modelBaseUrl);
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -30,7 +33,7 @@ export class DeepSeekProviderClient implements ModelProviderClient {
           temperature: 0.1,
           max_tokens: 800,
         }),
-      });
+      }, MODEL_TIMEOUT_MS);
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -46,7 +49,7 @@ export class DeepSeekProviderClient implements ModelProviderClient {
 
       return { ok: true, content, raw: data };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'unknown error';
+      const msg = getTimeoutMessage(error, 'DeepSeek 调用', MODEL_TIMEOUT_MS);
       this.logger.warn(`DeepSeek invoke 异常: ${msg}`);
       return { ok: false, reason: `DeepSeek 调用异常: ${msg}` };
     }
@@ -57,10 +60,11 @@ export class DeepSeekProviderClient implements ModelProviderClient {
     messages: AiPromptMessage[],
     config: AiRuntimeConfig,
     onChunk: (chunk: string) => void,
+    _options?: AiModelInvokeOptions,
   ): Promise<AiModelInvokeResult> {
     const url = buildEndpoint(config.modelBaseUrl);
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -73,7 +77,7 @@ export class DeepSeekProviderClient implements ModelProviderClient {
           max_tokens: 1500,
           stream: true,
         }),
-      });
+      }, MODEL_TIMEOUT_MS);
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -83,7 +87,7 @@ export class DeepSeekProviderClient implements ModelProviderClient {
 
       return await this.readStream(response.body, onChunk);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'unknown error';
+      const msg = getTimeoutMessage(error, 'DeepSeek 流式调用', MODEL_TIMEOUT_MS);
       this.logger.warn(`DeepSeek invokeStream 异常: ${msg}`);
       return { ok: false, reason: `DeepSeek 流式调用异常: ${msg}` };
     }
@@ -100,7 +104,12 @@ export class DeepSeekProviderClient implements ModelProviderClient {
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error(`stream-idle:${STREAM_IDLE_TIMEOUT_MS}`)), STREAM_IDLE_TIMEOUT_MS);
+          }),
+        ]);
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -117,7 +126,10 @@ export class DeepSeekProviderClient implements ModelProviderClient {
               choices?: Array<{ delta?: { content?: string } }>;
             };
             const chunk = parsed.choices?.[0]?.delta?.content ?? '';
-            if (chunk) { fullContent += chunk; onChunk(chunk); }
+            if (chunk) {
+              fullContent += chunk;
+              onChunk(chunk);
+            }
           } catch { /* skip */ }
         }
       }

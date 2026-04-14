@@ -8,6 +8,11 @@ export type AiRuntimeConfig = {
   industry: string;
 };
 
+export type AiModelInvokeOptions = {
+  enableSearch?: boolean;
+  enableThinking?: boolean;
+};
+
 export type AiAvailability = {
   enabled: boolean;
   reason: string;

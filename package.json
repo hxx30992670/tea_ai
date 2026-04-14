@@ -17,6 +17,8 @@
     "export:markdown": "pnpm --filter server export:markdown",
     "export:openapi": "pnpm --filter server export:openapi",
     "start:server": "pnpm --filter server start",
+    "dev:admin": "pnpm --filter prompt-center-admin dev",
+    "build:admin": "pnpm --filter prompt-center-admin build",
     "start:prompt-center": "pnpm --filter prompt-center start"
   }
 }

@@ -15,6 +15,6 @@ CLAUDE.md
 docs/
 
 # Prompt Center
-packages/prompt-center/
+packages/prompt-center*/
 .gitignore
 .idea

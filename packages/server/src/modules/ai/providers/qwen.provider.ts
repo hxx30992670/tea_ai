@@ -1,8 +1,11 @@
 import { Injectable, Logger } from '@nestjs/common';
-import { AiModelInvokeResult, AiPromptMessage, AiRuntimeConfig } from '../ai.types';
+import { fetchWithTimeout, getTimeoutMessage } from '../fetch-timeout.util';
+import { AiModelInvokeOptions, AiModelInvokeResult, AiPromptMessage, AiRuntimeConfig } from '../ai.types';
 import { ModelProviderClient } from '../model-provider.interface';
 
 const DEFAULT_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+const MODEL_TIMEOUT_MS = 45_000;
+const STREAM_IDLE_TIMEOUT_MS = 20_000;
 
 function buildEndpoint(baseUrl: string) {
   const base = (baseUrl || DEFAULT_BASE_URL).replace(/\/$/, '');
@@ -15,10 +18,10 @@ export class QwenProviderClient implements ModelProviderClient {
   private readonly logger = new Logger(QwenProviderClient.name);
 
   /** 非流式调用（SQL 生成阶段） */
-  async invoke(messages: AiPromptMessage[], config: AiRuntimeConfig): Promise<AiModelInvokeResult> {
+  async invoke(messages: AiPromptMessage[], config: AiRuntimeConfig, options?: AiModelInvokeOptions): Promise<AiModelInvokeResult> {
     const url = buildEndpoint(config.modelBaseUrl);
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -29,9 +32,10 @@ export class QwenProviderClient implements ModelProviderClient {
           messages,
           temperature: 0.1,
           max_tokens: 800,
-          enable_thinking: false,
+          enable_thinking: options?.enableThinking ?? false,
+          ...(options?.enableSearch ? { enable_search: true } : {}),
         }),
-      });
+      }, MODEL_TIMEOUT_MS);
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -47,7 +51,7 @@ export class QwenProviderClient implements ModelProviderClient {
 
       return { ok: true, content, raw: data };
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'unknown error';
+      const msg = getTimeoutMessage(error, 'Qwen 调用', MODEL_TIMEOUT_MS);
       this.logger.warn(`Qwen invoke 异常: ${msg}`);
       return { ok: false, reason: `Qwen 调用异常: ${msg}` };
     }
@@ -58,10 +62,11 @@ export class QwenProviderClient implements ModelProviderClient {
     messages: AiPromptMessage[],
     config: AiRuntimeConfig,
     onChunk: (chunk: string) => void,
+    options?: AiModelInvokeOptions,
   ): Promise<AiModelInvokeResult> {
     const url = buildEndpoint(config.modelBaseUrl);
     try {
-      const response = await fetch(url, {
+      const response = await fetchWithTimeout(url, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -73,8 +78,10 @@ export class QwenProviderClient implements ModelProviderClient {
           temperature: 0.3,
           max_tokens: 1500,
           stream: true,
+          enable_thinking: options?.enableThinking ?? false,
+          ...(options?.enableSearch ? { enable_search: true } : {}),
         }),
-      });
+      }, MODEL_TIMEOUT_MS);
 
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
@@ -84,7 +91,7 @@ export class QwenProviderClient implements ModelProviderClient {
 
       return await this.readStream(response.body, onChunk);
     } catch (error) {
-      const msg = error instanceof Error ? error.message : 'unknown error';
+      const msg = getTimeoutMessage(error, 'Qwen 流式调用', MODEL_TIMEOUT_MS);
       this.logger.warn(`Qwen invokeStream 异常: ${msg}`);
       return { ok: false, reason: `Qwen 流式调用异常: ${msg}` };
     }
@@ -101,7 +108,12 @@ export class QwenProviderClient implements ModelProviderClient {
 
     try {
       while (true) {
-        const { done, value } = await reader.read();
+        const { done, value } = await Promise.race([
+          reader.read(),
+          new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error(`stream-idle:${STREAM_IDLE_TIMEOUT_MS}`)), STREAM_IDLE_TIMEOUT_MS);
+          }),
+        ]);
         if (done) break;
 
         buffer += decoder.decode(value, { stream: true });
@@ -118,7 +130,10 @@ export class QwenProviderClient implements ModelProviderClient {
               choices?: Array<{ delta?: { content?: string } }>;
             };
             const chunk = parsed.choices?.[0]?.delta?.content ?? '';
-            if (chunk) { fullContent += chunk; onChunk(chunk); }
+            if (chunk) {
+              fullContent += chunk;
+              onChunk(chunk);
+            }
           } catch { /* skip */ }
         }
       }

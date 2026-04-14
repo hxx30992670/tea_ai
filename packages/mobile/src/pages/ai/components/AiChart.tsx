@@ -8,7 +8,8 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import type { AiVisualizationSpec } from '@/types'
-import { fieldToLabel, fmtNum, fmtQtyWithUnit } from '@/lib/detectVisualization'
+import { fieldToLabel, fmtNum, fmtQtyWithUnit, fmtFieldValue, fmtNumRaw } from '@/lib/detectVisualization'
+import { getDisplayColumns, isSummarizableMetricField } from '@shared/constants/ai-field-label'
 
 const COLORS = ['#D4A853', '#52b788', '#74c69d', '#e76f51', '#457b9d', '#e9c46a', '#a8dadc', '#f4a261']
 
@@ -17,10 +18,12 @@ interface Props {
   spec: AiVisualizationSpec
 }
 
-// ─── Tooltip 格式化 ────────────────────────────────────────────────────────────
 function tooltipFormatter(value: number | string, name: string): [number | string, string] {
-  const n = typeof value === 'number' ? (Number.isInteger(value) ? value : Number(value.toFixed(2))) : value
-  return [n, fieldToLabel(name)]
+  return [typeof value === 'number' ? fmtNumRaw(value) : value, fieldToLabel(name)]
+}
+
+function formatCellValue(field: string, value: unknown): string {
+  return fmtFieldValue(field, value)
 }
 
 // ─── 数据摘要 ─────────────────────────────────────────────────────────────────
@@ -63,11 +66,12 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
   }
 
   if (type === 'table') {
-    const cols = Object.keys(rows[0] ?? {})
+    const cols = getDisplayColumns(rows)
     const numSummaries: string[] = []
     for (const col of cols) {
-      const vals = rows.map((r) => Number(r[col])).filter((v) => !isNaN(v) && v !== 0)
-      if (vals.length === rows.length && vals.length > 1) {
+      const rawValues = rows.map((r) => r[col])
+      if (isSummarizableMetricField(col, rawValues)) {
+        const vals = rawValues.map((value) => Number(value)).filter((v) => !isNaN(v) && v !== 0)
         const colTotal = vals.reduce((a, b) => a + b, 0)
         numSummaries.push(`${fieldToLabel(col)} ${fmtQtyWithUnit(colTotal, col, rows[0] ?? {}, rows)}`)
       }
@@ -86,7 +90,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
 
 // ─── 表格 ─────────────────────────────────────────────────────────────────────
 function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
-  const cols = Object.keys(rows[0] ?? {})
+  const cols = getDisplayColumns(rows)
   return (
     <div className="w-full overflow-x-auto rounded-lg border border-border">
       <table className="min-w-max text-xs">
@@ -104,7 +108,7 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
             <tr key={i} className={i % 2 === 0 ? 'bg-background' : 'bg-secondary/20'}>
               {cols.map((c) => (
                 <td key={c} className="px-3 py-2 text-muted-foreground whitespace-nowrap">
-                  {row[c] === null || row[c] === undefined ? '-' : String(row[c])}
+                  {formatCellValue(c, row[c])}
                 </td>
               ))}
             </tr>
