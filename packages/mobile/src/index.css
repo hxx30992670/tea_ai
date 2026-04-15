@@ -34,6 +34,7 @@
     --ring: 43 55% 58%;
 
     --radius: 0.75rem;
+    --bottom-nav-height: calc(56px + env(safe-area-inset-bottom, 0px));
   }
 }
 
@@ -49,6 +50,8 @@
     @apply bg-background text-foreground;
     font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB',
       'Microsoft YaHei', 'Noto Sans SC', sans-serif;
+    text-size-adjust: 100%;
+    -webkit-text-size-adjust: 100%;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
     overscroll-behavior-y: none;
@@ -74,7 +77,11 @@
 
   /* 底部导航栏总高度（56px + 安全区） */
   .pb-nav {
-    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: var(--bottom-nav-height);
+  }
+
+  .h-nav {
+    height: var(--bottom-nav-height);
   }
 
   /* 玻璃态卡片 */

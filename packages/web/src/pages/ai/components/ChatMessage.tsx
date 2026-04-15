@@ -5,6 +5,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import AiVisualization from '@/components/AiVisualization'
 import type { AiMessage } from '@/types'
+import logoIcon from '@/assets/images/logo-icon.png'
 
 type UserBubbleProps = {
   content: string
@@ -64,7 +65,9 @@ export function AssistantCard({ message, isStreaming }: AssistantCardProps) {
 
   return (
     <div className="ai-message ai-message--assistant">
-      <div className="ai-message__avatar ai-message__avatar--assistant">🤖</div>
+      <div className="ai-message__avatar ai-message__avatar--assistant">
+        <img src={logoIcon} alt="AI" style={{ width: 22, height: 22, objectFit: 'contain' }} />
+      </div>
       <Card className={`ai-message__card ${isError ? 'is-error' : ''}`} styles={{ body: { padding: 0 } }}>
         <div className="ai-message__content">
           {isLoading ? (

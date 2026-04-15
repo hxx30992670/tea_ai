@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { Bot, User, AlertCircle, Copy, Check } from 'lucide-react'
+import { Copy, Check } from 'lucide-react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { cn } from '@/lib/utils'
 import { AiChart } from './AiChart'
+import { AiAvatar, AiErrorAvatar, UserAvatar } from './ChatAvatars'
 import type { Message } from '../hooks/useChat'
 
 interface ChatMessageProps {
@@ -104,18 +105,13 @@ export function ChatMessage({ message }: ChatMessageProps) {
       )}
     >
       {/* 头像 */}
-      <div
-        className={cn(
-          'mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full',
-          isUser ? 'bg-primary/20' : 'bg-secondary',
-        )}
-      >
+      <div className="mt-0.5">
         {isUser ? (
-          <User size={15} className="text-primary" />
+          <UserAvatar />
         ) : isError ? (
-          <AlertCircle size={15} className="text-red-400" />
+          <AiErrorAvatar />
         ) : (
-          <Bot size={15} className="text-muted-foreground" />
+          <AiAvatar />
         )}
       </div>
 

@@ -1,4 +1,4 @@
-import { TrendingUp, Package, CreditCard, DollarSign, RotateCcw, ArrowDownLeft } from 'lucide-react'
+import { TrendingUp, Package, CreditCard, DollarSign, RotateCcw, ArrowDownLeft, ShoppingCart } from 'lucide-react'
 import { StatCard } from '@/components/shared/StatCard'
 import { formatMoney } from '@/lib/utils'
 import type { DashboardOverview } from '@/types'
@@ -24,6 +24,13 @@ export function OverviewCards({ data, loading }: OverviewCardsProps) {
         value={loading ? '—' : `¥${formatMoney(data?.monthRevenue ?? 0, 0)}`}
         icon={<DollarSign size={16} />}
         accent="green"
+        loading={loading}
+      />
+      <StatCard
+        title="采购金额"
+        value={loading ? '—' : `¥${formatMoney(data?.purchaseAmount ?? 0, 0)}`}
+        icon={<ShoppingCart size={16} />}
+        accent="amber"
         loading={loading}
       />
       <StatCard

@@ -84,10 +84,10 @@ export default function ProfilePage() {
   ]
 
   return (
-    <div className="min-h-full bg-background">
+    <div className="flex min-h-full flex-col bg-background">
       <PageHeader title="我的" />
 
-      <div className="space-y-4 p-4">
+      <div className="flex-1 space-y-4 p-4">
         <UserCard user={user} />
         <MenuList groups={menuGroups} />
       </div>

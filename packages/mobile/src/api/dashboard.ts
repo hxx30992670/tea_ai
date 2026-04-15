@@ -4,6 +4,7 @@ import type { ApiResponse, DashboardOverview, SalesTrend, StockWarning, TopProdu
 interface ServerOverview {
   todayRevenue: number
   monthRevenue: number
+  purchaseAmount: number
   inventoryValue: number
   receivableTotal: number
   saleReturnTotal: number
@@ -46,6 +47,7 @@ export const dashboardApi = {
     return {
       todayRevenue: d.todayRevenue ?? 0,
       monthRevenue: d.monthRevenue ?? 0,
+      purchaseAmount: d.purchaseAmount ?? 0,
       stockValue: d.inventoryValue ?? 0,
       receivableTotal: d.receivableTotal ?? 0,
       saleReturnTotal: d.saleReturnTotal ?? 0,

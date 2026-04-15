@@ -42,10 +42,21 @@
 }
 
 .ai-sidebar__new-chat {
-  border: none;
+  border: 1px solid rgba(212, 168, 83, 0.4) !important;
   border-radius: 8px;
-  background: linear-gradient(90deg, #2d6a4f, #52b788);
+  background: linear-gradient(90deg, #1a3d2b, #2d6a4f) !important;
   font-size: 13px;
+  color: #d4a853 !important;
+  box-shadow: 0 2px 8px rgba(212, 168, 83, 0.15);
+  transition: box-shadow 0.2s !important;
+
+  &:hover {
+    box-shadow: 0 4px 12px rgba(212, 168, 83, 0.25) !important;
+  }
+
+  .anticon {
+    color: #d4a853;
+  }
 }
 
 .ai-sidebar__empty.ant-typography {
@@ -131,7 +142,9 @@
 }
 
 .ai-message__avatar--assistant {
-  background: linear-gradient(135deg, #52b788, #2d6a4f);
+  background: linear-gradient(145deg, #0d2a1e, #1a3d2b);
+  border: 1.5px solid rgba(212, 168, 83, 0.45);
+  box-shadow: 0 0 8px rgba(212, 168, 83, 0.15), inset 0 0 6px rgba(82, 183, 136, 0.06);
   font-size: 16px;
 }
 
@@ -291,10 +304,18 @@
 
 .ai-chat-card__question {
   padding: 2px 10px;
-  border: 1px solid #d9e8d6;
+  border: 1px solid rgba(212, 168, 83, 0.35);
   border-radius: 20px;
+  background: rgba(212, 168, 83, 0.04);
   cursor: pointer;
   font-size: 12px;
+  color: #7a5c1e;
+  transition: background 0.15s, border-color 0.15s;
+
+  &:hover {
+    background: rgba(212, 168, 83, 0.1);
+    border-color: rgba(212, 168, 83, 0.6);
+  }
 }
 
 .ai-chat-card__composer {
@@ -338,8 +359,18 @@
 .ai-chat-card__send {
   min-width: 72px;
   height: 40px;
-  border: none;
+  border: 1px solid rgba(212, 168, 83, 0.4) !important;
   border-radius: 10px;
-  background: linear-gradient(90deg, #2d6a4f, #52b788);
-  box-shadow: 0 2px 8px rgba(45, 106, 79, 0.3);
+  background: linear-gradient(90deg, #1a3d2b, #2d6a4f) !important;
+  box-shadow: 0 2px 8px rgba(45, 106, 79, 0.25), 0 0 0 2px rgba(212, 168, 83, 0.08);
+  color: #d4a853 !important;
+  transition: box-shadow 0.2s !important;
+
+  &:hover, &:focus {
+    box-shadow: 0 4px 14px rgba(45, 106, 79, 0.3), 0 0 0 3px rgba(212, 168, 83, 0.15) !important;
+  }
+
+  .anticon {
+    color: #d4a853;
+  }
 }

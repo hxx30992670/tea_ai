@@ -52,7 +52,7 @@ export default function OrderListPage() {
   }
 
   return (
-    <div className="min-h-full bg-background">
+    <div className="flex min-h-full flex-col bg-background">
       <PageHeader
         title="开单"
         subtitle={`共 ${orders.length} 条记录`}
@@ -63,63 +63,65 @@ export default function OrderListPage() {
         }
       />
 
-      <div className="p-4 space-y-3">
+      <div className="flex-1 p-4">
         {/* 草稿提示 */}
-        {hasDraft && (
-          <button
-            onClick={() => navigate('/order/new')}
-            className="w-full rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-left tap-scale"
-          >
-            <p className="text-sm font-semibold text-primary">📝 有未完成的开单草稿</p>
-            <p className="text-xs text-muted-foreground mt-0.5">点击继续编辑</p>
-          </button>
-        )}
+        <div className="space-y-3">
+          {hasDraft && (
+            <button
+              onClick={() => navigate('/order/new')}
+              className="w-full rounded-xl border border-primary/40 bg-primary/10 px-4 py-3 text-left tap-scale"
+            >
+              <p className="text-sm font-semibold text-primary">📝 有未完成的开单草稿</p>
+              <p className="mt-0.5 text-xs text-muted-foreground">点击继续编辑</p>
+            </button>
+          )}
 
-        {/* 订单列表 */}
-        {loading ? (
-          <div className="space-y-3">
-            {Array.from({ length: 5 }).map((_, i) => (
-              <Skeleton key={i} className="h-20 w-full rounded-xl" />
-            ))}
-          </div>
-        ) : orders.length === 0 ? (
-          <div className="flex flex-col items-center gap-3 py-16 text-muted-foreground">
-            <p className="text-sm">还没有销售订单</p>
-            <Button variant="outline" size="sm" onClick={() => navigate('/order/new')}>
-              <Plus size={16} />
-              立即开单
-            </Button>
-          </div>
-        ) : (
-          <>
-            <div className="space-y-2.5">
-              {orders.map((order) => (
-                <OrderCard
-                  key={order.id}
-                  order={order}
-                  onClick={setDetailOrder}
-                  onStockOut={doStockOut}
-                  onCollect={handleOpenCollect}
-                  stockingOut={stockingOutId === order.id}
-                  collecting={collectingId === order.id}
-                />
+          {/* 订单列表 */}
+          {loading ? (
+            <div className="space-y-3">
+              {Array.from({ length: 5 }).map((_, i) => (
+                <Skeleton key={i} className="h-20 w-full rounded-xl" />
               ))}
             </div>
+          ) : orders.length === 0 ? (
+            <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-muted-foreground">
+              <p className="text-sm">还没有销售订单</p>
+              <Button variant="outline" size="sm" onClick={() => navigate('/order/new')}>
+                <Plus size={16} />
+                立即开单
+              </Button>
+            </div>
+          ) : (
+            <>
+              <div className="space-y-2.5">
+                {orders.map((order) => (
+                  <OrderCard
+                    key={order.id}
+                    order={order}
+                    onClick={setDetailOrder}
+                    onStockOut={doStockOut}
+                    onCollect={handleOpenCollect}
+                    stockingOut={stockingOutId === order.id}
+                    collecting={collectingId === order.id}
+                  />
+                ))}
+              </div>
 
-            {loadingMore && (
-              <p className="text-center text-xs text-muted-foreground py-3">加载中...</p>
-            )}
+              {loadingMore && (
+                <p className="py-3 text-center text-xs text-muted-foreground">加载中...</p>
+              )}
 
-            {!loadingMore && orders.length > 0 && (
-              <button
-                onClick={loadMore}
-                className="w-full py-3 text-center text-xs text-muted-foreground"
-              >
-                上拉加载更多
-              </button>
-            )}
-          </>
-        )}
+              {!loadingMore && orders.length > 0 && (
+                <button
+                  onClick={loadMore}
+                  className="w-full py-3 text-center text-xs text-muted-foreground"
+                >
+                  上拉加载更多
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* 新建开单 FAB */}

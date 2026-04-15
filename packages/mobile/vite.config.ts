@@ -22,7 +22,7 @@ export default defineConfig(({ mode }) => {
       hasCustomCert ? null : (enableHttps ? basicSsl() : null),
       VitePWA({
         registerType: 'prompt',
-        includeAssets: ['icons/**', 'favicon.ico'],
+        includeAssets: ['icons/**'],
         manifest: {
           name: '茶掌柜',
           short_name: '茶掌柜',
@@ -47,16 +47,10 @@ export default defineConfig(({ mode }) => {
               purpose: 'any',
             },
             {
-              src: 'icons/icon-512.png',
+              src: 'icons/icon-512-maskable.png',
               sizes: '512x512',
               type: 'image/png',
               purpose: 'maskable',
-            },
-            {
-              src: 'icons/icon.svg',
-              sizes: 'any',
-              type: 'image/svg+xml',
-              purpose: 'any',
             },
           ],
         },

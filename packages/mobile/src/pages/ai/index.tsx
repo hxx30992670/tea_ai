@@ -60,7 +60,7 @@ export default function AiPage({ speechConfig }: AiPageProps) {
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId)
 
   return (
-    <div className="flex h-full flex-col bg-background">
+    <div className="flex min-h-full flex-col bg-background">
       <PageHeader
         title="AI 助手"
         subtitle={activeSession?.title ?? '语音或打字，快速查询数据'}
@@ -105,7 +105,7 @@ export default function AiPage({ speechConfig }: AiPageProps) {
       </ScrollArea>
 
       {/* 快捷提问 + 输入框 */}
-      <div className="sticky bottom-[3px] z-30 border-t border-border bg-background/95 backdrop-blur-md">
+      <div className="sticky bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur-md">
         <div className="px-3 pt-3">
           <QuickSuggestions onSelect={sendMessage} disabled={loading} />
         </div>

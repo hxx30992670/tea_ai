@@ -252,6 +252,7 @@ export interface PaymentRecord {
 export interface DashboardOverview {
   todayRevenue: number
   monthRevenue: number
+  purchaseAmount: number
   stockValue: number
   receivableTotal: number
   saleReturnTotal: number

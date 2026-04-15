@@ -129,7 +129,7 @@ export default function ScanPage() {
       </div>
 
       {/* 手动输入兜底 */}
-      <div className='border-t bg-background px-4 py-3 pb-safe mb-[6px]'>
+      <div className='border-t bg-background px-4 py-3'>
         <ManualInput onSearch={handleManualSearch} loading={searching} />
       </div>
 

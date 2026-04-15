@@ -5,6 +5,8 @@
  */
 import React, { useEffect, useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
+import logoIcon from '@/assets/images/logo-icon.png'
+import logoWithText from '@/assets/images/logo-400.png'
 import {
   Layout, Menu, Avatar, Dropdown, Space, Tag,
   Typography, Button, theme,
@@ -86,7 +88,7 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
   }
 
   const userMenuItems = [
-    { key: 'profile', icon: <UserOutlined />, label: '个人信息' },
+
     { key: 'password', icon: <KeyOutlined />, label: '修改密码' },
     { type: 'divider' as const },
     { key: 'logout', icon: <LogoutOutlined />, label: '退出登录', danger: true },
@@ -94,7 +96,7 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
 
   const handleUserMenu = ({ key }: { key: string }) => {
     if (key === 'logout') handleLogout()
-    if (key === 'password') navigate('/system/settings')
+    if (key === 'password') navigate('/system/settings?tab=password')
   }
 
   const roleInfo = user?.role ? ROLE_MAP[user.role] : null
@@ -114,22 +116,22 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
       >
         {/* Logo */}
         <div style={{
-          display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start',
-          padding: collapsed ? '20px 0' : '20px 20px',
-          gap: 10, cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          padding: collapsed ? '16px 0' : '16px 20px',
+          cursor: 'pointer',
         }} onClick={() => navigate('/')}>
-          <div style={{
-            width: 36, height: 36, borderRadius: 10, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', fontSize: 20,
-            background: 'rgba(255,255,255,0.15)',
-          }}>
-            🍵
-          </div>
-          {!collapsed && (
-            <div>
-              <div style={{ color: '#fff', fontWeight: 700, fontSize: 16, lineHeight: 1.2 }}>茶掌柜</div>
-              <div style={{ color: 'rgba(255,255,255,0.6)', fontSize: 11 }}>智能管理系统</div>
-            </div>
+          {collapsed ? (
+            <img
+              src={logoIcon}
+              alt="茶掌柜"
+              style={{ width: 36, height: 36, objectFit: 'contain', borderRadius: 8 }}
+            />
+          ) : (
+            <img
+              src={logoWithText}
+              alt="茶掌柜"
+              style={{ width: 140, height: 'auto', objectFit: 'contain' }}
+            />
           )}
         </div>
 

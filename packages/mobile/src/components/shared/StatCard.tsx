@@ -11,7 +11,7 @@ interface StatCardProps {
   loading?: boolean
   className?: string
   /** 主色调，默认金色 */
-  accent?: 'gold' | 'green' | 'red' | 'blue'
+  accent?: 'gold' | 'green' | 'red' | 'blue' | 'amber'
 }
 
 const ACCENT_MAP = {
@@ -30,6 +30,10 @@ const ACCENT_MAP = {
   blue: {
     icon: 'bg-blue-500/15 text-blue-400',
     value: 'text-blue-400',
+  },
+  amber: {
+    icon: 'bg-amber-500/15 text-amber-400',
+    value: 'text-amber-400',
   },
 }
 
@@ -66,22 +70,29 @@ export function StatCard({
       )}
     >
       <div className="flex items-start justify-between mb-2">
-        <span className="text-xs text-muted-foreground font-medium">{title}</span>
+        <span className="min-w-0 pr-2 text-xs font-medium text-muted-foreground">{title}</span>
         {icon && (
-          <div className={cn('flex h-8 w-8 items-center justify-center rounded-lg', colors.icon)}>
+          <div className={cn('shrink-0 flex h-8 w-8 items-center justify-center rounded-lg', colors.icon)}>
             {icon}
           </div>
         )}
       </div>
 
-      <div className={cn('text-2xl font-bold tracking-tight', colors.value)}>{value}</div>
+      <div
+        className={cn(
+          'min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-[clamp(1.125rem,4.8vw,1.5rem)] font-bold leading-tight tracking-tight',
+          colors.value,
+        )}
+      >
+        {value}
+      </div>
 
       {(sub || trend) && (
-        <div className="mt-1 flex items-center gap-2">
+        <div className="mt-1 flex min-w-0 items-center gap-2 overflow-hidden">
           {trend && (
             <span
               className={cn(
-                'text-xs font-medium',
+                'shrink-0 text-xs font-medium',
                 trend.value >= 0 ? 'text-green-400' : 'text-red-400',
               )}
             >
@@ -89,7 +100,7 @@ export function StatCard({
               {trend.value}%
             </span>
           )}
-          {sub && <span className="text-xs text-muted-foreground">{sub}</span>}
+          {sub && <span className="truncate text-xs text-muted-foreground">{sub}</span>}
         </div>
       )}
     </div>

@@ -92,16 +92,17 @@
   justify-content: center;
   width: 56px;
   height: 56px;
-  border: none;
+  border: 1.5px solid rgba(212, 168, 83, 0.5);
   border-radius: 50%;
-  background: linear-gradient(135deg, #2d6a4f, #52b788);
-  box-shadow: 0 8px 24px rgba(45, 106, 79, 0.4);
-  color: #fff;
+  background: linear-gradient(145deg, #1a3d2b 0%, #2d6a4f 60%, #3a5a20 100%);
+  box-shadow: 0 8px 24px rgba(45, 106, 79, 0.35), 0 0 0 4px rgba(212, 168, 83, 0.12);
+  color: #d4a853;
   cursor: pointer;
   font-size: 24px;
-  transition: transform 0.2s;
+  transition: transform 0.2s, box-shadow 0.2s;
 }
 
 .dashboard-floating-ai:hover {
   transform: scale(1.08);
+  box-shadow: 0 12px 32px rgba(45, 106, 79, 0.4), 0 0 0 6px rgba(212, 168, 83, 0.18);
 }

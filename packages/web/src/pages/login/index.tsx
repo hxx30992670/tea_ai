@@ -1,4 +1,5 @@
 import React, { useState } from 'react'
+import logoWithText from '@/assets/images/logo-400-light.png'
 import { useNavigate } from 'react-router-dom'
 import {
   Form, Input, Button, Checkbox, Typography, message, ConfigProvider, theme,
@@ -7,28 +8,11 @@ import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import type { LoginForm } from '@/types'
+import LoginShowcase from './components/LoginShowcase'
 import './index.less'
 
 const { Title, Text } = Typography
 
-// 模拟 AI 对话内容
-const MOCK_CHAT = [
-  { role: 'user', text: '本月哪些客户欠款超过 5000 元？' },
-  { role: 'ai', text: '共找到 3 位客户欠款超过 5000 元：\n• 清远茶行 ¥12,400\n• 德兴茶庄 ¥8,760\n• 汇丰茶业 ¥5,320' },
-  { role: 'user', text: '今年各月销售额趋势怎么样？' },
-]
-
-// 模拟柱状图数据
-const BAR_DATA = [
-  { label: '1月', value: 42, color: '#2d6a4f' },
-  { label: '2月', value: 35, color: '#2d6a4f' },
-  { label: '3月', value: 68, color: '#2d6a4f' },
-  { label: '4月', value: 55, color: '#2d6a4f' },
-  { label: '5月', value: 80, color: '#52b788' },
-  { label: '6月', value: 72, color: '#52b788' },
-  { label: '7月', value: 90, color: '#52b788' },
-  { label: '8月', value: 85, color: '#52b788' },
-]
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false)
@@ -60,81 +44,14 @@ export default function LoginPage() {
 
       <div className="login-layout">
 
-        {/* ── 左侧：AI 演示面板 ─────────────────────────────────────── */}
-        <div className="login-showcase">
-          {/* 顶部品牌 */}
-          <div className="login-showcase__header">
-            <div className="login-showcase__logo">🍵</div>
-            <div>
-              <div className="login-showcase__brand">茶掌柜</div>
-              <div className="login-showcase__tagline">AI 驱动的茶叶经营管理系统</div>
-            </div>
-          </div>
-
-          {/* AI 对话模拟 */}
-          <div className="login-demo-card">
-            <div className="login-demo-card__titlebar">
-              <span className="login-demo-card__dot" style={{ background: '#ff5f57' }} />
-              <span className="login-demo-card__dot" style={{ background: '#febc2e' }} />
-              <span className="login-demo-card__dot" style={{ background: '#28c840' }} />
-              <span className="login-demo-card__label">AI 助手 · 实时问答</span>
-            </div>
-
-            <div className="login-demo-chat">
-              {MOCK_CHAT.map((msg, i) => (
-                <div key={i} className={`login-demo-chat__msg login-demo-chat__msg--${msg.role}`}>
-                  {msg.role === 'ai' && (
-                    <div className="login-demo-chat__avatar">AI</div>
-                  )}
-                  <div className="login-demo-chat__bubble">
-                    {msg.text.split('\n').map((line, j) => (
-                      <span key={j}>{line}{j < msg.text.split('\n').length - 1 && <br />}</span>
-                    ))}
-                  </div>
-                </div>
-              ))}
-
-              {/* 打字中指示器 */}
-              <div className="login-demo-chat__msg login-demo-chat__msg--ai">
-                <div className="login-demo-chat__avatar">AI</div>
-                <div className="login-demo-chat__bubble login-demo-chat__bubble--typing">
-                  <span className="login-demo-typing">
-                    <i /><i /><i />
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* 迷你柱状图 */}
-            <div className="login-demo-chart">
-              <div className="login-demo-chart__title">月度销售额趋势（万元）</div>
-              <div className="login-demo-chart__bars">
-                {BAR_DATA.map((d) => (
-                  <div key={d.label} className="login-demo-chart__col">
-                    <div
-                      className="login-demo-chart__bar"
-                      style={{ height: `${d.value}%`, background: d.color }}
-                    />
-                    <div className="login-demo-chart__x">{d.label}</div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {/* 底部特性标签 */}
-          <div className="login-showcase__tags">
-            {['自然语言查询', 'SQL 自动生成', '智能图表', '拍照录单', '多端适配'].map((tag) => (
-              <span key={tag} className="login-showcase__tag">{tag}</span>
-            ))}
-          </div>
-        </div>
+        {/* ── 左侧：AI 演示面板（动态） ────────────────────────────── */}
+        <LoginShowcase />
 
         {/* ── 右侧：登录表单 ────────────────────────────────────────── */}
         <div className="login-form-panel">
           <div className="login-form-panel__inner">
             <div className="login-form-panel__logo">
-              <div className="login-form-panel__logo-icon">🍵</div>
+              <img src={logoWithText} alt="茶掌柜" style={{ width: 140, height: 'auto', display: 'block', margin: '0 auto' }} />
             </div>
 
             <Title level={3} className="login-form-panel__title">欢迎回来</Title>

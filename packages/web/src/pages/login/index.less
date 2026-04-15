@@ -158,6 +158,32 @@
   }
 }
 
+// ─── 消息入场动画 ──────────────────────────────────────────────────────────────
+@keyframes msgEnter {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.login-demo-chat__msg--enter {
+  animation: msgEnter 0.3s ease-out both;
+}
+
+// ─── 打字光标闪烁 ──────────────────────────────────────────────────────────────
+.login-demo-cursor {
+  display: inline-block;
+  width: 2px;
+  height: 0.9em;
+  margin-left: 1px;
+  background: rgba(82, 183, 136, 0.85);
+  vertical-align: text-bottom;
+  animation: cursorBlink 0.8s step-end infinite;
+}
+
+@keyframes cursorBlink {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
 // ─── AI 对话区 ────────────────────────────────────────────────────────────────
 .login-demo-chat {
   padding: 20px 20px 12px;
@@ -205,6 +231,12 @@
     font-weight: 700;
     color: #52b788;
     font-family: 'SF Mono', monospace;
+
+    &--ai {
+      background: linear-gradient(145deg, #0d2a1e, #1a3d2b);
+      border: 1px solid rgba(212, 168, 83, 0.5);
+      box-shadow: 0 0 6px rgba(212, 168, 83, 0.15);
+    }
   }
 
   &__bubble {

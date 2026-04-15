@@ -359,8 +359,18 @@ export default function AiPage() {
         description="用自然语言查询经营数据，支持表格与图表展示"
         className="page-header"
         extra={(
-          <Tag color={aiEnabled ? 'success' : 'default'} className="ai-page__status">
-          {aiConfigured ? 'AI 已开通' : 'AI 未开通'}
+          <Tag
+            className="ai-page__status"
+            style={aiEnabled ? {
+              background: 'linear-gradient(90deg, #1a3d2b, #2d6a4f)',
+              border: '1px solid rgba(212,168,83,0.5)',
+              color: '#d4a853',
+              fontWeight: 600,
+              borderRadius: 20,
+            } : undefined}
+            color={aiEnabled ? undefined : 'default'}
+          >
+            {aiConfigured ? 'AI 已开通' : 'AI 未开通'}
           </Tag>
         )}
       />

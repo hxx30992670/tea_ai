@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Form, Input, Button, Card, Select, Divider, message,
   Typography, Space, Tag, Tabs, Alert, Collapse, Image,
@@ -52,6 +53,8 @@ type TestStatus = 'idle' | 'testing' | 'success' | 'fail'
 type TestCheck = { key: string; label: string; ok: boolean; message: string }
 
 export default function SettingsPage() {
+  const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
   const [shopForm] = Form.useForm()
   const [aiForm] = Form.useForm()
   const [pwdForm] = Form.useForm()
@@ -436,10 +439,20 @@ export default function SettingsPage() {
     },
   ]
 
+  const visibleTabItems = isAdmin ? tabItems : tabItems.filter((item) => item.key !== 'ai')
+  const requestedTab = searchParams.get('tab')
+  const activeTab = visibleTabItems.some((item) => item.key === requestedTab)
+    ? requestedTab!
+    : 'shop'
+
   return (
     <div>
       <PageHeader title="系统设置" description="管理店铺信息、AI 配置和账户安全" className="page-header" />
-      <Tabs items={isAdmin ? tabItems : tabItems.filter((item) => item.key !== 'ai')} />
+      <Tabs
+        activeKey={activeTab}
+        items={visibleTabItems}
+        onChange={(key) => navigate(`/system/settings?tab=${key}`, { replace: true })}
+      />
     </div>
   )
 }

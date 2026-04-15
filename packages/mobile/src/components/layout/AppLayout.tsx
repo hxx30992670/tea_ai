@@ -8,11 +8,12 @@ export function AppLayout() {
   if (!isLoggedIn) return <Navigate to="/login" replace />
 
   return (
-    <div className="flex h-full flex-col bg-background">
-      {/* 主内容区：减去底部导航高度 */}
-      <main className="flex-1 overflow-y-auto overflow-x-hidden pb-nav">
+    <div className="flex min-h-dvh flex-col bg-background">
+      <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <Outlet />
       </main>
+
+      <div className="h-nav shrink-0" aria-hidden="true" />
 
       <BottomNav />
 

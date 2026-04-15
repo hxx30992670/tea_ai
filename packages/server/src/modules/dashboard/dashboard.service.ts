@@ -35,6 +35,7 @@ export class DashboardService {
     const [
       todayRevenue,
       monthRevenue,
+      purchaseAmount,
       inventoryValue,
       receivableTotal,
       saleReturnTotal,
@@ -44,6 +45,7 @@ export class DashboardService {
     ] = await Promise.all([
       this.sumSaleAmount(todayStart, now),
       this.sumSaleAmount(monthStart, now),
+      this.sumPurchaseAmount(),
       this.sumInventoryValue(),
       this.sumReceivables(),
       this.sumSaleReturnedAmount(),
@@ -55,6 +57,7 @@ export class DashboardService {
     return {
       todayRevenue,
       monthRevenue,
+      purchaseAmount,
       inventoryValue,
       receivableTotal,
       saleReturnTotal,
@@ -208,6 +211,16 @@ export class DashboardService {
       .select('COALESCE(SUM(product.stock_qty * product.cost_price), 0)', 'amount')
       .where('product.status = :status', { status: 1 })
       .andWhere('product.deleted_at IS NULL')
+      .getRawOne<{ amount: number }>();
+
+    return Number(row?.amount ?? 0);
+  }
+
+  private async sumPurchaseAmount() {
+    const row = await this.dataSource
+      .getRepository(PurchaseOrderEntity)
+      .createQueryBuilder('purchaseOrder')
+      .select('COALESCE(SUM(purchaseOrder.total_amount), 0)', 'amount')
       .getRawOne<{ amount: number }>();
 
     return Number(row?.amount ?? 0);
