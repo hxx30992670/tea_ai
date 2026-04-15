@@ -367,7 +367,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
 
   const start = useCallback(async () => {
     if (!speechConfig?.appId || !speechConfig?.apiKey) {
-      onError?.('未配置讯飞语音参数，请在入口注入 APPID 和 API_KEY')
+      onError?.('还没有配置讯飞语音。去讯飞开放平台注册账号并开通“实时语音转写”后，把 APPID 和 APIKey 注入到移动端配置里即可，新账号一般有免费额度可先试用。')
       return
     }
 
@@ -451,7 +451,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
   useEffect(() => {
     if (!speechConfig?.appId || !speechConfig?.apiKey) {
       setIsSupported(false)
-      setSupportInfo('未配置讯飞语音参数')
+      setSupportInfo('语音输入默认未开启。到讯飞开放平台注册账号并开通“实时语音转写”后，注入 APPID 和 APIKey 就能使用，新账号一般有免费额度。')
       return
     }
 

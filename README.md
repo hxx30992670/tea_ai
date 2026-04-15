@@ -9,6 +9,8 @@
 </p>
 
 <p align="center">
+  <a href="https://hyl.heyiling.top" target="_blank">Web 演示</a> ·
+  <a href="https://hyl.heyiling.top/m" target="_blank">移动端演示</a> ·
   <a href="#快速开始">快速开始</a> ·
   <a href="#截图预览">截图预览</a> ·
   <a href="#docker-一键部署">Docker 部署</a> ·
@@ -152,6 +154,34 @@ pnpm dev:all
 > ```bash
 > VITE_MOBILE_HTTPS=false pnpm dev:mobile
 > ```
+
+### 移动端语音输入说明
+
+移动端里的语音输入能力默认是关闭的。开源仓库不会内置任何第三方语音服务凭证，这样对维护者和使用者都更安全。
+
+如果你想把语音输入也启用起来，流程很简单：
+
+1. 去讯飞开放平台注册账号
+2. 开通“实时语音转写”能力
+3. 拿到 `APPID` 和 `APIKey`
+4. 在移动端入口注入运行时配置
+
+新账号通常会有一部分免费额度，足够先本地体验、调试和验证流程。
+
+参考配置如下：
+
+```html
+<script>
+  window.__SMARTSTOCK_MOBILE_CONFIG__ = {
+    speech: {
+      appId: '你的 APPID',
+      apiKey: '你的 APIKey',
+    },
+  }
+</script>
+```
+
+默认建议把这段配置放在部署环境里注入，不要直接写死到仓库代码里。
 
 ### 其他命令
 
