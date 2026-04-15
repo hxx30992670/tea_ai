@@ -13,7 +13,7 @@ export function AppLayout() {
   }
 
   return (
-    <div className="flex h-dvh flex-col overflow-hidden bg-background">
+    <div className="flex h-dvh flex-col bg-background">
       <main className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
         <Outlet />
       </main>
