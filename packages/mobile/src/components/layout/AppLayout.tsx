@@ -10,21 +10,38 @@ export function AppLayout() {
   const location = useLocation()
 
   useEffect(() => {
+    if (typeof window === 'undefined') return
+
+    let rafId = 0
+    const vv = window.visualViewport
+
     const setAppHeight = () => {
-      document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`)
+      const viewportHeight = vv?.height ?? window.innerHeight
+      document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`)
     }
 
-    setAppHeight()
-    window.addEventListener('resize', setAppHeight)
-    window.addEventListener('orientationchange', setAppHeight)
-    window.addEventListener('pageshow', setAppHeight)
-    window.visualViewport?.addEventListener('resize', setAppHeight)
+    const scheduleSetAppHeight = () => {
+      cancelAnimationFrame(rafId)
+      rafId = window.requestAnimationFrame(() => {
+        setAppHeight()
+        window.setTimeout(setAppHeight, 80)
+      })
+    }
+
+    scheduleSetAppHeight()
+    window.addEventListener('resize', scheduleSetAppHeight)
+    window.addEventListener('orientationchange', scheduleSetAppHeight)
+    window.addEventListener('pageshow', scheduleSetAppHeight)
+    vv?.addEventListener('resize', scheduleSetAppHeight)
+    vv?.addEventListener('scroll', scheduleSetAppHeight)
 
     return () => {
-      window.removeEventListener('resize', setAppHeight)
-      window.removeEventListener('orientationchange', setAppHeight)
-      window.removeEventListener('pageshow', setAppHeight)
-      window.visualViewport?.removeEventListener('resize', setAppHeight)
+      cancelAnimationFrame(rafId)
+      window.removeEventListener('resize', scheduleSetAppHeight)
+      window.removeEventListener('orientationchange', scheduleSetAppHeight)
+      window.removeEventListener('pageshow', scheduleSetAppHeight)
+      vv?.removeEventListener('resize', scheduleSetAppHeight)
+      vv?.removeEventListener('scroll', scheduleSetAppHeight)
     }
   }, [])
 
