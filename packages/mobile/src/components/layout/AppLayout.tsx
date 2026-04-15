@@ -15,6 +15,7 @@ export function AppLayout() {
     let rafId = 0
     const vv = window.visualViewport
     const nav = window.navigator as Navigator & { standalone?: boolean }
+    const isWeChat = /MicroMessenger/i.test(window.navigator.userAgent)
     const isIos =
       /iPhone|iPad|iPod/i.test(window.navigator.userAgent) ||
       (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1)
@@ -22,7 +23,7 @@ export function AppLayout() {
       window.matchMedia?.('(display-mode: standalone)').matches ||
       window.matchMedia?.('(display-mode: fullscreen)').matches ||
       (typeof nav.standalone === 'boolean' && nav.standalone)
-    const shouldUseVisualViewport = isIos && isStandalone
+    const shouldUseVisualViewport = (isIos && isStandalone) || isWeChat
 
     const setAppHeight = () => {
       const viewportHeight = shouldUseVisualViewport
