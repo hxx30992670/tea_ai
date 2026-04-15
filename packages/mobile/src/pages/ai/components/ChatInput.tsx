@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react'
-import { Send, Mic, MicOff } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Send, Mic, MicOff, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { useSpeech } from '@/hooks/useSpeech'
@@ -18,34 +18,28 @@ interface ChatInputProps {
 export function ChatInput({ onSend, onStop, disabled, loading, statusPhase, speechConfig }: ChatInputProps) {
   const [text, setText] = useState('')
   const [speechError, setSpeechError] = useState<string | null>(null)
-  const committedSpeechRef = useRef('')
-  const liveSpeechRef = useRef('')
-  const promotedSpeechRef = useRef('')
+  const baseTextRef = useRef('')
+  const speechTextRef = useRef('')
+  const wasListeningRef = useRef(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   const { isListening, isSupported, supportInfo, toggle: toggleSpeech } = useSpeech({
     onResult: (transcript) => {
-      const promoted = promotedSpeechRef.current
-      if (promoted && transcript.startsWith(promoted) && committedSpeechRef.current.endsWith(promoted)) {
-        committedSpeechRef.current = `${committedSpeechRef.current.slice(0, -promoted.length)}${transcript}`
-      } else {
-        committedSpeechRef.current += transcript
-      }
-      liveSpeechRef.current = ''
-      promotedSpeechRef.current = ''
-      setText(committedSpeechRef.current)
+      speechTextRef.current = transcript
+      setText(baseTextRef.current + transcript)
       textareaRef.current?.focus()
       setSpeechError(null)
     },
     onPartialResult: (transcript) => {
-      liveSpeechRef.current = transcript
-      setText(committedSpeechRef.current + transcript)
+      if (!transcript) {
+        return
+      }
+      speechTextRef.current = transcript
+      setText(baseTextRef.current + transcript)
     },
     onStopCapture: (transcript) => {
-      committedSpeechRef.current += transcript
-      liveSpeechRef.current = ''
-      promotedSpeechRef.current = transcript
-      setText(committedSpeechRef.current)
+      speechTextRef.current = transcript
+      setText(baseTextRef.current + transcript)
     },
     onError: (error) => {
       setSpeechError(error)
@@ -55,14 +49,41 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase, spee
     speechConfig,
   })
 
+  useEffect(() => {
+    if (isListening && !wasListeningRef.current) {
+      baseTextRef.current = text
+      speechTextRef.current = ''
+    }
+
+    if (!isListening && wasListeningRef.current) {
+      baseTextRef.current = ''
+      speechTextRef.current = ''
+    }
+
+    wasListeningRef.current = isListening
+  }, [isListening, text])
+
+  useEffect(() => {
+    const textarea = textareaRef.current
+    if (!textarea) {
+      return
+    }
+
+    textarea.scrollTop = textarea.scrollHeight
+  }, [text])
+
+  const handleClear = () => {
+    setText('')
+    baseTextRef.current = ''
+    speechTextRef.current = ''
+    textareaRef.current?.focus()
+  }
+
   const handleSend = () => {
     const trimmed = text.trim()
     if (!trimmed || disabled) return
     onSend(trimmed)
-    setText('')
-    committedSpeechRef.current = ''
-    liveSpeechRef.current = ''
-    promotedSpeechRef.current = ''
+    handleClear()
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -115,9 +136,8 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase, spee
           value={text}
           onChange={(e) => {
             const nextValue = e.target.value
-            committedSpeechRef.current = nextValue
-            liveSpeechRef.current = ''
-            promotedSpeechRef.current = ''
+            baseTextRef.current = nextValue
+            speechTextRef.current = ''
             setText(nextValue)
           }}
           onKeyDown={handleKeyDown}
@@ -125,6 +145,18 @@ export function ChatInput({ onSend, onStop, disabled, loading, statusPhase, spee
           rows={1}
           className="min-h-[40px] max-h-24 resize-none rounded-xl py-2.5 text-sm"
         />
+
+        {text && !loading ? (
+          <Button
+            size="icon"
+            variant="ghost"
+            className="shrink-0 rounded-full text-muted-foreground"
+            onClick={handleClear}
+            disabled={disabled}
+          >
+            <X size={18} />
+          </Button>
+        ) : null}
 
         {/* 发送/停止按钮 */}
         {loading ? (
