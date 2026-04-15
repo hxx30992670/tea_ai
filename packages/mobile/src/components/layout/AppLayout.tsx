@@ -14,9 +14,20 @@ export function AppLayout() {
 
     let rafId = 0
     const vv = window.visualViewport
+    const nav = window.navigator as Navigator & { standalone?: boolean }
+    const isIos =
+      /iPhone|iPad|iPod/i.test(window.navigator.userAgent) ||
+      (window.navigator.platform === 'MacIntel' && window.navigator.maxTouchPoints > 1)
+    const isStandalone =
+      window.matchMedia?.('(display-mode: standalone)').matches ||
+      window.matchMedia?.('(display-mode: fullscreen)').matches ||
+      (typeof nav.standalone === 'boolean' && nav.standalone)
+    const shouldUseVisualViewport = isIos && isStandalone
 
     const setAppHeight = () => {
-      const viewportHeight = vv?.height ?? window.innerHeight
+      const viewportHeight = shouldUseVisualViewport
+        ? (vv?.height ?? window.innerHeight)
+        : window.innerHeight
       document.documentElement.style.setProperty('--app-height', `${Math.round(viewportHeight)}px`)
     }
 
@@ -32,16 +43,20 @@ export function AppLayout() {
     window.addEventListener('resize', scheduleSetAppHeight)
     window.addEventListener('orientationchange', scheduleSetAppHeight)
     window.addEventListener('pageshow', scheduleSetAppHeight)
-    vv?.addEventListener('resize', scheduleSetAppHeight)
-    vv?.addEventListener('scroll', scheduleSetAppHeight)
+    if (shouldUseVisualViewport) {
+      vv?.addEventListener('resize', scheduleSetAppHeight)
+      vv?.addEventListener('scroll', scheduleSetAppHeight)
+    }
 
     return () => {
       cancelAnimationFrame(rafId)
       window.removeEventListener('resize', scheduleSetAppHeight)
       window.removeEventListener('orientationchange', scheduleSetAppHeight)
       window.removeEventListener('pageshow', scheduleSetAppHeight)
-      vv?.removeEventListener('resize', scheduleSetAppHeight)
-      vv?.removeEventListener('scroll', scheduleSetAppHeight)
+      if (shouldUseVisualViewport) {
+        vv?.removeEventListener('resize', scheduleSetAppHeight)
+        vv?.removeEventListener('scroll', scheduleSetAppHeight)
+      }
     }
   }, [])
 
