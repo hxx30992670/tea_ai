@@ -34,11 +34,7 @@ export interface UserInfo {
   role: 'admin' | 'manager' | 'staff'  // 管理员/店长/店员
   status: number
   phone?: string
-  roleProfile?: {
-    code: 'admin' | 'manager' | 'staff'
-    name: string
-    description: string
-  }
+  roleProfile?: RoleProfile
 }
 
 /** 登录结果（包含 Token） */
@@ -400,11 +396,13 @@ export interface SysUser {
   status: number
   createdAt: string
   updatedAt?: string
-  roleProfile?: {
-    code: 'admin' | 'manager' | 'staff'
-    name: string
-    description: string
-  }
+  roleProfile?: RoleProfile
+}
+
+export interface RoleProfile {
+  code: 'admin' | 'manager' | 'staff'
+  name: string
+  description: string
 }
 
 // ===== 系统管理 =====

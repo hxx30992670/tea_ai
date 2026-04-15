@@ -94,7 +94,9 @@ export default function SettingsPage() {
   }
 
   useEffect(() => {
-    void loadSettings()
+    if (isAdmin) {
+      void loadSettings()
+    }
   }, [])
 
   const handleProviderChange = (provider: string) => {
@@ -439,19 +441,19 @@ export default function SettingsPage() {
     },
   ]
 
-  const visibleTabItems = isAdmin ? tabItems : tabItems.filter((item) => item.key !== 'ai')
+  const visibleTabItems = isAdmin ? tabItems : tabItems.filter((item) => item.key === 'password')
   const requestedTab = searchParams.get('tab')
   const activeTab = visibleTabItems.some((item) => item.key === requestedTab)
     ? requestedTab!
-    : 'shop'
+    : 'password'
 
   return (
     <div>
-      <PageHeader title="系统设置" description="管理店铺信息、AI 配置和账户安全" className="page-header" />
+      <PageHeader title={isAdmin ? '系统设置' : '账户安全'} description={isAdmin ? '管理店铺信息、AI 配置和账户安全' : '修改当前账号密码'} className="page-header" />
       <Tabs
         activeKey={activeTab}
         items={visibleTabItems}
-        onChange={(key) => navigate(`/system/settings?tab=${key}`, { replace: true })}
+        onChange={(key) => navigate(isAdmin ? `/system/settings?tab=${key}` : '/account/password', { replace: true })}
       />
     </div>
   )

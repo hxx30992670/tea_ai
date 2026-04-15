@@ -5,9 +5,10 @@
  * - RequireGuest: 已登录时自动跳转到首页（如登录页）
  */
 import React from 'react'
-import { createBrowserRouter, RouterProvider, Navigate, Outlet } from 'react-router-dom'
+import { createBrowserRouter, RouterProvider, Navigate, Outlet, useLocation } from 'react-router-dom'
 import { useAuthStore } from '@/store/auth'
 import BasicLayout from '@/layouts/BasicLayout'
+import { canAccessWebPath, getWebDefaultPath } from '@/lib/permissions'
 import LoginPage from '@/pages/login'
 import DashboardPage from '@/pages/dashboard'
 import ProductsPage from '@/pages/products'
@@ -24,8 +25,12 @@ import LogsPage from '@/pages/system/logs'
 
 /** 路由守卫：已登录才能访问，未登录重定向到登录页 */
 function RequireAuth() {
-  const { isLoggedIn } = useAuthStore()
+  const { isLoggedIn, user } = useAuthStore()
+  const location = useLocation()
   if (!isLoggedIn) return <Navigate to="/login" replace />
+  if (!canAccessWebPath(user?.role, location.pathname)) {
+    return <Navigate to={getWebDefaultPath(user?.role)} replace />
+  }
   return (
     <BasicLayout>
       <Outlet />
@@ -58,6 +63,7 @@ const router = createBrowserRouter([
       { path: '/suppliers', element: <SuppliersPage /> },  // 供应商管理
       { path: '/payments', element: <PaymentsPage /> },    // 收付款管理
       { path: '/ai', element: <AiPage /> },                // AI 助手
+      { path: '/account/password', element: <SettingsPage /> }, // 账户安全
       { path: '/system/settings', element: <SettingsPage /> },  // 系统设置
       { path: '/system/users', element: <UsersPage /> },        // 用户管理
       { path: '/system/logs', element: <LogsPage /> },          // 操作日志

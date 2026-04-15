@@ -40,6 +40,8 @@ import { aiApi } from '@/api/ai'
 import { SALE_ORDER_STATUS } from '@/constants/order'
 import { customerApi } from '@/api/customers'
 import { productApi } from '@/api/products'
+import { useAuthStore } from '@/store/auth'
+import { canUseAiRecognize } from '@/lib/permissions'
 import SaleOrderReceipt from '@/components/SaleOrderReceipt'
 import ProductSelect from '@/components/ProductSelect'
 import { SaleOrderFormModal } from './components/SaleOrderFormModal'
@@ -249,6 +251,8 @@ function mapRecognizedItems(
 }
 
 export default function SalePage() {
+  const role = useAuthStore((state) => state.user?.role)
+  const allowAiRecognize = canUseAiRecognize(role)
   const [list, setList] = useState<SaleOrder[]>([])
   const [total, setTotal] = useState(0)
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -783,25 +787,29 @@ export default function SalePage() {
 
   return (
     <div>
-      <AiRecognizeLoading visible={aiRecognizing} current={aiBatchCurrent} total={aiBatchTotal} />
+      <AiRecognizeLoading visible={allowAiRecognize && aiRecognizing} current={aiBatchCurrent} total={aiBatchTotal} />
 
       {/* 隐藏的 AI 识别文件选择框（单张） */}
-      <input
-        ref={aiFileInputRef}
-        type="file"
-        accept="image/*,.txt,.md,.csv"
-        style={{ display: 'none' }}
-        onChange={(e) => void handleAiFileSelect(e)}
-      />
+      {allowAiRecognize && (
+        <input
+          ref={aiFileInputRef}
+          type="file"
+          accept="image/*,.txt,.md,.csv"
+          style={{ display: 'none' }}
+          onChange={(e) => void handleAiFileSelect(e)}
+        />
+      )}
       {/* 隐藏的 AI 识别文件选择框（批量） */}
-      <input
-        ref={aiBatchFileInputRef}
-        type="file"
-        accept="image/*,.txt,.md,.csv"
-        multiple
-        style={{ display: 'none' }}
-        onChange={(e) => void handleAiBatchFiles(e)}
-      />
+      {allowAiRecognize && (
+        <input
+          ref={aiBatchFileInputRef}
+          type="file"
+          accept="image/*,.txt,.md,.csv"
+          multiple
+          style={{ display: 'none' }}
+          onChange={(e) => void handleAiBatchFiles(e)}
+        />
+      )}
 
       <AiBatchPreview
         open={batchPreviewOpen}
@@ -823,19 +831,21 @@ export default function SalePage() {
         className="page-header"
         extra={
           <Space>
-            <Dropdown
-              menu={{
-                items: [
-                  { key: 'single', label: '识别单张', onClick: () => aiFileInputRef.current?.click() },
-                  { key: 'batch', label: '批量识别', onClick: () => aiBatchFileInputRef.current?.click() },
-                ],
-              }}
-              trigger={['click']}
-            >
-              <Button icon={<RobotOutlined />} loading={aiRecognizing}>
-                AI 识别录单 <DownOutlined />
-              </Button>
-            </Dropdown>
+            {allowAiRecognize && (
+              <Dropdown
+                menu={{
+                  items: [
+                    { key: 'single', label: '识别单张', onClick: () => aiFileInputRef.current?.click() },
+                    { key: 'batch', label: '批量识别', onClick: () => aiBatchFileInputRef.current?.click() },
+                  ],
+                }}
+                trigger={['click']}
+              >
+                <Button icon={<RobotOutlined />} loading={aiRecognizing}>
+                  AI 识别录单 <DownOutlined />
+                </Button>
+              </Dropdown>
+            )}
             <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreate} className="page-primary-button">新建销售单</Button>
           </Space>
         }

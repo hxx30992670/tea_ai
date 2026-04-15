@@ -13,7 +13,7 @@ import {
   ApiTags,
 } from '@nestjs/swagger';
 import { Response } from 'express';
-import { ROLE_ADMIN } from '../../common/constants/roles';
+import { ROLE_ADMIN, ROLE_MANAGER } from '../../common/constants/roles';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../../common/types/auth-user.type';
@@ -82,7 +82,7 @@ export class AiController {
     }
   }
 
-  @Roles(ROLE_ADMIN)
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
   @ApiOperation({ summary: 'AI 结构化识别（用于自动填表）' })
   @ApiBody({ type: AiRecognizeDto })
   @Post('recognize')

@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Skeleton } from '@/components/ui/skeleton'
+import logoIcon from '@/assets/images/logo-icon.png'
 import type { SpeechConfig } from '@/hooks/useSpeech'
 import { useChat } from './hooks/useChat'
 import { ChatMessage } from './components/ChatMessage'
@@ -60,7 +61,9 @@ export default function AiPage({ speechConfig }: AiPageProps) {
   const activeSession = sessions.find((s) => s.sessionId === activeSessionId)
 
   return (
-    <div className="flex min-h-full flex-col bg-background">
+    // h-full + overflow-hidden：让 AppLayout 的 <main> 不整体滚动
+    // 头部 / 底部 shrink-0 固定，中间 ScrollArea flex-1 独立滚动
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       <PageHeader
         title="AI 助手"
         subtitle={activeSession?.title ?? '语音或打字，快速查询数据'}
@@ -104,8 +107,8 @@ export default function AiPage({ speechConfig }: AiPageProps) {
         </div>
       </ScrollArea>
 
-      {/* 快捷提问 + 输入框 */}
-      <div className="sticky bottom-0 z-30 border-t border-border bg-background/95 backdrop-blur-md">
+      {/* 快捷提问 + 输入框 — shrink-0 固定在底部，不参与滚动 */}
+      <div className="shrink-0 border-t border-border bg-background/95 backdrop-blur-md">
         <div className="px-3 pt-3">
           <QuickSuggestions onSelect={sendMessage} disabled={loading} />
         </div>
@@ -134,12 +137,11 @@ export default function AiPage({ speechConfig }: AiPageProps) {
 }
 
 function WelcomeScreen() {
-  const appIconSrc = `${import.meta.env.BASE_URL}icons/icon.svg`
-
   return (
     <div className="flex flex-col items-center gap-4 py-12 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/15">
-        <img src={appIconSrc} alt="" className="h-10 w-10" />
+      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10"
+        style={{ boxShadow: '0 0 20px rgba(212,168,83,0.12)' }}>
+        <img src={logoIcon} alt="" className="h-10 w-10 object-contain" />
       </div>
       <div>
         <h2 className="text-lg font-semibold text-foreground">茶掌柜 AI</h2>

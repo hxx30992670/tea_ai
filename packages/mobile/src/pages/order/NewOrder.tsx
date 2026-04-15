@@ -6,6 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Input } from '@/components/ui/input'
 import { useOrderDraftStore } from '@/store/order-draft'
+import { useAuthStore } from '@/store/auth'
+import { canUseMobileAiRecognize } from '@/lib/permissions'
 import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import { CustomerSelect } from './components/CustomerSelect'
 import { DraftItemList } from './components/DraftItemList'
@@ -18,6 +20,8 @@ import type { DraftItem } from '@/store/order-draft'
 
 export default function NewOrderPage() {
   const navigate = useNavigate()
+  const role = useAuthStore((state) => state.user?.role)
+  const allowAiRecognize = canUseMobileAiRecognize(role)
   const { draft, setMethod, setRemark, setPaidAmount, adjustPricesByPaidAmount, totalAmount } = useOrderDraftStore()
   const { submitting, error, submit } = useNewOrder()
   const { recognizing, progress, recognize } = useAiRecognize()
@@ -43,7 +47,7 @@ export default function NewOrderPage() {
         title="新建开单"
         back
         action={
-          recognizing ? (
+          !allowAiRecognize ? undefined : recognizing ? (
             <Button
               variant="ghost"
               size="sm"
@@ -247,7 +251,7 @@ export default function NewOrderPage() {
 
       {/* AI 识别录单 */}
       <AiInputSheet
-        open={showAiSheet}
+        open={allowAiRecognize && showAiSheet}
         onClose={() => setShowAiSheet(false)}
         onFile={async (file) => {
           const result = await recognize(file)

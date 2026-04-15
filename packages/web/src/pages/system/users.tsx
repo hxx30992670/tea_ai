@@ -5,26 +5,27 @@ import {
 } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
 import { systemApi } from '@/api/system'
-import type { SysUser } from '@/types'
+import type { RoleProfile, SysUser } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
-
+import dayjs from 'dayjs'
 const { Title, Text } = Typography
 
-const ROLE_OPTIONS = [
-  { value: 'admin', label: '管理员（全部权限）' },
-  { value: 'manager', label: '店长（业务操作）' },
-  { value: 'staff', label: '店员（录入+查看）' },
+const FALLBACK_ROLE_OPTIONS: RoleProfile[] = [
+  { code: 'admin', name: '老板', description: '系统最高权限，管理财务、AI 与系统设置' },
+  { code: 'manager', name: '店长/主管', description: '负责日常业务运营和进销存流程' },
+  { code: 'staff', name: '店员/销售', description: '负责扫码销售、库存查询和简单客户录入' },
 ]
 
 const ROLE_MAP: Record<string, { color: string; label: string }> = {
-  admin: { color: 'red', label: '管理员' },
-  manager: { color: 'blue', label: '店长' },
-  staff: { color: 'green', label: '店员' },
+  admin: { color: 'red', label: '老板' },
+  manager: { color: 'blue', label: '店长/主管' },
+  staff: { color: 'green', label: '店员/销售' },
 }
 
 export default function UsersPage() {
   const [list, setList] = useState<SysUser[]>([])
+  const [roleOptions, setRoleOptions] = useState<RoleProfile[]>(FALLBACK_ROLE_OPTIONS)
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
   const [editRecord, setEditRecord] = useState<SysUser | null>(null)
@@ -34,6 +35,7 @@ export default function UsersPage() {
     setLoading(true)
     const res = await systemApi.users()
     setList(res.list)
+    setRoleOptions(res.roleOptions?.length ? res.roleOptions : FALLBACK_ROLE_OPTIONS)
     setLoading(false)
   }
 
@@ -59,15 +61,18 @@ export default function UsersPage() {
   }
 
   const columns = [
-    { title: '账号', dataIndex: 'username', width: 120, render: (v: string) => <Text code>{v}</Text> },
-    { title: '姓名', dataIndex: 'realName', width: 100 },
+    { title: '账号', dataIndex: 'username', render: (v: string) => <Text code>{v}</Text> },
+    { title: '姓名', dataIndex: 'realName', },
     {
-      title: '角色', dataIndex: 'role', width: 90,
-      render: (v: string) => <Tag color={ROLE_MAP[v]?.color}>{ROLE_MAP[v]?.label}</Tag>,
+      title: '角色', dataIndex: 'role',
+      render: (_: string, r: SysUser) => {
+        const label = r.roleProfile?.name ?? ROLE_MAP[r.role]?.label ?? r.role
+        return <Tag color={ROLE_MAP[r.role]?.color}>{label}</Tag>
+      },
     },
-    { title: '手机号', dataIndex: 'phone', width: 130, render: (v?: string) => v || '-' },
+    { title: '手机号', dataIndex: 'phone', render: (v?: string) => v || '-' },
     {
-      title: '状态', dataIndex: 'status', width: 90,
+      title: '状态', dataIndex: 'status',
       render: (v: number, r: SysUser) => (
         <Switch
           checked={v === 1}
@@ -77,9 +82,9 @@ export default function UsersPage() {
         />
       ),
     },
-    { title: '创建时间', dataIndex: 'createdAt', width: 110 },
+    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
     {
-      title: '操作', width: 90, fixed: 'right' as const,
+      title: '操作', width: 140, fixed: 'right' as const,
       render: (_: unknown, r: SysUser) => (
         <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(r)}>编辑</Button>
       ),
@@ -123,7 +128,7 @@ export default function UsersPage() {
             <Input placeholder="手机号" />
           </Form.Item>
           <Form.Item name="role" label="角色" rules={[{ required: true }]}>
-            <Select options={ROLE_OPTIONS} />
+            <Select options={roleOptions.map((role) => ({ value: role.code, label: `${role.name}（${role.description}）` }))} />
           </Form.Item>
           <Form.Item name="status" label="状态">
             <Select options={[{ value: 1, label: '启用' }, { value: 0, label: '停用' }]} />

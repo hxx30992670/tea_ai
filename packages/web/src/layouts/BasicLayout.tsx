@@ -9,7 +9,7 @@ import logoIcon from '@/assets/images/logo-icon.png'
 import logoWithText from '@/assets/images/logo-400.png'
 import {
   Layout, Menu, Avatar, Dropdown, Space, Tag,
-  Typography, Button, theme,
+  Typography, Button, theme, Modal, Form, Input, message,
 } from 'antd'
 import {
   DashboardOutlined, ShopOutlined, InboxOutlined,
@@ -18,13 +18,22 @@ import {
   SettingOutlined, UserOutlined, LogoutOutlined,
   KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
 } from '@ant-design/icons'
+import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
+import { canShowWebMenuPath } from '@/lib/permissions'
 
 const { Sider, Header, Content } = Layout
 const { Text } = Typography
 
 /** 侧边栏菜单配置：定义所有导航项及子菜单 */
-const MENU_ITEMS = [
+type MenuConfigItem = {
+  key: string
+  icon?: React.ReactNode
+  label: string
+  children?: Array<{ key: string; label: string }>
+}
+
+const MENU_ITEMS: MenuConfigItem[] = [
   { key: '/', icon: <DashboardOutlined />, label: '数据看板' },
   { key: '/products', icon: <ShopOutlined />, label: '商品管理' },
   { key: '/stock', icon: <InboxOutlined />, label: '库存管理' },
@@ -60,24 +69,41 @@ interface BasicLayoutProps {
 
 /** 角色显示映射：不同角色展示不同的标签颜色 */
 const ROLE_MAP: Record<string, { label: string; color: string }> = {
-  admin: { label: '管理员', color: 'red' },
-  manager: { label: '店长', color: 'blue' },
-  staff: { label: '店员', color: 'green' },
+  admin: { label: '老板', color: 'red' },
+  manager: { label: '店长/主管', color: 'blue' },
+  staff: { label: '店员/销售', color: 'green' },
 }
 
 /** 基础布局组件：渲染侧边栏、顶部导航及内容区域 */
 export default function BasicLayout({ children }: BasicLayoutProps) {
   // 侧边栏折叠状态
   const [collapsed, setCollapsed] = useState(false)
+  const [passwordModalOpen, setPasswordModalOpen] = useState(false)
+  const [passwordSubmitting, setPasswordSubmitting] = useState(false)
   const location = useLocation()
   const navigate = useNavigate()
   const { user, logout } = useAuthStore()
   const { token } = theme.useToken()
+  const [passwordForm] = Form.useForm()
+  const filteredMenuItems = MENU_ITEMS.reduce<MenuConfigItem[]>((result, item) => {
+    if (!item.children) {
+      if (canShowWebMenuPath(user?.role, item.key)) {
+        result.push(item)
+      }
+      return result
+    }
+
+    const children = item.children.filter((child) => canShowWebMenuPath(user?.role, child.key))
+    if (children.length > 0) {
+      result.push({ ...item, children })
+    }
+    return result
+  }, [])
 
   // 当前选中菜单：根据路由路径自动高亮
   const selectedKeys = [location.pathname]
   // 自动展开包含当前路径的父菜单
-  const openKeys = MENU_ITEMS
+  const openKeys = filteredMenuItems
     .filter((item) => item.children?.some((c) => c.key === location.pathname))
     .map((item) => item.key)
 
@@ -96,10 +122,41 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
 
   const handleUserMenu = ({ key }: { key: string }) => {
     if (key === 'logout') handleLogout()
-    if (key === 'password') navigate('/system/settings?tab=password')
+    if (key === 'password') {
+      passwordForm.resetFields()
+      setPasswordModalOpen(true)
+    }
   }
 
-  const roleInfo = user?.role ? ROLE_MAP[user.role] : null
+  const handleChangePassword = async () => {
+    const values = await passwordForm.validateFields()
+    if (values.newPassword !== values.confirmPassword) {
+      message.error('两次输入密码不一致')
+      return
+    }
+
+    setPasswordSubmitting(true)
+    try {
+      await authApi.changePassword({
+        oldPassword: values.oldPassword,
+        newPassword: values.newPassword,
+      })
+      message.success('密码修改成功')
+      setPasswordModalOpen(false)
+      passwordForm.resetFields()
+    } catch {
+      // 请求异常由拦截器统一处理
+    } finally {
+      setPasswordSubmitting(false)
+    }
+  }
+
+  const roleInfo = user?.role
+    ? {
+        color: ROLE_MAP[user.role]?.color ?? 'default',
+        label: user.roleProfile?.name ?? ROLE_MAP[user.role]?.label ?? user.role,
+      }
+    : null
 
   return (
     <Layout style={{ minHeight: '100vh' }}>
@@ -139,7 +196,7 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
           mode="inline"
           selectedKeys={selectedKeys}
           defaultOpenKeys={openKeys}
-          items={MENU_ITEMS.map((item) => ({
+          items={filteredMenuItems.map((item) => ({
             ...item,
             label: item.children
               ? item.label
@@ -193,6 +250,32 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
           {children}
         </Content>
       </Layout>
+
+      <Modal
+        title="修改密码"
+        open={passwordModalOpen}
+        onOk={() => void handleChangePassword()}
+        onCancel={() => {
+          setPasswordModalOpen(false)
+          passwordForm.resetFields()
+        }}
+        okText="确认修改"
+        cancelText="取消"
+        confirmLoading={passwordSubmitting}
+        okButtonProps={{ style: { background: '#2D6A4F', borderColor: '#2D6A4F' } }}
+      >
+        <Form form={passwordForm} layout="vertical" style={{ marginTop: 16 }}>
+          <Form.Item name="oldPassword" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}>
+            <Input.Password placeholder="当前密码" />
+          </Form.Item>
+          <Form.Item name="newPassword" label="新密码" rules={[{ required: true, message: '请输入新密码' }, { min: 8, message: '至少8位' }]}>
+            <Input.Password placeholder="新密码（至少8位）" />
+          </Form.Item>
+          <Form.Item name="confirmPassword" label="确认新密码" rules={[{ required: true, message: '请再次输入新密码' }]}>
+            <Input.Password placeholder="再次输入新密码" />
+          </Form.Item>
+        </Form>
+      </Modal>
     </Layout>
   )
 }

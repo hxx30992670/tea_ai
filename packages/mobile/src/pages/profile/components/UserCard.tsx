@@ -3,9 +3,9 @@ import { Badge } from '@/components/ui/badge'
 import type { UserInfo } from '@/types'
 
 const ROLE_MAP: Record<string, { label: string; variant: 'default' | 'success' | 'warning' }> = {
-  admin: { label: '管理员', variant: 'default' },
-  manager: { label: '店长', variant: 'success' },
-  staff: { label: '店员', variant: 'warning' },
+  admin: { label: '老板', variant: 'default' },
+  manager: { label: '店长/主管', variant: 'success' },
+  staff: { label: '店员/销售', variant: 'warning' },
 }
 
 interface UserCardProps {
@@ -13,7 +13,10 @@ interface UserCardProps {
 }
 
 export function UserCard({ user }: UserCardProps) {
-  const role = ROLE_MAP[user.role] ?? { label: user.role, variant: 'default' as const }
+  const role = {
+    variant: ROLE_MAP[user.role]?.variant ?? ('default' as const),
+    label: user.roleProfile?.name ?? ROLE_MAP[user.role]?.label ?? user.role,
+  }
 
   return (
     <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-[#1a2744] to-[#0F1B2D] border border-border p-5">

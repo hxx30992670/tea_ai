@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { LogOut, Smartphone, Info, Shield, Phone } from 'lucide-react'
+import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { usePwaInstall } from '@/hooks/usePwaInstall'
 import { PageHeader } from '@/components/layout/PageHeader'
@@ -18,10 +19,34 @@ import { MenuList } from './components/MenuList'
 
 export default function ProfilePage() {
   const navigate = useNavigate()
-  const { user, logout } = useAuthStore()
+  const { user, logout, updateUser } = useAuthStore()
+  const userId = user?.id
   const { canInstall, isInstalled, platform, triggerInstall } = usePwaInstall()
   const [confirmLogout, setConfirmLogout] = useState(false)
   const [showIosGuide, setShowIosGuide] = useState(false)
+
+  useEffect(() => {
+    if (!userId) return
+
+    let cancelled = false
+
+    const loadProfile = async () => {
+      try {
+        const res = await authApi.profile()
+        if (!cancelled) {
+          updateUser(res.data)
+        }
+      } catch {
+        // 资料接口失败时保留本地登录态，避免影响“我的”页展示
+      }
+    }
+
+    void loadProfile()
+
+    return () => {
+      cancelled = true
+    }
+  }, [userId, updateUser])
 
   const handleLogout = () => {
     logout()
@@ -52,12 +77,12 @@ export default function ProfilePage() {
         {
           icon: <Phone size={18} />,
           label: '手机号',
-          value: user.phone || '未绑定',
+          value: user.phone || '未设置',
         },
         {
           icon: <Shield size={18} />,
           label: '账号角色',
-          value: { admin: '管理员', manager: '店长', staff: '店员' }[user.role] ?? user.role,
+          value: user.roleProfile?.name ?? { admin: '老板', manager: '店长/主管', staff: '店员/销售' }[user.role] ?? user.role,
         },
       ],
     },

@@ -1,5 +1,5 @@
 import request from './index'
-import type { ApiResponse, PageResult, SysUser, OperationLog } from '@/types'
+import type { ApiResponse, PageResult, SysUser, OperationLog, RoleProfile } from '@/types'
 
 export interface SystemSettings {
   shopName?: string
@@ -18,9 +18,13 @@ export interface UpdateAiSettingsPayload {
   aiPromptServiceUrl: string
 }
 
+export interface UsersResponse extends PageResult<SysUser> {
+  roleOptions?: RoleProfile[]
+}
+
 export const systemApi = {
-  users: async (params?: Record<string, unknown>): Promise<{ list: SysUser[]; total: number }> => {
-    const res = await request.get<never, ApiResponse<PageResult<SysUser>>>('/system/users', { params })
+  users: async (params?: Record<string, unknown>): Promise<UsersResponse> => {
+    const res = await request.get<never, ApiResponse<UsersResponse>>('/system/users', { params })
     return res.data
   },
 
