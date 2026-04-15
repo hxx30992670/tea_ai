@@ -18,9 +18,9 @@ import {
   SettingOutlined, UserOutlined, LogoutOutlined,
   KeyOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
 } from '@ant-design/icons'
-import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
 import { canShowWebMenuPath } from '@/lib/permissions'
+import { DEMO_UNSUPPORTED_MESSAGE } from '@/constants/demo'
 
 const { Sider, Header, Content } = Layout
 const { Text } = Typography
@@ -129,26 +129,7 @@ export default function BasicLayout({ children }: BasicLayoutProps) {
   }
 
   const handleChangePassword = async () => {
-    const values = await passwordForm.validateFields()
-    if (values.newPassword !== values.confirmPassword) {
-      message.error('两次输入密码不一致')
-      return
-    }
-
-    setPasswordSubmitting(true)
-    try {
-      await authApi.changePassword({
-        oldPassword: values.oldPassword,
-        newPassword: values.newPassword,
-      })
-      message.success('密码修改成功')
-      setPasswordModalOpen(false)
-      passwordForm.resetFields()
-    } catch {
-      // 请求异常由拦截器统一处理
-    } finally {
-      setPasswordSubmitting(false)
-    }
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const roleInfo = user?.role

@@ -35,7 +35,7 @@ import {
   SwapOutlined,
 } from '@ant-design/icons'
 import { saleOrderApi } from '@/api/sale'
-import { systemApi } from '@/api/system'
+import { DEMO_SHOP_NAME } from '@/constants/demo'
 import { aiApi } from '@/api/ai'
 import { SALE_ORDER_STATUS } from '@/constants/order'
 import { customerApi } from '@/api/customers'
@@ -274,7 +274,7 @@ export default function SalePage() {
   const [collectTarget, setCollectTarget] = useState<{ id: number; orderNo: string; outstanding: number } | null>(null)
   const [printOpen, setPrintOpen] = useState(false)
   const [printOrder, setPrintOrder] = useState<SaleOrder | null>(null)
-  const [shopName, setShopName] = useState<string | undefined>(undefined)
+  const [shopName] = useState<string | undefined>(DEMO_SHOP_NAME)
   const [form] = Form.useForm()
   const [saleFormInitialValues, setSaleFormInitialValues] = useState<{
     customerId?: number
@@ -344,14 +344,12 @@ export default function SalePage() {
   }
 
   const loadMeta = async () => {
-    const [custRes, prodRes, settingsRes] = await Promise.all([
+    const [custRes, prodRes] = await Promise.all([
       customerApi.list(),
       productApi.list({ pageSize: 100 }),
-      systemApi.getSettings(),
     ])
     setCustomers(custRes.list)
     setProducts(prodRes.list)
-    setShopName(settingsRes.shopName)
   }
 
   const handleOpenPrint = async (r: SaleOrder) => {

@@ -1,15 +1,16 @@
 import React, { useEffect, useState } from 'react'
 import {
   Table, Button, Space, Tag, Card, Modal, Form, Input, Select,
-  Switch, Popconfirm, Typography, Badge,
+  Switch, Typography, message,
 } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
 import { systemApi } from '@/api/system'
 import type { RoleProfile, SysUser } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
+import { DEMO_UNSUPPORTED_MESSAGE } from '@/constants/demo'
 import '@/styles/page.less'
 import dayjs from 'dayjs'
-const { Title, Text } = Typography
+const { Text } = Typography
 
 const FALLBACK_ROLE_OPTIONS: RoleProfile[] = [
   { code: 'admin', name: '老板', description: '系统最高权限，管理财务、AI 与系统设置' },
@@ -48,16 +49,14 @@ export default function UsersPage() {
   }
 
   const handleSubmit = async () => {
-    const values = await form.validateFields()
-    if (editRecord) await systemApi.updateUser(editRecord.id, values)
-    else await systemApi.createUser(values)
-    setModalOpen(false)
-    loadData()
+    await form.validateFields()
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const toggleStatus = async (id: number, checked: boolean) => {
-    await systemApi.toggleStatus(id, checked ? 1 : 0)
-    loadData()
+    void id
+    void checked
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const columns = [

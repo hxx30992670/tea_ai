@@ -6,10 +6,10 @@ import {
 import { PlusOutlined, PhoneOutlined, EnvironmentOutlined, ClockCircleOutlined, FileTextOutlined } from '@ant-design/icons'
 import { customerApi, type FollowUp } from '@/api/customers'
 import { saleOrderApi } from '@/api/sale'
-import { systemApi } from '@/api/system'
 import CustomerStatement from '@/components/CustomerStatement'
 import { CustomerFormModal } from './components/CustomerFormModal'
 import type { Customer, SaleOrder } from '@/types'
+import { DEMO_SHOP_NAME } from '@/constants/demo'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
@@ -64,7 +64,7 @@ export default function CustomersPage() {
   const [statementOpen, setStatementOpen] = useState(false)
   const [statementCustomer, setStatementCustomer] = useState<Customer | null>(null)
   const [statementOrders, setStatementOrders] = useState<SaleOrder[]>([])
-  const [shopName, setShopName] = useState<string | undefined>(undefined)
+  const [shopName] = useState<string | undefined>(DEMO_SHOP_NAME)
   const [followUpForm] = Form.useForm()
 
   const loadData = async () => {
@@ -76,7 +76,6 @@ export default function CustomersPage() {
 
   useEffect(() => {
     loadData()
-    systemApi.getSettings().then(s => setShopName(s.shopName)).catch(() => { })
   }, [])
 
   const handleOpenStatement = async (customer: Customer) => {

@@ -7,7 +7,6 @@ import {
 import type { AiMessage, AiVisualizationSpec } from '@/types'
 import { useAuthStore } from '@/store/auth'
 import { aiApi, type AiSuggestion, type AiSession, type AiAttachment } from '@/api/ai'
-import { systemApi } from '@/api/system'
 import { detectVisualization } from '@/components/AiVisualization'
 import PageHeader from '@/components/page/PageHeader'
 import '@/styles/page.less'
@@ -67,6 +66,11 @@ function getRuntimeAlertTitle(code?: AiCapabilityCode) {
   return 'AI 已配置，但当前能力校验未通过'
 }
 
+function inferAiConfigured(enabled: boolean, reason: string) {
+  if (enabled) return true
+  return !/未配置|请在系统设置中配置|请前往 系统设置/.test(reason)
+}
+
 export default function AiPage() {
   const [messages, setMessages] = useState<AiMessage[]>([WELCOME_MSG])
   const [suggestions, setSuggestions] = useState<AiSuggestion[]>([])
@@ -108,12 +112,11 @@ export default function AiPage() {
     if (!isAdmin) return
     void (async () => {
       try {
-        const [sessionRes, suggestionRes, settingsRes] = await Promise.all([
+        const [sessionRes, suggestionRes] = await Promise.all([
           aiApi.sessions(),
           aiApi.suggestions(),
-          systemApi.getSettings(),
         ])
-        setAiConfigured(Boolean(settingsRes.aiConfigured))
+        setAiConfigured(inferAiConfigured(suggestionRes.enabled, suggestionRes.reason))
         setAiEnabled(suggestionRes.enabled)
         setAiCode(suggestionRes.code)
         setAiReason(suggestionRes.reason)

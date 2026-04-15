@@ -8,11 +8,10 @@ import {
   ShopOutlined, RobotOutlined, KeyOutlined,
   CheckCircleOutlined, LockOutlined, ApiOutlined,
 } from '@ant-design/icons'
-import { systemApi } from '@/api/system'
-import type { SystemSettings, UpdateAiSettingsPayload } from '@/api/system'
-import { authApi } from '@/api/auth'
+import type { SystemSettings } from '@/api/system'
 import { useAuthStore } from '@/store/auth'
 import PageHeader from '@/components/page/PageHeader'
+import { DEMO_SHOP_NAME, DEMO_UNSUPPORTED_MESSAGE } from '@/constants/demo'
 import '@/styles/page.less'
 
 const serviceQrcode = new URL('@/assets/images/service_qcode.JPG', import.meta.url).href
@@ -70,8 +69,12 @@ export default function SettingsPage() {
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin'
 
-  const loadSettings = async () => {
-    const data = await systemApi.getSettings()
+  const loadSettings = () => {
+    const data: SystemSettings = {
+      shopName: DEMO_SHOP_NAME,
+      aiConfigured: false,
+      ...getDefaultAiFields(),
+    }
     setSettings(data)
     shopForm.setFieldsValue(data)
 
@@ -95,9 +98,9 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (isAdmin) {
-      void loadSettings()
+      loadSettings()
     }
-  }, [])
+  }, [isAdmin, aiForm, shopForm])
 
   const handleProviderChange = (provider: string) => {
     setCurrentProvider(provider)
@@ -113,91 +116,19 @@ export default function SettingsPage() {
   }
 
   const handleSaveShop = async () => {
-    setShopLoading(true)
-    try {
-      await systemApi.updateSettings(shopForm.getFieldsValue())
-      message.success('店铺信息已保存')
-    } catch { /* interceptor 处理 */ } finally {
-      setShopLoading(false)
-    }
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const handleSaveAi = async () => {
-    try {
-      await aiForm.validateFields(['aiApiKey', 'aiPromptServiceUrl', 'aiProvider', 'aiModelApiKey', 'aiModelName', 'aiModelBaseUrl'])
-    } catch {
-      return
-    }
-    setAiLoading(true)
-    try {
-      const values = aiForm.getFieldsValue() as UpdateAiSettingsPayload
-      await systemApi.updateSettings(values)
-      message.success('AI 配置已保存')
-      await loadSettings()
-    } catch { /* interceptor 处理 */ } finally {
-      setAiLoading(false)
-    }
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const handleTestAi = async () => {
-    const values = aiForm.getFieldsValue() as {
-      aiApiKey: string
-      aiPromptServiceUrl: string
-      aiProvider: string
-      aiModelApiKey: string
-      aiModelName: string
-      aiModelBaseUrl: string
-    }
-    if (!values.aiApiKey || !values.aiPromptServiceUrl || !values.aiProvider || !values.aiModelApiKey || !values.aiModelName || !values.aiModelBaseUrl) {
-      message.warning('请先填写 AI 授权 Key、Agent 服务地址、提供商、模型 API Key、模型名称和 Base URL')
-      return
-    }
-
-    setTestStatus('testing')
-    setTestMsg('')
-    setTestChecks([])
-    try {
-      const result = await systemApi.testAi({
-        apiKey: values.aiApiKey,
-        promptServiceUrl: values.aiPromptServiceUrl,
-        provider: values.aiProvider,
-        modelApiKey: values.aiModelApiKey,
-        modelName: values.aiModelName,
-        modelBaseUrl: values.aiModelBaseUrl,
-      })
-      setTestChecks(result.checks)
-      if (result.ok) {
-        setTestStatus('success')
-        setTestMsg(result.message)
-        message.success(result.message)
-      } else {
-        setTestStatus('fail')
-        setTestMsg(result.message)
-        message.error(result.message)
-      }
-    } catch (e) {
-      const errMsg = e instanceof Error ? e.message : '测试请求失败'
-      setTestStatus('fail')
-      setTestMsg(errMsg)
-      setTestChecks([])
-      message.error(errMsg)
-    }
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const handleChangePwd = async () => {
-    const values = await pwdForm.validateFields()
-    if (values.newPassword !== values.confirmPassword) {
-      message.error('两次输入密码不一致')
-      return
-    }
-    setPwdLoading(true)
-    try {
-      await authApi.changePassword({ oldPassword: values.oldPassword, newPassword: values.newPassword })
-      message.success('密码修改成功')
-      pwdForm.resetFields()
-    } catch { /* interceptor 处理 */ } finally {
-      setPwdLoading(false)
-    }
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
   }
 
   const testTagColor = testStatus === 'success' ? 'success' : testStatus === 'fail' ? 'error' : testStatus === 'testing' ? 'processing' : 'default'
@@ -210,6 +141,13 @@ export default function SettingsPage() {
       label: <Space><ShopOutlined />店铺信息</Space>,
       children: (
         <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', maxWidth: 520 }}>
+          <Alert
+            type="info"
+            showIcon
+            message="当前为 Demo 环境"
+            description="店铺信息、AI 配置和密码修改在 demo 版中均已禁用，不会调用后端设置接口。"
+            style={{ marginBottom: 16 }}
+          />
           <Form form={shopForm} layout="vertical">
             <Form.Item name="shopName" label="店铺名称" rules={[{ required: true }]}>
               <Input placeholder="如：茶掌柜示范门店" />
@@ -372,7 +310,7 @@ export default function SettingsPage() {
                     setTestStatus('idle')
                     setTestMsg('')
                     setTestChecks([])
-                    void loadSettings()
+                    loadSettings()
                   }}
                 >
                   取消重配
