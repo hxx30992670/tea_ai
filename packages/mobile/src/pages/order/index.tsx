@@ -52,7 +52,7 @@ export default function OrderListPage() {
   }
 
   return (
-    <div className="flex min-h-full flex-col bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       <PageHeader
         title="开单"
         subtitle={`共 ${orders.length} 条记录`}
@@ -63,7 +63,7 @@ export default function OrderListPage() {
         }
       />
 
-      <div className="flex-1 p-4">
+      <div className="flex-1 overflow-y-auto p-4">
         {/* 草稿提示 */}
         <div className="space-y-3">
           {hasDraft && (

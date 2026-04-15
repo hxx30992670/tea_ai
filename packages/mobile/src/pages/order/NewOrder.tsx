@@ -42,7 +42,7 @@ export default function NewOrderPage() {
   }, [total, autoPayment, setPaidAmount])
 
   return (
-    <div className="min-h-full bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       <PageHeader
         title="新建开单"
         back
@@ -71,6 +71,7 @@ export default function NewOrderPage() {
       />
 
       {/* 表单区域（底部留出 OrderSummaryBar 高度） */}
+      <div className="flex-1 overflow-y-auto">
       <div className="space-y-4 p-4 pb-32">
         {/* 客户选择 */}
         <section>
@@ -247,6 +248,7 @@ export default function NewOrderPage() {
         {error && (
           <p className="text-sm text-red-400 text-center">{error}</p>
         )}
+      </div>
       </div>
 
       {/* AI 识别录单 */}
