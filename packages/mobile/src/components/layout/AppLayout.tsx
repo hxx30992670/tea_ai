@@ -6,23 +6,22 @@ import { BottomNav } from './BottomNav'
 import { InstallPrompt } from '@/components/shared/InstallPrompt'
 
 // iOS PWA 键盘收起后 dvh 不刷新的 workaround：
-// navigator.standalone 只在 iOS 添加到主屏幕后为 true，微信内置浏览器永远是 false，
-// 因此可以安全地只在 PWA 里使用 visualViewport 高度修正。
+// - navigator.standalone 只在 iOS 添加到主屏幕后为 true，微信内置浏览器永远是 false
+// - viewport meta 已设置 interactive-widget=resizes-content，键盘弹出时 window 本身会 resize
+// - 因此监听 window.resize 并读取 window.innerHeight，可拿到键盘动画完成后的稳定高度
+// - 避免使用 visualViewport.resize，它会在键盘动画过程中不断触发中间值，导致高度异常
 function useIOSPwaHeightFix() {
   useEffect(() => {
     const isIOSPWA = !!(window.navigator as Navigator & { standalone?: boolean }).standalone
     if (!isIOSPWA) return
 
-    const vv = window.visualViewport
-    if (!vv) return
-
     const update = () => {
-      document.documentElement.style.setProperty('--app-height', `${vv.height}px`)
+      document.documentElement.style.setProperty('--app-height', `${window.innerHeight}px`)
     }
 
     update()
-    vv.addEventListener('resize', update)
-    return () => vv.removeEventListener('resize', update)
+    window.addEventListener('resize', update)
+    return () => window.removeEventListener('resize', update)
   }, [])
 }
 
