@@ -20,9 +20,9 @@ export default function DashboardPage() {
   })()
 
   return (
-    <div className="min-h-full bg-background">
+    <div className="flex h-full flex-col overflow-hidden bg-background">
       {/* 渐变头部 */}
-      <div className="relative overflow-hidden bg-gradient-to-br from-[#0F1B2D] to-background px-4 pt-safe pb-5">
+      <div className="shrink-0 relative overflow-hidden bg-gradient-to-br from-[#0F1B2D] to-background px-4 pt-safe pb-5">
         <div className="pointer-events-none absolute -top-10 -right-10 h-40 w-40 rounded-full bg-primary/10 blur-2xl" />
 
         <div className="mt-3 flex items-start justify-between">
@@ -46,7 +46,7 @@ export default function DashboardPage() {
       </div>
 
       {/* 内容区 */}
-      <div className="space-y-4 p-4">
+      <div className="flex-1 overflow-y-auto space-y-4 p-4">
         <OverviewCards data={data.overview} loading={loading} />
         <SalesTrendChart data={data.trend} loading={loading} />
         <StockWarningList warnings={data.warnings} />

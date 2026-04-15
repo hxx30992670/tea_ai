@@ -99,10 +99,10 @@ export default function ScanPage() {
   };
 
   return (
-    <div className='flex min-h-full flex-col bg-background'>
+    <div className='flex h-full flex-col overflow-hidden bg-background'>
       <PageHeader title='扫码' subtitle='扫商品条码快速入库/出库' />
 
-      <div className='flex-1 space-y-4 p-4'>
+      <div className='flex-1 overflow-y-auto space-y-4 p-4'>
         {/* 扫码区 */}
         <ScannerView
           containerId={scanner.scannerContainerId}
@@ -129,7 +129,7 @@ export default function ScanPage() {
       </div>
 
       {/* 手动输入兜底 */}
-      <div className='border-t bg-background px-4 py-3'>
+      <div className='shrink-0 border-t bg-background px-4 py-3'>
         <ManualInput onSearch={handleManualSearch} loading={searching} />
       </div>
 
