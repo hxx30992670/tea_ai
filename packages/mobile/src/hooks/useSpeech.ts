@@ -4,10 +4,11 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const XF_RTASR_URL = 'wss://rtasr.xfyun.cn/v1/ws'
 const PCM_SAMPLE_RATE = 16000
 const PCM_FRAME_SIZE = 1280
+const PRE_SPEECH_BUFFER_BYTES = 19200
 const MIN_SPEECH_RMS = 0.02
 const MAX_SPEECH_ZCR = 0.2
 const MIN_SPEECH_FRAMES = 3
-const AUTO_STOP_SILENCE_MS = 1600
+const AUTO_STOP_SILENCE_MS = 2600
 
 export interface SpeechConfig {
   appId: string
@@ -95,6 +96,15 @@ function concatUint8Arrays(left: Uint8Array, right: Uint8Array) {
   return merged
 }
 
+function appendWithByteLimit(buffer: Uint8Array, chunk: Uint8Array, limit: number) {
+  const merged = concatUint8Arrays(buffer, chunk)
+  if (merged.length <= limit) {
+    return merged
+  }
+
+  return merged.slice(merged.length - limit)
+}
+
 function calculateRms(input: Float32Array) {
   let sum = 0
   for (let i = 0; i < input.length; i += 1) {
@@ -138,9 +148,10 @@ function extractRecognitionText(payload: string) {
   }
 
   const result = JSON.parse(message.data) as {
+    seg_id?: number
     cn?: {
       st?: {
-        type?: number
+        type?: number | string
         rt?: Array<{
           ws?: Array<{
             cw?: Array<{ w?: string; rl?: number }>
@@ -156,7 +167,9 @@ function extractRecognitionText(payload: string) {
     .map((cw) => cw.w ?? '')
     .join('') ?? ''
 
-  return result.cn?.st?.type === 0
+  const resultType = String(result.cn?.st?.type ?? '')
+
+  return resultType === '0'
     ? { finalText: text, partialText: '' }
     : { finalText: '', partialText: text }
 }
@@ -173,12 +186,23 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
   const processorNodeRef = useRef<ScriptProcessorNode | null>(null)
   const silentGainRef = useRef<GainNode | null>(null)
   const pcmBufferRef = useRef<Uint8Array>(new Uint8Array())
+  const preSpeechPcmBufferRef = useRef<Uint8Array>(new Uint8Array())
   const isStoppingRef = useRef(false)
+  const finalizedTextRef = useRef('')
   const latestPartialRef = useRef('')
   const speechDetectedRef = useRef(false)
   const voicedFramesRef = useRef(0)
   const lastSpeechAtRef = useRef(0)
   const autoStoppingRef = useRef(false)
+
+  const resetRecognitionState = useCallback(() => {
+    finalizedTextRef.current = ''
+    latestPartialRef.current = ''
+    speechDetectedRef.current = false
+    voicedFramesRef.current = 0
+    lastSpeechAtRef.current = 0
+    autoStoppingRef.current = false
+  }, [])
 
   const clearAudioResources = useCallback(async () => {
     processorNodeRef.current?.disconnect()
@@ -200,10 +224,31 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     mediaStreamRef.current = null
     audioContextRef.current = null
     pcmBufferRef.current = new Uint8Array()
-    speechDetectedRef.current = false
-    voicedFramesRef.current = 0
-    lastSpeechAtRef.current = 0
-    autoStoppingRef.current = false
+    preSpeechPcmBufferRef.current = new Uint8Array()
+  }, [])
+
+  const mergeTranscript = useCallback((committed: string, incoming: string, partial = '') => {
+    if (!incoming) {
+      return committed
+    }
+
+    if (!committed) {
+      return incoming
+    }
+
+    if (partial && incoming.startsWith(partial) && committed.endsWith(partial)) {
+      return `${committed.slice(0, -partial.length)}${incoming}`
+    }
+
+    if (incoming.startsWith(committed)) {
+      return incoming
+    }
+
+    if (committed.endsWith(incoming)) {
+      return committed
+    }
+
+    return `${committed}${incoming}`
   }, [])
 
   const flushAudioFrames = useCallback(() => {
@@ -222,9 +267,10 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     isStoppingRef.current = true
     setSupportInfo('正在结束录音...')
 
-    const partialText = latestPartialRef.current.trim()
-    if (partialText) {
-      onStopCapture?.(partialText)
+    const combinedText = mergeTranscript(finalizedTextRef.current, latestPartialRef.current.trim(), latestPartialRef.current)
+    if (combinedText) {
+      onStopCapture?.(combinedText)
+      finalizedTextRef.current = combinedText
       latestPartialRef.current = ''
       onPartialResult?.('')
     }
@@ -245,7 +291,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       setIsListening(false)
       setSupportInfo(null)
     }
-  }, [clearAudioResources, flushAudioFrames, onPartialResult, onStopCapture])
+  }, [clearAudioResources, flushAudioFrames, mergeTranscript, onPartialResult, onStopCapture])
 
   const startRecorder = useCallback(async () => {
     const AudioContextClass = getAudioContextCtor()
@@ -271,18 +317,30 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       const inputData = event.inputBuffer.getChannelData(0)
       const now = Date.now()
       const speechFrame = isSpeechFrame(inputData)
+      const pcmData = floatTo16BitPCM(downsampleBuffer(inputData, audioContext.sampleRate, PCM_SAMPLE_RATE))
 
       if (!speechDetectedRef.current) {
+        preSpeechPcmBufferRef.current = appendWithByteLimit(
+          preSpeechPcmBufferRef.current,
+          pcmData,
+          PRE_SPEECH_BUFFER_BYTES,
+        )
+
         if (speechFrame) {
           voicedFramesRef.current += 1
           if (voicedFramesRef.current >= MIN_SPEECH_FRAMES) {
             speechDetectedRef.current = true
             lastSpeechAtRef.current = now
             setSupportInfo('检测到说话，正在识别...')
+            pcmBufferRef.current = concatUint8Arrays(pcmBufferRef.current, preSpeechPcmBufferRef.current)
+            preSpeechPcmBufferRef.current = new Uint8Array()
+            flushAudioFrames()
           }
         } else {
           voicedFramesRef.current = 0
         }
+
+        return
       } else if (speechFrame) {
         lastSpeechAtRef.current = now
       } else if (!autoStoppingRef.current && now - lastSpeechAtRef.current >= AUTO_STOP_SILENCE_MS) {
@@ -292,11 +350,6 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
         return
       }
 
-      if (!speechDetectedRef.current) {
-        return
-      }
-
-      const pcmData = floatTo16BitPCM(downsampleBuffer(inputData, audioContext.sampleRate, PCM_SAMPLE_RATE))
       pcmBufferRef.current = concatUint8Arrays(pcmBufferRef.current, pcmData)
       flushAudioFrames()
     }
@@ -328,6 +381,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     }
 
     isStoppingRef.current = false
+    resetRecognitionState()
     setSupportInfo('正在连接讯飞语音服务...')
 
     const ws = new WebSocket(buildWebSocketUrl(speechConfig))
@@ -349,13 +403,15 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       try {
         const { finalText, partialText } = extractRecognitionText(String(event.data))
         if (partialText) {
-          latestPartialRef.current = partialText
-          setSupportInfo(`识别中：${partialText}`)
-          onPartialResult?.(partialText)
+          latestPartialRef.current = mergeTranscript(latestPartialRef.current, partialText)
+          const combinedText = mergeTranscript(finalizedTextRef.current, latestPartialRef.current)
+          setSupportInfo(`识别中：${latestPartialRef.current}`)
+          onPartialResult?.(combinedText)
         }
         if (finalText) {
+          finalizedTextRef.current = mergeTranscript(finalizedTextRef.current, finalText, latestPartialRef.current)
           latestPartialRef.current = ''
-          onResult(finalText)
+          onResult(finalizedTextRef.current)
           setSupportInfo('继续说话中，说完后点击红色按钮停止')
           onPartialResult?.('')
         }
@@ -375,12 +431,13 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       wsRef.current = null
       setIsListening(false)
       setSupportInfo(null)
+      resetRecognitionState()
 
       if (!isStoppingRef.current) {
         onError?.('讯飞语音连接已中断，请重试')
       }
     }
-  }, [clearAudioResources, isListening, onError, onPartialResult, onResult, speechConfig, startRecorder])
+  }, [clearAudioResources, isListening, mergeTranscript, onError, onPartialResult, onResult, resetRecognitionState, speechConfig, startRecorder])
 
   const toggle = useCallback(() => {
     if (isListening) {
@@ -413,8 +470,9 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       void clearAudioResources()
       wsRef.current?.close()
       wsRef.current = null
+      resetRecognitionState()
     }
-  }, [clearAudioResources])
+  }, [clearAudioResources, resetRecognitionState])
 
   return { isListening, isSupported, supportInfo, start, stop, toggle }
 }
