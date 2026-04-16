@@ -1,0 +1,39 @@
+name: Sync to Gitee
+
+on:
+  push:
+    branches:
+      - '**'
+    tags:
+      - '**'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mirror to Gitee
+        env:
+          GITEE_USERNAME: ${{ secrets.GITEE_USERNAME }}
+          GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+          GITEE_NAMESPACE: ${{ secrets.GITEE_NAMESPACE }}
+          GITEE_REPO: ${{ secrets.GITEE_REPO }}
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          GITEE_URL="https://${GITEE_USERNAME}:${GITEE_TOKEN}@gitee.com/${GITEE_NAMESPACE}/${GITEE_REPO}.git"
+
+          if git remote get-url gitee >/dev/null 2>&1; then
+            git remote set-url gitee "$GITEE_URL"
+          else
+            git remote add gitee "$GITEE_URL"
+          fi
+
+          git push gitee --force --all
+          git push gitee --force --tags
