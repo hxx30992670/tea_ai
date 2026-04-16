@@ -1,6 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { AI_BINDING_ERROR_CODES, AI_CAPABILITY_CODES, AI_KEY_INVALID_CODES, type AiCapabilityCode } from '@shared/constants'
 import {
+  buildRecognizeProductCatalog,
+  collectRecognizedCustomerNames,
+  normalizePriceToProductBaseUnit,
+  normalizeRecognizedAmount,
+  parsePossibleCustomerName,
+  pickBestRecognizedProduct,
+} from '@shared/ai/recognize-sale-order'
+import {
   Button,
   Card,
   Col,
@@ -83,127 +91,8 @@ const STATUS_MAP: Record<string, { label: string; color: string; step: number }>
 
 type RecognizedSaleItem = AiRecognizedSaleOrder['items'][number]
 
-/** 将 AI 识别结果映射为表单所需的商品行 */
-function normalizeRecognizedAmount(item: RecognizedSaleItem) {
-  const rawLineText = item.lineText ?? ''
-  const normalizedLineText = rawLineText.replace(/\s+/g, '')
-
-  if (normalizedLineText.includes('一斤半')) {
-    return { quantity: 1.5, quantityUnit: '斤' }
-  }
-
-  if (normalizedLineText.includes('半斤')) {
-    return { quantity: 0.5, quantityUnit: '斤' }
-  }
-
-  if (normalizedLineText.includes('半两')) {
-    return { quantity: 0.5, quantityUnit: '两' }
-  }
-
-  return {
-    quantity: item.quantity ?? undefined,
-    quantityUnit: item.quantityUnit ?? '',
-  }
-}
-
-function isUnitMatched(qUnit: string, product?: Product) {
-  if (!qUnit || !product) return true
-  const pkgUnit = product.packageUnit ?? ''
-  const baseUnit = product.unit ?? ''
-  return qUnit === pkgUnit
-    || qUnit === baseUnit
-    || (pkgUnit ? qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit) : false)
-    || (baseUnit ? qUnit.includes(baseUnit) || baseUnit.includes(qUnit) : false)
-}
-
-function normalizePriceToProductBaseUnit(unitPrice: number, qUnit: string, product?: Product) {
-  if (!product) return unitPrice
-  const pkgUnit = product.packageUnit ?? ''
-  const pkgSize = product.packageSize ?? 0
-  const recognizedAsPackage = qUnit && pkgUnit && (qUnit === pkgUnit || qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit))
-  if (recognizedAsPackage && pkgSize > 0) {
-    return Number((unitPrice / pkgSize).toFixed(2))
-  }
-  return unitPrice
-}
-
-function pickBestProduct(
-  item: RecognizedSaleItem,
-  products: Product[],
-  productMap: Map<number, Product>,
-  quantity: number | undefined,
-  quantityUnit: string,
-) {
-  const name = (item.productName ?? '').trim()
-  const lineText = (item.lineText ?? '').replace(/\s+/g, '')
-  const byId = item.productId != null ? productMap.get(item.productId) : undefined
-  const byName = name
-    ? products.filter((p) => name.includes(p.name) || p.name.includes(name))
-    : []
-
-  const candidateMap = new Map<number, Product>()
-  if (byId) candidateMap.set(byId.id, byId)
-  byName.forEach((p) => candidateMap.set(p.id, p))
-  const candidates = [...candidateMap.values()]
-  if (candidates.length === 0) return undefined
-
-  const unitCandidates = quantityUnit ? candidates.filter((p) => isUnitMatched(quantityUnit, p)) : candidates
-  const pool = unitCandidates.length > 0 ? unitCandidates : candidates
-
-  const rawUnitPrice = item.subtotal != null && quantity != null && quantity > 0
-    ? Number((item.subtotal / quantity).toFixed(2))
-    : (item.unitPrice ?? undefined)
-
-  const score = (product: Product) => {
-    let total = 0
-    if (byId?.id === product.id) total += 5
-    if (name && name === product.name) total += 4
-    else if (name && (name.includes(product.name) || product.name.includes(name))) total += 2
-    if (quantityUnit && isUnitMatched(quantityUnit, product)) total += 4
-    if (product.year != null && lineText.includes(String(product.year))) total += 4
-    if (product.teaType && lineText.includes(product.teaType)) total += 2
-
-    if (rawUnitPrice != null && product.sellPrice > 0) {
-      const normalized = normalizePriceToProductBaseUnit(rawUnitPrice, quantityUnit, product)
-      const ratioDiff = Math.abs(normalized - product.sellPrice) / product.sellPrice
-      if (ratioDiff <= 0.05) total += 8
-      else if (ratioDiff <= 0.2) total += 6
-      else if (ratioDiff <= 0.5) total += 3
-      else if (ratioDiff <= 1) total += 1
-      else total -= 3
-    }
-
-    return total
-  }
-
-  return pool
-    .slice()
-    .sort((a, b) => score(b) - score(a) || a.id - b.id)[0]
-}
-
-function parsePossibleCustomerName(lineText?: string | null) {
-  const text = (lineText ?? '').trim()
-  if (!text) return undefined
-  const firstCell = text.split(/[\s,，\t|/\\]+/).find(Boolean)
-  if (!firstCell) return undefined
-  const candidate = firstCell.replace(/[:：]/g, '').trim()
-  if (!candidate) return undefined
-  if (/^(姓名|客户|联系人|产品|商品|价格|单价|数量|小计)$/i.test(candidate)) return undefined
-  if (/\d/.test(candidate) || candidate.length < 2 || candidate.length > 8) return undefined
-  return candidate
-}
-
 function resolveRecognizedCustomerId(recognized: AiRecognizedSaleOrder, customers: Customer[]) {
-  const names: string[] = []
-  if (recognized.customerName) names.push(recognized.customerName)
-  for (const item of recognized.items) {
-    if (item.customerName) names.push(item.customerName)
-    const parsed = parsePossibleCustomerName(item.lineText)
-    if (parsed) names.push(parsed)
-  }
-
-  const uniqueNames = [...new Set(names.map((name) => name.trim()).filter(Boolean))]
-  for (const name of uniqueNames) {
+  for (const name of collectRecognizedCustomerNames(recognized)) {
     const matched = matchCustomerByRecognizedName(name, customers)
     if (matched) return matched.id
   }
@@ -219,7 +108,7 @@ function mapRecognizedItems(
     const normalizedAmount = normalizeRecognizedAmount(item)
     const qUnit = normalizedAmount.quantityUnit
     const qty = normalizedAmount.quantity
-    const matched = pickBestProduct(item, products, productMap, qty, qUnit)
+    const matched = pickBestRecognizedProduct(item, products, productMap, qty, qUnit)
 
     const pkgUnit = matched?.packageUnit ?? ''
     const baseUnit = matched?.unit ?? ''
@@ -370,17 +259,7 @@ export default function SalePage() {
   }
 
   /** 构建发给 AI 的商品目录 */
-  const buildProductCatalog = () =>
-    products.map((p) => ({
-      id: p.id,
-      name: p.name,
-      ...(p.teaType ? { teaType: p.teaType } : {}),
-      ...(p.year != null ? { year: String(p.year) } : {}),
-      ...(p.spec ? { spec: p.spec } : {}),
-      ...(p.sellPrice != null ? { sellPrice: p.sellPrice } : {}),
-      ...(p.unit ? { unit: p.unit } : {}),
-      ...(p.packageUnit ? { packageUnit: p.packageUnit } : {}),
-    }))
+  const buildProductCatalog = () => buildRecognizeProductCatalog(products)
 
   /** 读取单个文件内容并校验大小 */
   const readFileContent = (file: File): Promise<{ content: string; isImage: boolean } | null> => {

@@ -2,13 +2,24 @@ import { useState, useCallback } from 'react'
 import { aiApi } from '@/api/ai'
 import { productApi } from '@/api/product'
 import { customerApi } from '@/api/customer'
+import {
+  buildRecognizeProductCatalog,
+  collectRecognizedCustomerNames,
+  normalizePriceToProductBaseUnit,
+  normalizeRecognizedAmount,
+  pickBestRecognizedProduct,
+} from '@shared/ai/recognize-sale-order'
 import { useOrderDraftStore } from '@/store/order-draft'
 import type { Product, Customer } from '@/types'
 import type { AiRecognizeProduct, AiRecognizedSaleOrder } from '@/api/ai'
 
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024
 const MAX_TEXT_SIZE = 500 * 1024
-const MAX_IMAGE_DIMENSION = 2048
+const MAX_IMAGE_DIMENSION = 3072
+const MIN_IMAGE_DIMENSION = 1600
+const INITIAL_JPEG_QUALITY = 0.95
+const MIN_JPEG_QUALITY = 0.78
+const DIRECT_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp'])
 
 /** 简易客户名匹配（与 web 端 customerMatching.ts 逻辑对齐） */
 function normalizeEntityName(value?: string | null) {
@@ -69,8 +80,6 @@ function matchCustomer(recognizedName: string, customers: Customer[]): Customer 
   return bestScore > 0 ? best : undefined
 }
 
-type RecognizedItem = AiRecognizedSaleOrder['items'][number]
-
 function isImageFile(file: File) {
   if (file.type.startsWith('image/')) return true
   return /\.(png|jpe?g|webp|bmp|gif|heic|heif)$/i.test(file.name)
@@ -85,16 +94,23 @@ function loadImageFromDataUrl(dataUrl: string) {
   })
 }
 
-async function normalizeImageAttachment(file: File) {
-  const originalDataUrl = await new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result as string)
-    reader.onerror = () => reject(new Error('图片读取失败，请重试'))
-    reader.readAsDataURL(file)
-  })
+function estimateDataUrlBytes(dataUrl: string) {
+  const base64 = dataUrl.split(',', 2)[1] ?? ''
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding)
+}
 
-  const image = await loadImageFromDataUrl(originalDataUrl)
-  const ratio = Math.min(1, MAX_IMAGE_DIMENSION / Math.max(image.width || 1, image.height || 1))
+function buildImageAttachment(content: string, mimeType: string | undefined, filename: string) {
+  return {
+    type: 'image' as const,
+    content,
+    mimeType,
+    filename,
+  }
+}
+
+function renderImageAsJpeg(image: HTMLImageElement, maxDimension: number, quality: number) {
+  const ratio = Math.min(1, maxDimension / Math.max(image.width || 1, image.height || 1))
   const width = Math.max(1, Math.round(image.width * ratio))
   const height = Math.max(1, Math.round(image.height * ratio))
 
@@ -104,33 +120,59 @@ async function normalizeImageAttachment(file: File) {
   const context = canvas.getContext('2d')
   if (!context) throw new Error('图片处理失败，请重试')
 
+  context.imageSmoothingEnabled = true
+  context.imageSmoothingQuality = 'high'
   context.fillStyle = '#ffffff'
   context.fillRect(0, 0, width, height)
   context.drawImage(image, 0, 0, width, height)
 
-  let quality = 0.92
-  let content = canvas.toDataURL('image/jpeg', quality)
-  while (quality > 0.6) {
-    const base64 = content.split(',', 2)[1] ?? ''
-    const bytes = Math.max(0, Math.floor((base64.length * 3) / 4))
-    if (bytes <= MAX_IMAGE_SIZE) break
-    quality -= 0.08
-    content = canvas.toDataURL('image/jpeg', quality)
+  return canvas.toDataURL('image/jpeg', quality)
+}
+
+async function normalizeImageAttachment(file: File) {
+  const originalDataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(reader.result as string)
+    reader.onerror = () => reject(new Error('图片读取失败，请重试'))
+    reader.readAsDataURL(file)
+  })
+
+  const normalizedType = (file.type || '').toLowerCase()
+  if (
+    file.size <= MAX_IMAGE_SIZE
+    && DIRECT_IMAGE_TYPES.has(normalizedType)
+    && estimateDataUrlBytes(originalDataUrl) <= MAX_IMAGE_SIZE
+  ) {
+    return buildImageAttachment(originalDataUrl, normalizedType || undefined, file.name)
   }
 
-  return {
-    type: 'image' as const,
-    content,
-    mimeType: 'image/jpeg',
-    filename: file.name.replace(/\.[^.]+$/, '') + '.jpg',
+  const image = await loadImageFromDataUrl(originalDataUrl)
+  let maxDimension = Math.min(MAX_IMAGE_DIMENSION, Math.max(image.width || 1, image.height || 1))
+  let quality = INITIAL_JPEG_QUALITY
+  let content = renderImageAsJpeg(image, maxDimension, quality)
+
+  while (estimateDataUrlBytes(content) > MAX_IMAGE_SIZE) {
+    if (quality > MIN_JPEG_QUALITY) {
+      quality = Math.max(MIN_JPEG_QUALITY, Number((quality - 0.06).toFixed(2)))
+    } else if (maxDimension > MIN_IMAGE_DIMENSION) {
+      maxDimension = Math.max(MIN_IMAGE_DIMENSION, Math.round(maxDimension * 0.88))
+      quality = INITIAL_JPEG_QUALITY
+    } else {
+      break
+    }
+
+    content = renderImageAsJpeg(image, maxDimension, quality)
   }
+
+  if (estimateDataUrlBytes(content) > MAX_IMAGE_SIZE) {
+    throw new Error('图片体积过大，请裁剪后重试')
+  }
+
+  return buildImageAttachment(content, 'image/jpeg', file.name.replace(/\.[^.]+$/, '') + '.jpg')
 }
 
 async function readAttachment(file: File) {
   if (isImageFile(file)) {
-    if (file.size > MAX_IMAGE_SIZE) {
-      throw new Error('图片不能超过 5MB')
-    }
     return normalizeImageAttachment(file)
   }
 
@@ -183,124 +225,6 @@ function getRecognizeErrorMessage(error: unknown) {
   return '识别出错，请重试'
 }
 
-function normalizeRecognizedAmount(item: RecognizedItem) {
-  const rawLineText = item.lineText ?? ''
-  const normalizedLineText = rawLineText.replace(/\s+/g, '')
-
-  if (normalizedLineText.includes('一斤半')) {
-    return { quantity: 1.5, quantityUnit: '斤' }
-  }
-  if (normalizedLineText.includes('半斤')) {
-    return { quantity: 0.5, quantityUnit: '斤' }
-  }
-  if (normalizedLineText.includes('半两')) {
-    return { quantity: 0.5, quantityUnit: '两' }
-  }
-
-  return {
-    quantity: item.quantity ?? undefined,
-    quantityUnit: item.quantityUnit ?? '',
-  }
-}
-
-function parsePossibleCustomerName(lineText?: string | null) {
-  const text = (lineText ?? '').trim()
-  if (!text) return undefined
-  const firstCell = text.split(/[\s,，\t|/\\]+/).find(Boolean)
-  if (!firstCell) return undefined
-  const candidate = firstCell.replace(/[:：]/g, '').trim()
-  if (!candidate) return undefined
-  if (/^(姓名|客户|联系人|产品|商品|价格|单价|数量|小计)$/i.test(candidate)) return undefined
-  if (/\d/.test(candidate) || candidate.length < 2 || candidate.length > 8) return undefined
-  return candidate
-}
-
-function resolveRecognizedCustomerName(recognized: AiRecognizedSaleOrder) {
-  const names: string[] = []
-  if (recognized.customerName) names.push(recognized.customerName)
-  for (const item of recognized.items) {
-    if (item.customerName) names.push(item.customerName)
-    const parsed = parsePossibleCustomerName(item.lineText)
-    if (parsed) names.push(parsed)
-  }
-  return [...new Set(names.map((name) => name.trim()).filter(Boolean))]
-}
-
-function isUnitMatched(qUnit: string, product?: Product) {
-  if (!qUnit || !product) return true
-  const pkgUnit = product.packageUnit ?? ''
-  const baseUnit = product.unit ?? ''
-  return qUnit === pkgUnit
-    || qUnit === baseUnit
-    || (pkgUnit ? qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit) : false)
-    || (baseUnit ? qUnit.includes(baseUnit) || baseUnit.includes(qUnit) : false)
-}
-
-function normalizePriceToProductBaseUnit(unitPrice: number, qUnit: string, product?: Product) {
-  if (!product) return unitPrice
-  const pkgUnit = product.packageUnit ?? ''
-  const pkgSize = product.packageSize ?? 0
-  const recognizedAsPackage = qUnit && pkgUnit && (qUnit === pkgUnit || qUnit.includes(pkgUnit) || pkgUnit.includes(qUnit))
-  if (recognizedAsPackage && pkgSize > 0) {
-    return Number((unitPrice / pkgSize).toFixed(2))
-  }
-  return unitPrice
-}
-
-function pickBestProduct(
-  item: RecognizedItem,
-  products: Product[],
-  productMap: Map<number, Product>,
-  quantity: number | undefined,
-  quantityUnit: string,
-) {
-  const name = (item.productName ?? '').trim()
-  const lineText = (item.lineText ?? '').replace(/\s+/g, '')
-  const byId = item.productId != null ? productMap.get(item.productId) : undefined
-  const byName = name
-    ? products.filter((p) => name.includes(p.name) || p.name.includes(name))
-    : []
-
-  const candidateMap = new Map<number, Product>()
-  if (byId) candidateMap.set(byId.id, byId)
-  byName.forEach((p) => candidateMap.set(p.id, p))
-  const candidates = [...candidateMap.values()]
-  if (candidates.length === 0) return undefined
-
-  const unitCandidates = quantityUnit ? candidates.filter((p) => isUnitMatched(quantityUnit, p)) : candidates
-  const pool = unitCandidates.length > 0 ? unitCandidates : candidates
-
-  const rawUnitPrice = item.subtotal != null && quantity != null && quantity > 0
-    ? Number((item.subtotal / quantity).toFixed(2))
-    : (item.unitPrice ?? undefined)
-
-  const score = (product: Product) => {
-    let total = 0
-    if (byId?.id === product.id) total += 5
-    if (name && name === product.name) total += 4
-    else if (name && (name.includes(product.name) || product.name.includes(name))) total += 2
-    if (quantityUnit && isUnitMatched(quantityUnit, product)) total += 4
-    if (product.year != null && lineText.includes(String(product.year))) total += 4
-    if (product.teaType && lineText.includes(product.teaType)) total += 2
-
-    if (rawUnitPrice != null && product.sellPrice > 0) {
-      const normalized = normalizePriceToProductBaseUnit(rawUnitPrice, quantityUnit, product)
-      const ratioDiff = Math.abs(normalized - product.sellPrice) / product.sellPrice
-      if (ratioDiff <= 0.05) total += 8
-      else if (ratioDiff <= 0.2) total += 6
-      else if (ratioDiff <= 0.5) total += 3
-      else if (ratioDiff <= 1) total += 1
-      else total -= 3
-    }
-
-    return total
-  }
-
-  return pool
-    .slice()
-    .sort((a, b) => score(b) - score(a) || a.id - b.id)[0]
-}
-
 export function useAiRecognize() {
   const [recognizing, setRecognizing] = useState(false)
   const [progress, setProgress] = useState('')
@@ -325,16 +249,7 @@ export function useAiRecognize() {
       }
       const productMap = new Map(allProducts.map((p) => [p.id, p]))
 
-      const catalog: AiRecognizeProduct[] = allProducts.map((p) => ({
-        id: p.id,
-        name: p.name,
-        ...(p.teaType ? { teaType: p.teaType } : {}),
-        ...(p.year != null ? { year: String(p.year) } : {}),
-        ...(p.spec ? { spec: p.spec } : {}),
-        ...(p.sellPrice != null ? { sellPrice: p.sellPrice } : {}),
-        ...(p.unit ? { unit: p.unit } : {}),
-        ...(p.packageUnit ? { packageUnit: p.packageUnit } : {}),
-      }))
+      const catalog: AiRecognizeProduct[] = buildRecognizeProductCatalog(allProducts)
 
       // 3. 调用 AI 识别
       setProgress('AI 正在识别…')
@@ -348,7 +263,7 @@ export function useAiRecognize() {
 
       // 4. 匹配客户
       setProgress('正在匹配客户…')
-      const candidateNames = resolveRecognizedCustomerName(recognized)
+      const candidateNames = collectRecognizedCustomerNames(recognized)
       if (candidateNames.length > 0) {
         const allCustomers: Customer[] = []
         let customerPage = 1
@@ -375,7 +290,7 @@ export function useAiRecognize() {
         const qUnit = normalizedAmount.quantityUnit
         const qty = normalizedAmount.quantity
         const qtyValue = qty ?? 1
-        const matched = pickBestProduct(item, allProducts, productMap, qty, qUnit)
+        const matched = pickBestRecognizedProduct(item, allProducts, productMap, qty, qUnit)
 
         if (!matched) { unmatchedCount++; continue }
 

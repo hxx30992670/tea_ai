@@ -44,6 +44,19 @@ type AiRecognizedSaleOrder = {
   paymentMethod: string | null;
 };
 
+type AiRecognizeCatalogProduct = {
+  id: number;
+  name: string;
+  teaType?: string;
+  year?: string;
+  spec?: string;
+  sellPrice?: number;
+  unit?: string;
+  packageUnit?: string;
+  matchText?: string;
+  keywords?: string[];
+};
+
 type AiAttachmentIntent =
   | 'recognize'
   | 'query_sale_order'
@@ -73,6 +86,22 @@ const STRATEGY_CITY_FOLLOWUP_HINTS = [
   STRATEGY_CITY_CLARIFY_ANSWER,
   '补充城市名后，可进一步细化到天气、茶文化和活动节奏',
 ];
+const RECOGNIZE_HINT_IGNORED_EXT_KEYS = new Set([
+  'teaType',
+  'year',
+  'unit',
+  'packageUnit',
+  'packageSize',
+  'safeStock',
+  'barcode',
+  'imageUrl',
+  'sellPrice',
+  'costPrice',
+  'stockQty',
+  'status',
+  'name',
+  'sku',
+]);
 const LOCAL_GROUNDING_FOLLOWUP_RE = /(落地|实地落地|具体怎么弄|怎么落地|如何落地|具体如何落地|具体一些如何落地|具体一些如何实地落地|哪边比较好|预算|费用|多少钱|对接|公开电话|商圈|茶城|商场|广场|摆点|快闪|地推|物业|招商|执行清单|话术模板|异业合作|合作对象|招商主管|市场部)/;
 const STRATEGY_REFINE_FOLLOWUP_RE = /(思考(一下|下)?再回答|思考了再回答|重新思考|再想想|再分析(一下)?|深入分析|深度思考|重新回答|换个思路|换个角度|详细一点|展开讲讲|具体一点)/;
 
@@ -712,7 +741,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
   async buildRecognizeResponse(
     module: 'sale-order',
     attachment: AiAttachment,
-    products?: Array<{ id: number; name: string; teaType?: string; year?: string; spec?: string; sellPrice?: number; unit?: string; packageUnit?: string }>,
+    products?: AiRecognizeCatalogProduct[],
   ) {
     const startedAt = Date.now();
     const recognizeQuestion = attachment.filename ? `识别附件：${attachment.filename}` : '识别销售单附件';
@@ -816,6 +845,10 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
         });
         return this.buildRecognizeError('MODEL_RESULT_INVALID', normalized.reason);
       }
+      const priceRepairedData = this.repairRecognizedSaleOrderPricing(normalized.data);
+      const repairedData = products?.length
+        ? this.repairRecognizedProductIds(priceRepairedData, products)
+        : priceRepairedData;
       await this.reportUsageLogSafe(availability.config, {
         phase: 'recognize',
         question: recognizeQuestion,
@@ -827,11 +860,11 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
         status: 'success',
         decisionTrace: {
           module,
-          itemCount: normalized.data.items.length,
-          hasCustomerName: Boolean(normalized.data.customerName),
+          itemCount: repairedData.items.length,
+          hasCustomerName: Boolean(repairedData.customerName),
         },
       });
-      return { ok: true as const, data: normalized.data };
+      return { ok: true as const, data: repairedData };
     } catch {
       await this.reportUsageLogSafe(availability.config, {
         phase: 'recognize',
@@ -984,6 +1017,320 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
+  private repairRecognizedSaleOrderPricing(recognized: AiRecognizedSaleOrder): AiRecognizedSaleOrder {
+    return {
+      ...recognized,
+      items: recognized.items.map((item) => this.repairRecognizedPriceItem(item)),
+    };
+  }
+
+  private repairRecognizedPriceItem(item: AiRecognizedSaleOrderItem): AiRecognizedSaleOrderItem {
+    const quantity = item.quantity ?? null;
+    const hasExplicitUnitPriceMarker = this.hasRecognizeExplicitUnitPriceMarker(item.lineText);
+
+    if (hasExplicitUnitPriceMarker) {
+      if (item.unitPrice == null || item.unitPrice <= 0 || quantity == null || quantity <= 0) {
+        return item;
+      }
+
+      if (item.subtotal != null && item.subtotal > 0) {
+        return item;
+      }
+
+      return {
+        ...item,
+        subtotal: Number((item.unitPrice * quantity).toFixed(2)),
+      };
+    }
+
+    const extractedTotal = this.extractRecognizeTrailingAmount(item);
+    const rawTotal = extractedTotal ?? item.subtotal ?? item.unitPrice;
+    if (rawTotal == null || rawTotal <= 0) {
+      return item;
+    }
+
+    const normalizedUnitPrice = quantity != null && quantity > 0
+      ? Number((rawTotal / quantity).toFixed(2))
+      : Number(rawTotal.toFixed(2));
+
+    return {
+      ...item,
+      subtotal: Number(rawTotal.toFixed(2)),
+      unitPrice: normalizedUnitPrice,
+    };
+  }
+
+  private hasRecognizeExplicitUnitPriceMarker(lineText?: string | null) {
+    const text = String(lineText ?? '').replace(/\s+/g, '').toLowerCase();
+    if (!text) {
+      return false;
+    }
+
+    return /(?:单价|每(?:斤|两|克|g|公斤|饼|提|件|包|盒|袋|罐|箱)|(?:\/|／)(?:斤|两|克|g|公斤|饼|提|件|包|盒|袋|罐|箱)|[@＠])/.test(text);
+  }
+
+  private extractRecognizeTrailingAmount(item: AiRecognizedSaleOrderItem) {
+    let text = String(item.lineText ?? '').replace(/\s+/g, '');
+    if (!text) {
+      return null;
+    }
+
+    const actionMatch = text.match(/(?:购买|买|订|要|拿|提)(.+)$/);
+    if (actionMatch?.[1]) {
+      text = actionMatch[1];
+    }
+
+    const quantityMatch = text.match(/(一斤半|半斤|半两|\d+(?:\.\d+)?(?:斤|两|g|克|饼|提|件|包|盒|袋|罐|箱|公斤))/i);
+    if (quantityMatch && typeof quantityMatch.index === 'number') {
+      text = text.slice(quantityMatch.index + quantityMatch[0].length);
+    }
+
+    const currencyMatches = [...text.matchAll(/(\d+(?:\.\d+)?)\s*(?:元|块|￥|¥)/gi)];
+    if (currencyMatches.length > 0) {
+      const matched = currencyMatches[currencyMatches.length - 1]?.[1];
+      const value = matched ? Number(matched) : Number.NaN;
+      return Number.isFinite(value) ? value : null;
+    }
+
+    const trailingMatch = text.match(/(\d+(?:\.\d+)?)$/);
+    if (!trailingMatch?.[1]) {
+      return null;
+    }
+
+    const value = Number(trailingMatch[1]);
+    return Number.isFinite(value) ? value : null;
+  }
+
+  private repairRecognizedProductIds(
+    recognized: AiRecognizedSaleOrder,
+    products: AiRecognizeCatalogProduct[],
+  ): AiRecognizedSaleOrder {
+    if (products.length === 0) {
+      return recognized;
+    }
+
+    return {
+      ...recognized,
+      items: recognized.items.map((item) => this.repairRecognizedProductItem(item, products)),
+    };
+  }
+
+  private repairRecognizedProductItem(
+    item: AiRecognizedSaleOrderItem,
+    products: AiRecognizeCatalogProduct[],
+  ): AiRecognizedSaleOrderItem {
+    const sourceText = this.normalizeRecognizeCompareText(`${item.productName} ${item.lineText ?? ''}`);
+    const descriptorText = this.extractRecognizeDescriptorText(item);
+    if (!sourceText) {
+      return item;
+    }
+
+    const currentProduct = item.productId != null
+      ? products.find((product) => product.id === item.productId)
+      : undefined;
+    const sameNameCandidates = this.findRecognizeSameNameCandidates(item, products, currentProduct);
+
+    if (sameNameCandidates.length <= 1) {
+      return item;
+    }
+
+    const scored = sameNameCandidates.map((product) => ({
+      product,
+      distinctHintScore: this.getRecognizeDistinctHintScore(product, sameNameCandidates, descriptorText || sourceText),
+      unitMatched: this.isRecognizeUnitMatched(item.quantityUnit, product),
+    }));
+
+    const unitPool = item.quantityUnit
+      ? scored.filter((candidate) => candidate.unitMatched)
+      : scored;
+    const pool = unitPool.length > 0 ? unitPool : scored;
+    const sorted = pool
+      .slice()
+      .sort((left, right) =>
+        right.distinctHintScore - left.distinctHintScore
+        || Number(right.product.id === item.productId) - Number(left.product.id === item.productId)
+        || left.product.id - right.product.id);
+
+    const best = sorted[0];
+    const second = sorted[1];
+
+    if (best && best.distinctHintScore > 0 && best.distinctHintScore >= (second?.distinctHintScore ?? 0) + 4) {
+      return {
+        ...item,
+        productId: best.product.id,
+      };
+    }
+
+    return {
+      ...item,
+      productId: null,
+    };
+  }
+
+  private findRecognizeSameNameCandidates(
+    item: AiRecognizedSaleOrderItem,
+    products: AiRecognizeCatalogProduct[],
+    currentProduct?: AiRecognizeCatalogProduct,
+  ) {
+    const normalizedProductName = this.normalizeRecognizeCompareText(item.productName);
+    const candidateMap = new Map<number, AiRecognizeCatalogProduct>();
+
+    if (currentProduct) {
+      candidateMap.set(currentProduct.id, currentProduct);
+    }
+
+    for (const product of products) {
+      const normalizedName = this.normalizeRecognizeCompareText(product.name);
+      if (!normalizedName) {
+        continue;
+      }
+
+      if (
+        normalizedProductName === normalizedName
+        || normalizedProductName.includes(normalizedName)
+        || normalizedName.includes(normalizedProductName)
+      ) {
+        candidateMap.set(product.id, product);
+      }
+    }
+
+    return [...candidateMap.values()];
+  }
+
+  private getRecognizeDistinctHintScore(
+    product: AiRecognizeCatalogProduct,
+    sameNameCandidates: AiRecognizeCatalogProduct[],
+    sourceText: string,
+  ) {
+    const currentTokens = this.getRecognizeHintTokens(product);
+    if (currentTokens.size === 0) {
+      return 0;
+    }
+
+    const siblingTokens = new Set<string>();
+    for (const candidate of sameNameCandidates) {
+      if (candidate.id === product.id) {
+        continue;
+      }
+
+      for (const token of this.getRecognizeHintTokens(candidate)) {
+        siblingTokens.add(token);
+      }
+    }
+
+    let score = 0;
+    for (const token of currentTokens) {
+      if (siblingTokens.has(token) || !sourceText.includes(token)) {
+        continue;
+      }
+
+      if (token.length >= 4) score += 8;
+      else if (token.length === 3) score += 6;
+      else score += 4;
+    }
+
+    return score;
+  }
+
+  private getRecognizeHintTokens(product: AiRecognizeCatalogProduct) {
+    const tokens = new Set<string>();
+    const rawHints = [
+      ...(product.keywords ?? []),
+      product.matchText,
+      product.teaType,
+      product.year,
+      product.spec,
+      product.packageUnit,
+      product.unit,
+    ];
+
+    for (const hint of rawHints) {
+      if (!hint) {
+        continue;
+      }
+
+      for (const token of this.expandRecognizeHintTokens(String(hint))) {
+        tokens.add(token);
+      }
+    }
+
+    return tokens;
+  }
+
+  private expandRecognizeHintTokens(value: string) {
+    const normalized = value
+      .split(/[\/|、,，;；\s]+/)
+      .map((item) => this.normalizeRecognizeCompareText(item))
+      .filter((item): item is string => Boolean(item));
+
+    const tokens = new Set<string>();
+    for (const item of normalized) {
+      tokens.add(item);
+
+      if (/^[\u4e00-\u9fa5]{3,8}$/.test(item)) {
+        for (let size = 2; size <= Math.min(4, item.length); size += 1) {
+          for (let index = 0; index <= item.length - size; index += 1) {
+            tokens.add(item.slice(index, index + size));
+          }
+        }
+      }
+    }
+
+    return [...tokens].filter((item) => item.length >= 2);
+  }
+
+  private normalizeRecognizeCompareText(value?: string | null) {
+    return String(value ?? '')
+      .trim()
+      .replace(/[\s，,。．、:：;；/\\|（）()【】\[\]"'`]+/g, '')
+      .toLowerCase();
+  }
+
+  private extractRecognizeDescriptorText(item: AiRecognizedSaleOrderItem) {
+    const rawText = String(item.lineText ?? '').replace(/\s+/g, '');
+    if (!rawText) {
+      return this.normalizeRecognizeCompareText(item.productName);
+    }
+
+    let text = rawText;
+    const customerText = this.normalizeRecognizeCompareText(item.customerName);
+    if (customerText && text.startsWith(customerText)) {
+      text = text.slice(customerText.length);
+    }
+
+    const actionMatch = text.match(/(?:购买|买|订|要|拿|提)(.+)$/);
+    if (actionMatch?.[1]) {
+      text = actionMatch[1];
+    }
+
+    const quantityIndex = text.search(/(一斤半|半斤|半两|\d+(?:\.\d+)?(?:斤|两|g|克|饼|提|件|包|盒|袋|罐|箱|公斤))/i);
+    if (quantityIndex > 0) {
+      text = text.slice(0, quantityIndex);
+    }
+
+    const priceIndex = text.search(/\d+(?:\.\d+)?(?:元|块)/);
+    if (priceIndex > 0) {
+      text = text.slice(0, priceIndex);
+    }
+
+    return this.normalizeRecognizeCompareText(text) || this.normalizeRecognizeCompareText(item.productName);
+  }
+
+  private isRecognizeUnitMatched(quantityUnit: string | null, product: AiRecognizeCatalogProduct) {
+    if (!quantityUnit) {
+      return true;
+    }
+
+    const normalizedUnit = this.normalizeRecognizeCompareText(quantityUnit);
+    const baseUnit = this.normalizeRecognizeCompareText(product.unit);
+    const packageUnit = this.normalizeRecognizeCompareText(product.packageUnit);
+
+    return normalizedUnit === baseUnit
+      || normalizedUnit === packageUnit
+      || (baseUnit ? normalizedUnit.includes(baseUnit) || baseUnit.includes(normalizedUnit) : false)
+      || (packageUnit ? normalizedUnit.includes(packageUnit) || packageUnit.includes(normalizedUnit) : false);
+  }
+
   private buildAttachmentUserContent(userTextContent: string, attachment: AiAttachment): string | AiContentPart[] {
     if (attachment.type === 'image') {
       return [
@@ -1073,7 +1420,15 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       take: 200,
     });
 
-    return products.map((product) => ({
+    return products.map((product) => this.buildRecognizeProductCatalogItem(product));
+  }
+
+  private buildRecognizeProductCatalogItem(product: ProductEntity): AiRecognizeCatalogProduct {
+    const hints = this.getRecognizeHintsFromProduct(product);
+    const extData = this.parseProductExtData(product.extData);
+    const packageUnit = this.normalizeRecognizeHint(extData.packageUnit);
+
+    return {
       id: product.id,
       name: product.name,
       teaType: product.teaType ?? undefined,
@@ -1081,8 +1436,71 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       spec: product.spec ?? undefined,
       sellPrice: product.sellPrice,
       unit: product.unit ?? undefined,
-      packageUnit: undefined,
-    }));
+      packageUnit: packageUnit ?? undefined,
+      ...(hints.length > 0 ? { matchText: hints.join(' / '), keywords: hints } : {}),
+    };
+  }
+
+  private getRecognizeHintsFromProduct(product: ProductEntity) {
+    const hints = new Set<string>();
+    const push = (value: unknown) => {
+      const normalized = this.normalizeRecognizeHint(value);
+      if (normalized) hints.add(normalized);
+    };
+
+    const extData = this.parseProductExtData(product.extData);
+
+    push(product.origin);
+    push(product.batchNo);
+    push(product.spec);
+    push(product.season);
+    push(product.remark);
+
+    Object.entries(extData).forEach(([key, value]) => {
+      if (RECOGNIZE_HINT_IGNORED_EXT_KEYS.has(key)) return;
+      this.collectRecognizeHints(value, hints);
+    });
+
+    return [...hints];
+  }
+
+  private parseProductExtData(extData: string | null) {
+    if (!extData) {
+      return {} as Record<string, unknown>;
+    }
+
+    try {
+      const parsed = JSON.parse(extData) as Record<string, unknown>;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  private normalizeRecognizeHint(value: unknown) {
+    if (typeof value !== 'string') {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    return trimmed || null;
+  }
+
+  private collectRecognizeHints(value: unknown, collector: Set<string>) {
+    if (typeof value === 'string') {
+      const normalized = this.normalizeRecognizeHint(value);
+      if (normalized) collector.add(normalized);
+      return;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => this.collectRecognizeHints(item, collector));
+      return;
+    }
+
+    if (value && typeof value === 'object') {
+      Object.values(value as Record<string, unknown>).forEach((item) => this.collectRecognizeHints(item, collector));
+    }
   }
 
   private async tryResolveSaleOrderFromAttachment(
