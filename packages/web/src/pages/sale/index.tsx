@@ -68,6 +68,7 @@ import { formatCompositeQuantity, formatQuantityNumber, getProductPackageConfig 
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
 const { Title, Text } = Typography
 const { RangePicker } = DatePicker
@@ -601,7 +602,7 @@ export default function SalePage() {
       },
     },
     { title: '状态', dataIndex: 'displayStatus', width: 110, render: (_: unknown, row: SaleOrder) => <Tag color={STATUS_MAP[row.displayStatus || row.status]?.color}>{STATUS_MAP[row.displayStatus || row.status]?.label}</Tag> },
-    { title: '下单时间', dataIndex: 'createdAt', width: 170, render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
+    { title: '下单时间', dataIndex: 'createdAt', width: 170, render: (v: string) => formatDateTime(v) },
     {
       title: '操作', width: 360, fixed: 'right' as const,
       render: (_: unknown, r: SaleOrder) => {

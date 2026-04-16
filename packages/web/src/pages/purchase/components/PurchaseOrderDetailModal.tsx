@@ -14,7 +14,7 @@ import {
 import type { PurchaseOrder } from '@/types'
 import { formatCompositeQuantity, formatQuantityNumber } from '@/utils/packaging'
 import type { PurchaseOrderItem } from '@/types'
-import dayjs from 'dayjs'
+import { formatDateTime } from '@/utils/date'
 
 const { Text } = Typography
 
@@ -103,7 +103,7 @@ export function PurchaseOrderDetailModal({
                 </Text>
               </Descriptions.Item>
               <Descriptions.Item label="创建时间" span={2}>
-                {dayjs(record.createdAt).format('YYYY-MM-DD HH:mm:ss')}
+                {formatDateTime(record.createdAt)}
               </Descriptions.Item>
             </Descriptions>
 
@@ -129,7 +129,7 @@ export function PurchaseOrderDetailModal({
                       <Text strong>{item.returnNo}</Text>
                       <Text type="secondary">退货金额 ¥{item.totalAmount.toLocaleString()}</Text>
                       <Text type="secondary">供应商退款 ¥{item.refundAmount.toLocaleString()}</Text>
-                      <Text type="secondary">{dayjs(item.createdAt).format('YYYY-MM-DD HH:mm:ss')}</Text>
+                      <Text type="secondary">{formatDateTime(item.createdAt)}</Text>
                     </Space>
                     <Text type="secondary">备注：{item.remark || '-'}</Text>
                     <Table

@@ -7,8 +7,8 @@ import { PlusOutlined, EditOutlined } from '@ant-design/icons'
 import { systemApi } from '@/api/system'
 import type { RoleProfile, SysUser } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
-import dayjs from 'dayjs'
 const { Title, Text } = Typography
 
 const FALLBACK_ROLE_OPTIONS: RoleProfile[] = [
@@ -82,7 +82,7 @@ export default function UsersPage() {
         />
       ),
     },
-    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
+    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => formatDateTime(v) },
     {
       title: '操作', width: 140, fixed: 'right' as const,
       render: (_: unknown, r: SysUser) => (

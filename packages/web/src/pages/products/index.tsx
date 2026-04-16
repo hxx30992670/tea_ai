@@ -4,6 +4,7 @@ import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, FolderOutli
 import { productApi, type ProductMeta } from '@/api/products'
 import type { Product, Category } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDate } from '@/utils/date'
 import ProductFormModal from './components/ProductFormModal'
 import CategoryFormModal from './components/CategoryFormModal'
 import PrintLabelsModal from './components/PrintLabelsModal'
@@ -211,7 +212,7 @@ export default function ProductsPage() {
     },
     {
       title: '生产日期', dataIndex: 'productionDate', width: 120,
-      render: (_: unknown, r: Product) => r.productionDate || r.producedAt || '-',
+      render: (_: unknown, r: Product) => formatDate(r.productionDate || r.producedAt),
     },
     {
       title: '状态', dataIndex: 'status', width: 80,

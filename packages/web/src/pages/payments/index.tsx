@@ -10,6 +10,7 @@ import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import type { Dayjs } from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
 import { PaymentRecordModal } from './components/PaymentRecordModal'
+import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
 
 const { Title, Text } = Typography
@@ -107,7 +108,7 @@ export default function PaymentsPage() {
       ),
     },
     { title: '支付方式', dataIndex: 'method', width: 110, render: (v?: string) => v || '-' },
-    { title: '时间', dataIndex: 'createdAt', width: 180 },
+    { title: '时间', dataIndex: 'createdAt', width: 180, render: (v?: string) => formatDateTime(v) },
     { title: '备注', dataIndex: 'remark', ellipsis: true },
   ]
 
