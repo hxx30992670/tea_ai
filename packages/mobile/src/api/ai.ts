@@ -55,6 +55,11 @@ export const aiApi = {
     return res.data
   },
 
+  deleteSession: async (sessionId: string): Promise<{ success: boolean }> => {
+    const res = await request.delete<never, ApiResponse<{ success: boolean }>>(`/ai/sessions/${sessionId}`)
+    return res.data
+  },
+
   /** 对话历史 */
   history: async (params?: Record<string, unknown>): Promise<{ list: AiConversation[]; total: number }> => {
     const res = await request.get<never, ApiResponse<{ list: AiConversation[]; total: number }>>('/ai/history', { params })

@@ -636,6 +636,9 @@ export class SaleOrderService {
       }
 
       const paidAmount = roundAmount(dto.paidAmount);
+      if (compareAmount(paidAmount, totalAmount) > 0) {
+        throw new BadRequestException('收款金额不能超过销售订单应收总额');
+      }
 
       // 3. 创建订单（直接 shipped 状态）
       let saleOrder = manager.create(SaleOrderEntity, {
@@ -689,15 +692,17 @@ export class SaleOrderService {
       await manager.save(SaleOrderItemEntity, orderItems);
 
       // 5. 写收款记录
-      await manager.save(PaymentRecordEntity, manager.create(PaymentRecordEntity, {
-        type: PAYMENT_RECORD_TYPE.RECEIVE,
-        relatedType: 'sale_order',
-        relatedId: saleOrder.id,
-        amount: paidAmount,
-        method: dto.method ?? null,
-        operatorId: user.sub,
-        remark: dto.remark ?? null,
-      }));
+      if (compareAmount(paidAmount, 0) > 0) {
+        await manager.save(PaymentRecordEntity, manager.create(PaymentRecordEntity, {
+          type: PAYMENT_RECORD_TYPE.RECEIVE,
+          relatedType: 'sale_order',
+          relatedId: saleOrder.id,
+          amount: paidAmount,
+          method: dto.method ?? null,
+          operatorId: user.sub,
+          remark: dto.remark ?? null,
+        }));
+      }
 
       // 6. 重算最终状态（可能直接变 done）
       saleOrder.status = this.recalculateStatus({

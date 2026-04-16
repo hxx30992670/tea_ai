@@ -25,12 +25,11 @@ export class CreateProductDto {
   @IsString()
   barcode?: string;
 
-  @ApiPropertyOptional({ description: '分类 ID', example: 1 })
-  @IsOptional()
+  @ApiProperty({ description: '分类 ID', example: 1 })
   @Type(() => Number)
   @IsInt()
   @Min(1)
-  categoryId?: number;
+  categoryId!: number;
 
   @ApiPropertyOptional({ description: '采购价', example: 88 })
   @IsOptional()

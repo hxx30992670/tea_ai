@@ -35,7 +35,7 @@ export class CustomerService {
         'customer.remark AS remark',
         'customer.created_at AS createdAt',
         'COALESCE(SUM(saleOrder.total_amount), 0) AS totalAmount',
-        'COALESCE(SUM(saleOrder.total_amount - saleOrder.received_amount), 0) AS receivableAmount',
+        'COALESCE(SUM(saleOrder.total_amount - saleOrder.returned_amount - saleOrder.received_amount), 0) AS receivableAmount',
       ])
       .groupBy('customer.id');
 

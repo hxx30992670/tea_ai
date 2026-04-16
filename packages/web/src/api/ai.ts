@@ -94,6 +94,11 @@ export const aiApi = {
     return res.data
   },
 
+  deleteSession: async (sessionId: string): Promise<{ success: boolean }> => {
+    const res = await request.delete<never, ApiResponse<{ success: boolean }>>(`/ai/sessions/${sessionId}`)
+    return res.data
+  },
+
   /**
    * AI 对话（SSE 流式）
    *

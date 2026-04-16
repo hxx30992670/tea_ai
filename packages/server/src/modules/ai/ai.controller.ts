@@ -3,7 +3,7 @@
  * 处理用户 AI 对话、会话管理、连接测试等请求
  * 支持 SSE 流式响应，实现逐字输出效果
  */
-import { Body, Controller, Get, Param, Post, Query, Res } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Res } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -128,5 +128,13 @@ export class AiController {
   @Get('sessions/:sessionId')
   getSessionMessages(@Param('sessionId') sessionId: string, @CurrentUser() user: AuthUser) {
     return this.aiService.getSessionMessages(user, sessionId);
+  }
+
+  @Roles(ROLE_ADMIN)
+  @ApiOperation({ summary: '删除某个会话及其消息记录' })
+  @ApiOkResponse({ description: '删除成功' })
+  @Delete('sessions/:sessionId')
+  deleteSession(@Param('sessionId') sessionId: string, @CurrentUser() user: AuthUser) {
+    return this.aiService.deleteSession(user, sessionId);
   }
 }

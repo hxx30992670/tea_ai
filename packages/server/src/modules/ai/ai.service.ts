@@ -453,6 +453,16 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     return list.map((item) => this.serializeConversation(item));
   }
 
+  async deleteSession(user: AuthUser, sessionId: string) {
+    await this.aiConversationRepository
+      .createQueryBuilder()
+      .delete()
+      .where('user_id = :userId AND session_id = :sessionId', { userId: user.sub, sessionId })
+      .execute();
+
+    return { success: true };
+  }
+
   /**
    * 构建 AI 对话响应
    *

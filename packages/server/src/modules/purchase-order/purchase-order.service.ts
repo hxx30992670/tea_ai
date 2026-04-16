@@ -642,6 +642,9 @@ export class PurchaseOrderService {
       }
 
       const paidAmount = roundAmount(dto.paidAmount);
+      if (compareAmount(paidAmount, totalAmount) > 0) {
+        throw new BadRequestException('付款金额不能超过采购订单应付总额');
+      }
 
       let purchaseOrder = manager.create(PurchaseOrderEntity, {
         supplierId: dto.supplierId ?? null,
