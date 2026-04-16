@@ -50,7 +50,7 @@ export function formatMoneyShort(amount: number): string {
 
 /** 格式化日期 */
 export function formatDate(date: string | Date, fmt = 'YYYY-MM-DD'): string {
-  const d = new Date(date)
+  const d = typeof date === 'string' ? parseUTCDate(date) : date
   const pad = (n: number) => String(n).padStart(2, '0')
   const map: Record<string, string> = {
     YYYY: String(d.getFullYear()),
@@ -75,10 +75,14 @@ export function formatRelativeTime(date: string | Date): string {
 
 /** 解析 UTC 时间字符串为本地时间 Date 对象 */
 function parseUTCDate(dateStr: string): Date {
-  if (dateStr.includes('T') || dateStr.includes('Z')) {
-    return new Date(dateStr)
+  const trimmed = dateStr.trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return new Date(trimmed)
   }
-  return new Date(dateStr + 'Z')
+  if (trimmed.includes('T') || trimmed.includes('Z')) {
+    return new Date(trimmed)
+  }
+  return new Date(trimmed.replace(' ', 'T') + 'Z')
 }
 
 /**

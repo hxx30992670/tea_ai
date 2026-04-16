@@ -14,6 +14,7 @@
     "build:prompt-center:encrypted": "pnpm --filter prompt-center build:encrypted",
     "build:web": "pnpm --filter web build",
     "build:mobile": "pnpm --filter mobile build",
+    "test:server:flows": "pnpm --filter server test:flows",
     "export:markdown": "pnpm --filter server export:markdown",
     "export:openapi": "pnpm --filter server export:openapi",
     "start:server": "pnpm --filter server start",

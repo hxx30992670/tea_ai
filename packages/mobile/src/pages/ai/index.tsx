@@ -26,7 +26,7 @@ export default function AiPage({ speechConfig }: AiPageProps) {
   const {
     messages, loading, loadingHistory, statusPhase,
     sessions, activeSessionId,
-    sendMessage, stopMessage, newChat, loadSession,
+    sendMessage, stopMessage, newChat, loadSession, deleteSession,
   } = useChat()
 
   const [showSessions, setShowSessions] = useState(false)
@@ -131,6 +131,7 @@ export default function AiPage({ speechConfig }: AiPageProps) {
         loading={loading || loadingHistory}
         onSelect={loadSession}
         onNewChat={newChat}
+        onDelete={deleteSession}
       />
     </div>
   )

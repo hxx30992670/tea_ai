@@ -6,6 +6,7 @@
     "build": "nest build",
     "export:markdown": "ts-node --project tsconfig.json scripts/export-markdown.ts",
     "export:openapi": "ts-node --project tsconfig.json scripts/export-openapi.ts",
+    "test:flows": "ts-node --project tsconfig.json scripts/test-order-flows.ts",
     "start": "node dist/main.js",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch"

@@ -5,8 +5,24 @@ type DateLike = string | number | Date | Dayjs | null | undefined
 
 function toDayjs(value: DateLike) {
   if (value == null || value === '') return null
-  const parsed = dayjs(value)
+  const parsed = typeof value === 'string'
+    ? parseStringDate(value)
+    : dayjs(value)
   return parsed.isValid() ? parsed : null
+}
+
+function parseStringDate(value: string) {
+  const trimmed = value.trim()
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return dayjs(trimmed)
+  }
+
+  if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}$/.test(trimmed)) {
+    return dayjs.utc(trimmed.replace(' ', 'T')).local()
+  }
+
+  return dayjs(trimmed)
 }
 
 export function formatDate(value: DateLike, fallback = '-') {
@@ -41,4 +57,3 @@ export function toTimestamp(value: DateLike, fallback = Date.now()) {
   const parsed = toDayjs(value)
   return parsed ? parsed.valueOf() : fallback
 }
-

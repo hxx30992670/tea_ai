@@ -79,6 +79,30 @@ export function useChat() {
     }
   }, [])
 
+  const deleteSession = useCallback(async (sessionId: string) => {
+    abortRef.current?.abort()
+    try {
+      await aiApi.deleteSession(sessionId)
+      const nextSessions = await aiApi.sessions()
+      setSessions(nextSessions)
+
+      if (sessionIdRef.current === sessionId) {
+        const fallbackSessionId = nextSessions[0]?.sessionId
+        if (fallbackSessionId) {
+          await loadSession(fallbackSessionId)
+        } else {
+          setActiveSessionId(undefined)
+          sessionIdRef.current = undefined
+          setMessages([])
+          setLoading(false)
+          setStatusPhase('')
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [loadSession])
+
   // ── 新建对话 ──────────────────────────────────────────────
   const newChat = useCallback(() => {
     abortRef.current?.abort()
@@ -210,5 +234,6 @@ export function useChat() {
     stopMessage,
     newChat,
     loadSession,
+    deleteSession,
   }
 }

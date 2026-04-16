@@ -2,7 +2,7 @@
  * 历史会话抽屉（底部弹出）
  * 列出所有 session，支持切换、新建
  */
-import { MessageSquarePlus, Clock } from 'lucide-react'
+import { MessageSquarePlus, Clock, Trash2 } from 'lucide-react'
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetBody } from '@/components/ui/sheet'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -16,6 +16,7 @@ interface SessionDrawerProps {
   loading: boolean
   onSelect: (sessionId: string) => void
   onNewChat: () => void
+  onDelete: (sessionId: string) => void
 }
 
 export function SessionDrawer({
@@ -26,6 +27,7 @@ export function SessionDrawer({
   loading,
   onSelect,
   onNewChat,
+  onDelete,
 }: SessionDrawerProps) {
   const handleSelect = (sessionId: string) => {
     if (loading) return
@@ -36,6 +38,12 @@ export function SessionDrawer({
   const handleNewChat = () => {
     onNewChat()
     onClose()
+  }
+
+  const handleDelete = (sessionId: string) => {
+    if (loading) return
+    if (!window.confirm('确认删除这条历史对话吗？删除后不可恢复。')) return
+    onDelete(sessionId)
   }
 
   return (
@@ -64,37 +72,51 @@ export function SessionDrawer({
               {sessions.map((session) => {
                 const isActive = session.sessionId === activeSessionId
                 return (
-                  <button
+                  <div
                     key={session.sessionId}
-                    onClick={() => handleSelect(session.sessionId)}
-                    disabled={loading}
                     className={cn(
-                      'flex w-full items-start gap-3 rounded-xl border px-3 py-2.5 text-left transition-colors tap-scale',
+                      'flex items-start gap-2 rounded-xl border px-3 py-2.5 transition-colors',
                       isActive
                         ? 'border-primary/40 bg-primary/10'
                         : 'border-border bg-secondary/20 hover:bg-secondary/40',
                     )}
                   >
-                    <div className="flex-1 min-w-0">
-                      <p
-                        className={cn(
-                          'truncate text-sm font-medium',
-                          isActive ? 'text-primary' : 'text-foreground',
-                        )}
-                      >
-                        {session.title || '未命名对话'}
-                      </p>
-                      {session.lastAt && (
-                        <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
-                          <Clock size={10} />
-                          {session.lastAt.slice(0, 10)}
+                    <button
+                      onClick={() => handleSelect(session.sessionId)}
+                      disabled={loading}
+                      className="flex flex-1 items-start gap-3 text-left tap-scale"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <p
+                          className={cn(
+                            'truncate text-sm font-medium',
+                            isActive ? 'text-primary' : 'text-foreground',
+                          )}
+                        >
+                          {session.title || '未命名对话'}
                         </p>
+                        {session.lastAt && (
+                          <p className="mt-0.5 flex items-center gap-1 text-xs text-muted-foreground">
+                            <Clock size={10} />
+                            {session.lastAt.slice(0, 10)}
+                          </p>
+                        )}
+                      </div>
+                      {isActive && (
+                        <span className="shrink-0 self-center text-xs font-semibold text-primary">当前</span>
                       )}
-                    </div>
-                    {isActive && (
-                      <span className="shrink-0 self-center text-xs font-semibold text-primary">当前</span>
-                    )}
-                  </button>
+                    </button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0 text-muted-foreground hover:text-destructive"
+                      onClick={() => handleDelete(session.sessionId)}
+                      aria-label="删除历史对话"
+                    >
+                      <Trash2 size={16} />
+                    </Button>
+                  </div>
                 )
               })}
             </div>

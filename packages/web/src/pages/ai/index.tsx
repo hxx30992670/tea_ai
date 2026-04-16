@@ -163,7 +163,28 @@ export default function AiPage() {
   }
 
   const refreshSessions = async () => {
-    try { setSessions(await aiApi.sessions()) } catch { /* ignore */ }
+    try {
+      const nextSessions = await aiApi.sessions()
+      setSessions(nextSessions)
+      return nextSessions
+    } catch {
+      return [] as AiSession[]
+    }
+  }
+
+  const handleDeleteSession = async (sessionId: string) => {
+    abortControllerRef.current?.abort()
+    await aiApi.deleteSession(sessionId)
+    const nextSessions = await refreshSessions()
+
+    if (activeSessionId === sessionId) {
+      const fallbackSessionId = nextSessions[0]?.sessionId
+      if (fallbackSessionId) {
+        await loadSession(fallbackSessionId)
+      } else {
+        handleNewChat()
+      }
+    }
   }
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -415,6 +436,7 @@ export default function AiPage() {
           loading={loading}
           onCreate={handleNewChat}
           onSelect={loadSession}
+          onDelete={handleDeleteSession}
         />
 
         <Card

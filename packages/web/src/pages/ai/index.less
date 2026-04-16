@@ -67,18 +67,29 @@
 }
 
 .ai-sidebar__item {
+  display: flex;
+  align-items: stretch;
+  gap: 6px;
   margin: 0 6px;
-  padding: 7px 10px;
+  padding: 7px 8px 7px 10px;
   border: none;
   border-left: 3px solid transparent;
   border-radius: 8px;
   background: transparent;
-  cursor: pointer;
-  text-align: left;
   transition: background 0.15s;
 }
 
-.ai-sidebar__item:disabled {
+.ai-sidebar__item-main {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+.ai-sidebar__item-main:disabled {
   cursor: not-allowed;
 }
 
@@ -104,6 +115,12 @@
   margin-top: 1px;
   color: #bbb;
   font-size: 11px;
+}
+
+.ai-sidebar__delete.ant-btn {
+  flex-shrink: 0;
+  align-self: center;
+  color: #999;
 }
 
 .ai-chat-card {

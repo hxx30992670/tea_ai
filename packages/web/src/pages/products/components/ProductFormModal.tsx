@@ -179,11 +179,10 @@ export default function ProductFormModal({ open, editRecord, categories, product
             </Form.Item>
           </Col>
           <Col span={12}>
-            <Form.Item name="categoryId" label="商品分类">
+            <Form.Item name="categoryId" label="商品分类" rules={[{ required: true, message: '请选择商品分类' }]}>
               <TreeSelect
                 treeData={buildTreeData(categories)}
                 placeholder="选择分类"
-                allowClear
                 treeDefaultExpandAll
                 onChange={(value) => handleCategoryChange(value as number | undefined)}
               />
