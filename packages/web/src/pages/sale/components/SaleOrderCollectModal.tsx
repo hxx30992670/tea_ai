@@ -25,6 +25,11 @@ export function SaleOrderCollectModal({ open, target, onClose, onSuccess }: Sale
   useEffect(() => {
     if (open && target) {
       form.resetFields()
+      form.setFieldsValue({
+        amount: target.outstanding,
+        method: undefined,
+        remark: undefined,
+      })
     }
   }, [open, target, form])
 
