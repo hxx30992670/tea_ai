@@ -35,5 +35,5 @@ jobs:
             git remote add gitee "$GITEE_URL"
           fi
 
-          git push gitee --force --all
-          git push gitee --force --tags
+          git push gitee --all
+          git push gitee --tags
