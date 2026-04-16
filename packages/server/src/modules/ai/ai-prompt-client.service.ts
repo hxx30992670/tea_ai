@@ -204,7 +204,7 @@ export class AiPromptClientService {
   }
 
   async fetchRecognizeMessages(
-    products: Array<{ id: number; name: string; teaType?: string; year?: string; spec?: string; sellPrice?: number; unit?: string; packageUnit?: string }>,
+    products: Array<{ id: number; name: string; teaType?: string; year?: string; spec?: string; sellPrice?: number; unit?: string; packageUnit?: string; matchText?: string; keywords?: string[] }>,
     config: AiRuntimeConfig,
     metadata?: PromptRequestMetadata,
   ): Promise<AiPromptFetchResult> {

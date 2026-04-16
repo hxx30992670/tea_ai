@@ -32,7 +32,9 @@ export function DraftItemList({ onEditItem }: DraftItemListProps) {
               <p className="text-sm font-medium truncate">{item.productName}</p>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
                 {item.spec && <p className="text-xs text-muted-foreground">{item.spec}</p>}
-                <span className="text-xs text-muted-foreground">单价: ¥{formatMoney(item.unitPrice)}</span>
+                <span className="text-xs text-muted-foreground">
+                  单价{item.unit ? `（按${item.unit}）` : ''}: ¥{formatMoney(item.unitPrice)}
+                </span>
                 {item.sellPrice != null && item.unitPrice !== item.sellPrice && (
                   <span className={`text-xs font-medium ${item.unitPrice > item.sellPrice ? 'text-green-400' : 'text-red-400'}`}>
                     {item.unitPrice > item.sellPrice ? '↑' : '↓'}
@@ -138,9 +140,12 @@ export function DraftItemList({ onEditItem }: DraftItemListProps) {
                   <Trash2 size={14} />
                 </button>
               </div>
-              <span className="text-sm font-bold text-primary">
-                ¥{formatMoney(subtotal)}
-              </span>
+              <div className="text-right">
+                <p className="text-[11px] text-muted-foreground">小计</p>
+                <span className="text-sm font-bold text-primary">
+                  ¥{formatMoney(subtotal)}
+                </span>
+              </div>
             </div>
           </div>
         )

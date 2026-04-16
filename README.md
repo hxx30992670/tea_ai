@@ -1,87 +1,256 @@
-# 茶掌柜 SmartStock
+<p align="center">
+  <img src="packages/shared/assets/logo.png" alt="茶掌柜" width="80" />
+</p>
 
-面向茶行业的 **进销存 + 客户管理 + 移动开单 + AI 助手** 一体化系统。
+<h1 align="center">茶掌柜 SmartStock</h1>
 
-> 主程序免费开源，AI Agent 服务由作者托管并单独提供，不包含在当前仓库内。
+<p align="center">
+  一套专为茶叶批发零售打造的进销存系统，开箱即用，不折腾。
+</p>
 
-## 项目定位
+<p align="center">
+  <a href="https://hyl.heyiling.top" target="_blank">Web 演示</a> ·
+  <a href="https://hyl.heyiling.top/m" target="_blank">移动端演示</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#截图预览">截图预览</a> ·
+  <a href="#docker-一键部署">Docker 部署</a> ·
+  <a href="#ai-功能">AI 功能</a>
+</p>
 
-茶掌柜不是通用 ERP 的简单改皮，而是围绕茶叶批发零售场景设计的业务系统，重点解决：
+---
 
-- 商品规格复杂：茶类、年份、规格、包装单位、基础单位换算
-- 销售流程碎片化：门店、微信、熟客赊账、移动场景临时开单
-- 售后链路不完整：退货、退款、换货、补差价
-- 经营数据分散：库存、销售、收款、客户跟进难以统一查看
+## 这是什么
 
-适合：茶店、茶仓、批发档口、区域代理、零售兼批发门店。
+茶掌柜是一套围绕茶叶生意设计的管理系统，不是通用 ERP 改个皮肤。
 
-## 开源边界
+做茶叶生意的人大概都遇到过这些问题：茶的品类太多，年份、规格、包装方式各不相同，靠表格根本管不过来；客户有的走门店、有的走微信，赊账的、分期付的都有，收款对账全靠记忆；退货退款换货补差价，流程一乱就容易扯皮。
 
-本仓库开源的是主程序本体，包含：
+茶掌柜就是为了解决这些事情而做的。它覆盖了商品、库存、销售、采购、客户、收付款的完整流程，Web 端做后台管理，移动端方便外出开单，数据实时同步，开箱就能用。
 
-- `packages/server`：NestJS 后端 API
-- `packages/web`：Web 管理端
-- `packages/mobile`：移动端 PWA
-- `packages/shared`：前端共享代码
-
-不在开源范围内的部分：
-
-- `prompt-center`
-- 作者托管的 AI Agent 服务
-- 相关 Prompt 编排、服务端策略与私有数据
-
-也就是说：
-
-- 不接 AI 服务，主程序依然可以正常作为进销存系统使用
-- 需要 AI 功能时，再接入作者提供的 Agent 服务
+**适合**：茶店、茶仓、批发档口、区域代理、零售兼批发的门店。
 
 ## 核心功能
 
-- **数据看板**：今日营收、本月销售、库存价值、应收总额、销售趋势、库存预警
-- **商品管理**：茶类、年份、规格、包装单位、基础单位、SKU 管理
-- **库存管理**：入库、出库、盘盈、盘亏、报损、库存流水追踪
-- **销售订单**：销售、出库、收款、退货、退款、换货、快速完成开单
-- **采购订单**：采购下单、入库确认、采购退货
-- **客户管理**：客户档案、跟进记录、应收追踪
-- **供应商管理**：供应商档案、采购历史
-- **收付款管理**：销售收款、采购付款、应收应付查询
-- **移动端 PWA**：手机开单、查看看板、移动 AI 对话，支持安装到桌面
-- **AI 助手**：自然语言查经营数据、图表可视化、图片识别录单
+| 模块 | 说明 |
+| --- | --- |
+| 数据看板 | 今日营收、本月销售、库存价值、应收总额、销售趋势图、库存预警、热销排行 |
+| 商品管理 | 茶类分类、年份、规格、包装单位 / 基础单位换算、SKU 体系 |
+| 库存管理 | 入库、出库、盘盈、盘亏、报损，每一笔都有流水可追溯 |
+| 销售订单 | 开单、出库、收款、退货、退款、换货，一套流程走完 |
+| 采购订单 | 采购下单、入库确认、采购退货 |
+| 客户管理 | 客户档案、跟进记录、应收追踪，不再靠脑子记 |
+| 供应商管理 | 供应商档案、采购历史 |
+| 收付款 | 销售收款、采购付款、应收应付一目了然 |
+| 移动端 PWA | 手机开单、查看看板、支持安装到桌面，外出也能用 |
+| AI 助手 | 自然语言查经营数据、自动生成图表、图片识别录单（需额外接入，见下文） |
 
 ## 截图预览
 
 ### Web 端
 
-| 数据看板 | 销售订单 |
-| :---: | :---: |
-| ![数据看板](docs/screenshots/web-dashboard.png) | ![销售订单](docs/screenshots/web-sale-orders.png) |
+<table>
+  <tr>
+    <td align="center"><b>数据看板</b><br/>一眼看清今天的生意</td>
+    <td align="center"><b>销售订单</b><br/>开单、收款、退货全在这里</td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/web/dashboard.png" alt="数据看板" /></td>
+    <td><img src="screenshots/web/sale-orders.png" alt="销售订单" /></td>
+  </tr>
+</table>
 
-| AI 助手 | 商品管理 |
-| :---: | :---: |
-| ![AI助手](docs/screenshots/web-ai-assistant.png) | ![商品管理](docs/screenshots/web-products.png) |
+<table>
+  <tr>
+    <td align="center"><b>AI 助手 - 图表分析</b><br/>问一句话，自动生成可视化图表</td>
+    <td align="center"><b>AI 助手 - 经营建议</b><br/>基于真实数据给出落地建议</td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/web/ai-chart.png" alt="AI 图表分析" /></td>
+    <td><img src="screenshots/web/ai-analysis.png" alt="AI 经营建议" /></td>
+  </tr>
+</table>
 
 ### 移动端
 
-| 首页看板 | 开单列表 | AI 助手 |
-| :---: | :---: | :---: |
-| ![移动看板](docs/screenshots/mobile-dashboard.png) | ![移动开单](docs/screenshots/mobile-orders.png) | ![移动AI](docs/screenshots/mobile-ai.png) |
+在手机上也能查数据、做分析、开单子。PWA 应用，不用下载 App，浏览器打开就能用，还能添加到桌面。
+
+<table>
+  <tr>
+    <td align="center" width="25%"><b>今日销售汇总</b></td>
+    <td align="center" width="25%"><b>客户销售排行</b></td>
+    <td align="center" width="25%"><b>周销售趋势图</b></td>
+    <td align="center" width="25%"><b>AI 经营方案</b></td>
+  </tr>
+  <tr>
+    <td><img src="screenshots/mobile/ai-daily-sales.png" alt="今日销售" /></td>
+    <td><img src="screenshots/mobile/ai-customer-ranking.png" alt="客户排行" /></td>
+    <td><img src="screenshots/mobile/ai-weekly-chart.png" alt="周趋势图" /></td>
+    <td><img src="screenshots/mobile/ai-strategy.png" alt="经营方案" /></td>
+  </tr>
+</table>
 
 ## 技术栈
 
 | 模块 | 技术 |
 | --- | --- |
-| 后端 | NestJS 10、TypeORM、SQLite(sql.js)、JWT、Swagger |
+| 后端 | NestJS 10、TypeORM、SQLite (sql.js)、JWT、Swagger |
 | Web 端 | React 18、Vite、Ant Design 5、ProComponents、Zustand、Recharts |
 | 移动端 | React 18、Vite、PWA、Zustand |
-| 数据库 | SQLite(sql.js，纯 JS，无需单独安装数据库) |
-| AI 接入 | 外部大模型 API + 作者托管 AI Agent 服务 |
+| 数据库 | SQLite — 纯 JS 实现 (sql.js)，不用单独装数据库 |
+
+## 开源说明
+
+本仓库开源以下部分，基于 [MIT License](LICENSE)：
+
+```
+packages/server     ← NestJS 后端 API
+packages/web        ← Web 管理端
+packages/mobile     ← 移动端 PWA
+packages/shared     ← 前端共享代码
+```
+
+**不开单独用也完全没问题** — 不接 AI 服务，茶掌柜就是一套完整的进销存系统，商品、库存、销售、采购、客户管理全都能正常使用。
+
+AI 功能属于增值服务，需要额外接入，详见 [AI 功能](#ai-功能) 章节。
+
+## 快速开始
+
+### 环境要求
+
+- Node.js >= 18
+- pnpm >= 10
+
+### 三步跑起来
+
+```bash
+# 1. 安装依赖
+pnpm install
+
+# 2. 配置环境变量
+cp packages/server/.env.example packages/server/.env
+```
+
+首次启动会根据 `.env` 自动创建管理员账号，默认配置：
+
+```env
+DEFAULT_ADMIN_USERNAME=admin
+DEFAULT_ADMIN_PASSWORD=Admin@123456
+```
+
+```bash
+# 3. 启动开发服务（后端 + Web + Mobile 全部启动）
+pnpm dev:all
+```
+
+### 访问地址
+
+| 服务 | 地址 |
+| --- | --- |
+| Web 管理端 | `http://localhost:8080` |
+| 移动端 | `https://localhost:8081` |
+| API 文档 (Swagger) | `http://localhost:3000/api/docs` |
+
+> 移动端默认启用 HTTPS，方便真机调试摄像头等能力。如果只是本地调试，可以关闭：
+> ```bash
+> VITE_MOBILE_HTTPS=false pnpm dev:mobile
+> ```
+
+### 移动端语音输入说明
+
+移动端里的语音输入能力默认是关闭的。开源仓库不会内置任何第三方语音服务凭证，这样对维护者和使用者都更安全。
+
+如果你想把语音输入也启用起来，流程很简单：
+
+1. 去讯飞开放平台注册账号
+2. 开通“实时语音转写”能力
+3. 拿到 `APPID` 和 `APIKey`
+4. 在移动端入口注入运行时配置
+
+新账号通常会有一部分免费额度，足够先本地体验、调试和验证流程。
+
+参考配置如下：
+
+```html
+<script>
+  window.__SMARTSTOCK_MOBILE_CONFIG__ = {
+    speech: {
+      appId: '你的 APPID',
+      apiKey: '你的 APIKey',
+    },
+  }
+</script>
+```
+
+默认建议把这段配置放在部署环境里注入，不要直接写死到仓库代码里。
+
+### 其他命令
+
+```bash
+pnpm dev           # 只启动后端 + Web
+pnpm dev:server    # 只启动后端
+pnpm dev:web       # 只启动 Web
+pnpm dev:mobile    # 只启动移动端
+pnpm build:server  # 构建后端
+pnpm build:web     # 构建 Web
+```
+
+## Docker 一键部署
+
+一个容器跑完所有服务，部署门槛很低。
+
+### 谁适合用 Docker 部署
+
+茶掌柜不要求你一定有云服务器。对于个人店铺、小团队或门店自用，一台普通电脑就够了 — Docker 启动后，局域网内的设备都能直接访问。
+
+如果需要手机在外面也能用，或者让分店远程访问，可以配合内网穿透工具把服务暴露出去。
+
+简单理解：
+
+- **店内使用**：一台电脑 + Docker
+- **远程访问**：一台电脑 + Docker + 内网穿透
+
+> 如果是多人长期在线、跨地区协作、对稳定性要求高，还是建议上云服务器。
+
+### 部署步骤
+
+```bash
+# 1. 配置环境变量
+cp packages/server/.env.example packages/server/.env
+
+# 2. 启动
+docker compose up -d --build
+```
+
+部署完成后的访问地址：
+
+| 服务 | 地址 |
+| --- | --- |
+| Web 管理端 | `http://localhost/` |
+| 移动端 | `http://localhost/m/` |
+| API 文档 | `http://localhost/api/docs` |
+
+### 常用命令
+
+```bash
+docker compose ps        # 查看状态
+docker compose logs -f   # 查看日志
+docker compose down      # 停止服务
+```
+
+### 数据持久化
+
+SQLite 数据库文件挂载到宿主机，不会因为容器重建丢数据：
+
+```
+./data → /app/packages/server/data/app.db
+```
 
 ## 目录结构
 
-```text
+```
 smartstock/
 ├── packages/
-│   ├── server/          # NestJS REST API
+│   ├── server/          # NestJS 后端 API
 │   ├── web/             # Web 管理端
 │   ├── mobile/          # 移动端 PWA
 │   └── shared/          # 前端共享代码
@@ -91,186 +260,54 @@ smartstock/
 └── pnpm-workspace.yaml
 ```
 
-## 本地开发
+## AI 功能
 
-### 环境要求
+AI 功能是茶掌柜的增值能力，**不影响主程序使用**，需要单独接入作者提供的 AI Agent 服务。
 
-- Node.js >= 18
-- pnpm >= 10
+### AI 能做什么
 
-### 安装依赖
+- **自然语言查数据**：问"这个月卖了多少钱"，直接给你答案
+- **自动生成图表**：问"用柱状图展示客户销售排行"，图表直接出来
+- **经营分析建议**：基于你的真实销售数据，给出可落地的经营建议
+- **图片识别录单**：拍照或截图，AI 自动识别订单内容并录入
 
-```bash
-pnpm install
-```
+### 如何接入
 
-### 配置环境变量
-
-```bash
-cp packages/server/.env.example packages/server/.env
-```
-
-首次启动时会根据 `.env` 自动创建管理员账号。
-
-示例：
+AI 服务通过以下配置连接（已在 `.env.example` 中预留）：
 
 ```env
-DEFAULT_ADMIN_USERNAME=admin
-DEFAULT_ADMIN_PASSWORD=Admin@123456
+AI_API_KEY=xxx
+AI_PROMPT_SERVICE_URL=xxx
 ```
 
-### 启动开发服务
-
-```bash
-# 后端 + Web
-pnpm dev
-
-# 后端 + Web + Mobile
-pnpm dev:all
-
-# 单独启动 Mobile
-pnpm dev:mobile
-```
-
-### 本地访问地址
-
-- Web：`http://localhost:8080`
-- Mobile：`https://localhost:8081`
-- API 文档：`http://localhost:3000/api/docs`
-
-说明：
-
-- `mobile` 默认启用 HTTPS，方便真机调试摄像头等能力
-- 如果只想本地简单调试，也可以关闭 HTTPS：
-
-```bash
-VITE_MOBILE_HTTPS=false pnpm dev:mobile
-```
-
-此时地址为：`http://localhost:8081`
-
-## Docker 一键部署
-
-当前仓库已经支持单容器部署，容器内同时运行：
-
-- `NestJS` 后端
-- `Nginx` 静态资源服务
-- `Web` 前端静态文件
-- `Mobile` 前端静态文件
-
-### 部署门槛
-
-茶掌柜并不要求必须额外购买云服务器。
-
-对于个人店铺、小团队或门店自用场景，一台普通台式电脑或办公主机即可完成部署。使用 Docker 启动后，可以直接在局域网内访问使用。
-
-如果需要让手机、门店分点或外部人员访问，可以再配合 **Intranet Penetration (内网穿透)** 工具把本地服务暴露出去。
-
-你可以按下面两种方式理解：
-
-- **本地 / 局域网使用**：一台电脑部署即可
-- **远程访问使用**：一台电脑部署 + 内网穿透
-
-> 说明：如果是多人长期在线、跨地区协作、对稳定性要求较高，仍然建议使用独立服务器或云主机部署。
-
-### 1. 准备环境变量
-
-```bash
-cp packages/server/.env.example packages/server/.env
-```
-
-### 2. 启动
-
-```bash
-docker compose up -d --build
-```
-
-### 3. 访问地址
-
-- Web：`http://localhost/`
-- Mobile：`http://localhost/m/`
-- API 文档：`http://localhost/api/docs`
-
-### 常用命令
-
-```bash
-# 查看状态
-docker compose ps
-
-# 查看日志
-docker compose logs -f
-
-# 停止服务
-docker compose down
-```
-
-### 数据持久化
-
-SQLite 数据目录会挂载到宿主机：
-
-```text
-./data -> /app/packages/server/data
-```
-
-默认数据库文件：
-
-```text
-packages/server/data/app.db
-```
-
-## AI 功能说明
-
-AI 功能依赖作者托管的 **AI Agent 服务**，不随本仓库开源。
-
-当前支持的 AI 场景：
-
-- 自然语言查询经营数据
-- 自动生成图表可视化
-- 图片识别订单内容
-- 批量识别并拆分订单
-
-### AI 接入方式
-
-服务端通过以下配置连接作者提供的 Agent 服务：
-
-- `AI_API_KEY`
-- `AI_PROMPT_SERVICE_URL`
-
-这些配置项已经在 `packages/server/.env.example` 中预留。
-
-### 如何获取 AI 服务
-
-扫码添加微信，了解 AI Agent 服务接入方式与定价。
+如果你对 AI 功能感兴趣，扫码加我微信聊：
 
 <p align="center">
-  <img src="docs/screenshots/wechat-qrcode.png" alt="微信二维码" width="220" />
+  <img src="screenshots/wechat.JPG" alt="微信二维码" width="220" />
   <br />
-  <em>扫码咨询 AI 服务</em>
+  <em>扫码添加微信，了解 AI 服务接入</em>
 </p>
 
 ## 项目特点
 
-- **开箱即用**：默认使用 `SQLite (嵌入式数据库)`，无需单独安装 MySQL/PostgreSQL
-- **双端覆盖**：Web 管理 + Mobile 开单，适合门店和外出场景
-- **茶行业适配**：围绕茶叶规格、年份、包装和熟客交易习惯设计
-- **部署简单**：支持 Docker 一键部署，默认一个容器跑完整套服务
-- **AI 可选接入**：主程序可单独用，AI 能力按需接入
+- **开箱即用** — SQLite 嵌入式数据库，不用装 MySQL，clone 下来就能跑
+- **双端覆盖** — Web 做管理，手机开单子，数据实时同步
+- **茶行业适配** — 围绕茶叶规格、年份、包装和熟客交易习惯设计，不是通用模板
+- **部署简单** — Docker 一个容器搞定，普通电脑就能跑
+- **AI 可选** — 主程序独立可用，AI 能力按需接入，不绑定
 
-## 适合怎么用
+## 怎么用比较好
 
-1. 先把它当成一套免费的茶行业进销存系统使用
-2. 跑通商品、库存、销售、采购、客户流程
-3. 后续如需 AI 问答、AI 识别录单，再接入作者托管服务
+1. 先把它当一套免费的进销存用起来，跑通商品、库存、销售、采购、客户流程
+2. 用熟了之后，如果想要 AI 查数据、AI 录单的能力，再联系我接入
+3. 有任何问题或建议，欢迎提 Issue 或者加微信聊
 
 ## License
 
-本仓库中的主程序代码基于 [MIT License](LICENSE) 开源。
-
-说明：
-
-- 开源范围仅限当前仓库中的代码
-- 私有 AI 服务及 `prompt-center` 不在开源范围内
+[MIT License](LICENSE) — 开源范围为本仓库中的代码。AI Agent 服务及 prompt-center 不在开源范围内。
 
 ---
 
-如果这个项目对你有帮助，欢迎点个 Star。
+<p align="center">
+  如果这个项目对你有帮助，欢迎点个 Star，这是对我最大的鼓励。
+</p>

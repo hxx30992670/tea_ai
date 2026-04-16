@@ -1,5 +1,6 @@
 import type { AiConversation, ApiResponse } from '@/types'
 import { AI_CAPABILITY_CODES, isAiCapabilityCode, type AiCapabilityCode } from '@shared/constants'
+import type { RecognizeCatalogProduct } from '@shared/ai/recognize-sale-order'
 import request from './index'
 
 const AI_RECOGNIZE_TIMEOUT = 60000
@@ -36,16 +37,7 @@ export interface AiAttachment {
   filename?: string
 }
 
-export interface AiRecognizeProduct {
-  id: number
-  name: string
-  teaType?: string
-  year?: string   // 发送前已转为字符串
-  spec?: string
-  sellPrice?: number
-  unit?: string
-  packageUnit?: string
-}
+export type AiRecognizeProduct = RecognizeCatalogProduct
 
 /** AI 识别销售单结果 */
 export interface AiRecognizedSaleOrder {

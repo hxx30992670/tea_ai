@@ -9,6 +9,7 @@ import { useAuthStore } from '@/store/auth'
 import { aiApi, type AiSuggestion, type AiSession, type AiAttachment } from '@/api/ai'
 import { detectVisualization } from '@/components/AiVisualization'
 import PageHeader from '@/components/page/PageHeader'
+import { toTimestamp } from '@/utils/date'
 import '@/styles/page.less'
 import { AssistantCard, UserBubble } from './components/ChatMessage'
 import SessionSidebar from './components/SessionSidebar'
@@ -139,11 +140,11 @@ export default function AiPage() {
       const list = await aiApi.sessionMessages(sessionId)
       if (list.length === 0) { setMessages([WELCOME_MSG]); return }
       const msgs = list.flatMap((item) => ([
-        { role: 'user' as const, content: item.question, timestamp: Date.parse(item.createdAt) || Date.now() },
+        { role: 'user' as const, content: item.question, timestamp: toTimestamp(item.createdAt) },
         {
           role: 'assistant' as const,
           content: item.answer,
-          timestamp: Date.parse(item.createdAt) || Date.now(),
+          timestamp: toTimestamp(item.createdAt),
           rows: item.rows,
           visualization: item.rows?.length ? detectVisualization(item.rows, item.question) : undefined,
         },

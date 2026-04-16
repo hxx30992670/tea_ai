@@ -12,6 +12,7 @@ import type { Customer, SaleOrder } from '@/types'
 import { DEMO_SHOP_NAME } from '@/constants/demo'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDateTimeMinute, formatMonthDayTime, toLocalDateTimeValue } from '@/utils/date'
 import '@/styles/page.less'
 
 const { Title, Text } = Typography
@@ -113,7 +114,7 @@ export default function CustomersPage() {
       content: values.content,
       followType: values.followType,
       intentLevel: values.intentLevel,
-      nextFollowDate: values.nextFollowDate ? values.nextFollowDate.toISOString() : undefined,
+      nextFollowDate: toLocalDateTimeValue(values.nextFollowDate),
     }
 
     if (editingFollowUp) {
@@ -179,7 +180,7 @@ export default function CustomersPage() {
         return (
           <Space size={4}>
             {overdue && <Badge status="error" />}
-            <Text type={overdue ? 'danger' : undefined}>{dayjs(d).format('MM-DD HH:mm')}</Text>
+            <Text type={overdue ? 'danger' : undefined}>{formatMonthDayTime(d)}</Text>
           </Space>
         )
       },
@@ -331,12 +332,12 @@ export default function CustomersPage() {
                   <Space wrap>
                     {item.nextFollowDate ? (
                       <Tag color={isOverdue(item.nextFollowDate) ? 'red' : 'blue'}>
-                        计划跟进：{dayjs(item.nextFollowDate).format('YYYY-MM-DD HH:mm')}
+                        计划跟进：{formatDateTimeMinute(item.nextFollowDate)}
                       </Tag>
                     ) : (
                       <Tag>未设置计划时间</Tag>
                     )}
-                    <Text type="secondary" style={{ fontSize: 12 }}>创建时间：{dayjs(item.createdAt).format('YYYY-MM-DD HH:mm')}</Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>创建时间：{formatDateTimeMinute(item.createdAt)}</Text>
                     {item.followType && <Tag>{FOLLOW_TYPE_LABEL[item.followType] ?? item.followType}</Tag>}
                     <IntentTag level={item.intentLevel} />
                     {editingFollowUp?.id === item.id && <Tag color="processing">编辑中</Tag>}

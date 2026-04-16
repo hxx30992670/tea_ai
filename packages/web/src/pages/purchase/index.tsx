@@ -26,6 +26,7 @@ import { supplierApi } from '@/api/suppliers'
 import type { PurchaseOrder, Supplier } from '@/types'
 import type { Dayjs } from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDateTime } from '@/utils/date'
 import { PurchaseOrderDetailModal } from './components/PurchaseOrderDetailModal'
 import { PurchaseReturnModal } from './components/PurchaseReturnModal'
 import { PaymentModal } from './components/PaymentModal'
@@ -219,7 +220,7 @@ export default function PurchasePage() {
       title: '创建时间', dataIndex: 'createdAt', width: 160, render(_: unknown, r: PurchaseOrder) {
         return (
           <Text>
-            {dayjs(r.createdAt).format('YYYY-MM-DD HH:mm:ss')}
+            {formatDateTime(r.createdAt)}
           </Text>
         )
       }

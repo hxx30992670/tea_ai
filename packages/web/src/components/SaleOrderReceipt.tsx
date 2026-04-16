@@ -4,6 +4,7 @@ import { PrinterOutlined, DownloadOutlined } from '@ant-design/icons'
 import html2canvas from 'html2canvas'
 import type { SaleOrder, SaleOrderItem, SaleExchangeItem } from '@/types'
 import { formatCompositeQuantity } from '@/utils/packaging'
+import { formatDate } from '@/utils/date'
 
 interface Props {
   open: boolean
@@ -59,7 +60,7 @@ function formatNetQty(item: NetItem) {
 
 function ReceiptContent({ order, shopName }: { order: SaleOrder; shopName?: string }) {
   const displayShop = shopName || '茶掌柜'
-  const dateStr = order.createdAt ? order.createdAt.slice(0, 10) : ''
+  const dateStr = formatDate(order.createdAt, '')
 
   // ── 计算净出货明细 ──────────────────────────────────
   const returnedMap = buildReturnedMap(order)

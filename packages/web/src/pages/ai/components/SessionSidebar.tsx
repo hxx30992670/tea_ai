@@ -2,6 +2,7 @@ import { Button } from 'antd'
 import { PlusOutlined } from '@ant-design/icons'
 import type { AiSession } from '@/api/ai'
 import { EmptySessionText } from './ChatMessage'
+import { formatDate } from '@/utils/date'
 
 type SessionSidebarProps = {
   sessions: AiSession[]
@@ -31,7 +32,7 @@ export default function SessionSidebar({ sessions, activeSessionId, loading, onC
             disabled={loading}
           >
             <div className="ai-sidebar__title">{session.title}</div>
-            <div className="ai-sidebar__date">{session.lastAt?.slice(0, 10)}</div>
+            <div className="ai-sidebar__date">{formatDate(session.lastAt)}</div>
           </button>
         )
       })}

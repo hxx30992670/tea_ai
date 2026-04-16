@@ -3,6 +3,7 @@ import { Button, Modal, Space, message } from 'antd'
 import { PrinterOutlined, DownloadOutlined } from '@ant-design/icons'
 import html2canvas from 'html2canvas'
 import type { SaleOrder } from '@/types'
+import { formatDate } from '@/utils/date'
 
 interface Props {
   open: boolean
@@ -22,7 +23,7 @@ function StatementContent({
   shopName?: string
 }) {
   const displayShop = shopName || '茶掌柜'
-  const today = new Date().toISOString().slice(0, 10)
+  const today = formatDate(new Date())
 
   const totalAmount = orders.reduce((s, o) => s + o.totalAmount, 0)
   const totalReceived = orders.reduce((s, o) => s + o.receivedAmount, 0)
@@ -72,7 +73,7 @@ function StatementContent({
             return (
               <tr key={o.id} style={{ background: idx % 2 === 1 ? '#fafafa' : '#fff' }}>
                 <td style={tdStyle}>{o.orderNo}</td>
-                <td style={tdStyle}>{o.createdAt?.slice(0, 10)}</td>
+                <td style={tdStyle}>{formatDate(o.createdAt)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right' }}>¥{o.totalAmount.toFixed(2)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right' }}>¥{(o.receivedAmount + o.returnedAmount).toFixed(2)}</td>
                 <td style={{ ...tdStyle, textAlign: 'right', color: debt > 0 ? '#d4380d' : '#389e0d', fontWeight: debt > 0 ? 600 : 400 }}>
@@ -154,7 +155,7 @@ export default function CustomerStatement({ open, customerName, orders, shopName
         useCORS: true,
       })
       const link = document.createElement('a')
-      link.download = `对账单_${customerName}_${new Date().toISOString().slice(0, 10)}.png`
+      link.download = `对账单_${customerName}_${formatDate(new Date())}.png`
       link.href = canvas.toDataURL('image/png')
       link.click()
       message.success('对账单图片已保存，可直接发给客户')

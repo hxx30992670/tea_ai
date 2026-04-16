@@ -18,7 +18,7 @@ import { AFTER_SALE_REASON_LABELS } from '@/constants/after-sale'
 import type { SaleOrder } from '@/types'
 import type { Product } from '@/types'
 import { formatCompositeQuantity, formatQuantityNumber } from '@/utils/packaging'
-import dayjs from 'dayjs'
+import { formatDateTime } from '@/utils/date'
 
 const { Text } = Typography
 
@@ -165,7 +165,7 @@ export function SaleOrderDetailModal({
                 {order.remark || '-'}
               </Descriptions.Item>
               <Descriptions.Item label="时间" span={2}>
-                {dayjs(order.createdAt).format('YYYY-MM-DD HH:mm:ss')}
+                {formatDateTime(order.createdAt)}
               </Descriptions.Item>
             </Descriptions>
 

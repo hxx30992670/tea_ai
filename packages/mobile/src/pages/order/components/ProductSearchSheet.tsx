@@ -21,6 +21,48 @@ interface ProductSearchSheetProps {
   editingItem?: DraftItem | null
 }
 
+function buildEditingProductSnapshot(editingItem: DraftItem): Product {
+  return {
+    id: editingItem.productId,
+    name: editingItem.productName,
+    sku: '',
+    spec: editingItem.spec,
+    unit: editingItem.unit,
+    packageUnit: editingItem.packageUnit,
+    packageSize: editingItem.packageSize,
+    costPrice: 0,
+    sellPrice: editingItem.sellPrice ?? editingItem.unitPrice,
+    stockQty: editingItem.quantity ?? 0,
+    status: 1,
+    createdAt: '',
+  }
+}
+
+function getEditingPackageValues(editingItem: DraftItem) {
+  const packageSize = editingItem.packageSize ?? 0
+  const packageQty = editingItem.packageQty ?? 0
+  const totalQty = editingItem.quantity ?? calcTotalQuantity(editingItem.packageQty, editingItem.looseQty, editingItem.packageSize)
+
+  if (editingItem.looseQty != null) {
+    return {
+      packageQty,
+      looseQty: editingItem.looseQty,
+    }
+  }
+
+  if (packageSize > 0) {
+    return {
+      packageQty,
+      looseQty: Math.max(0, roundQuantity(totalQty - packageQty * packageSize)),
+    }
+  }
+
+  return {
+    packageQty,
+    looseQty: 0,
+  }
+}
+
 export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearchSheetProps) {
   const { addItem, removeItem } = useOrderDraftStore()
   const [query, setQuery] = useState('')
@@ -50,8 +92,24 @@ export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearch
     if (!open) {
       setQuery('')
       setSelected(null)
+      setPackageQty('0')
+      setLooseQty('1')
+      setPrice('')
     }
   }, [open])
+
+  useEffect(() => {
+    if (!open || !editingItem) {
+      return
+    }
+
+    const currentProduct = buildEditingProductSnapshot(editingItem)
+    const packageValues = getEditingPackageValues(editingItem)
+    setSelected(currentProduct)
+    setPrice(String(editingItem.unitPrice))
+    setPackageQty(String(packageValues.packageQty))
+    setLooseQty(String(currentProduct.packageUnit ? packageValues.looseQty : (editingItem.looseQty ?? editingItem.quantity ?? 1)))
+  }, [open, editingItem])
 
   // Intersection observer: load more when sentinel comes into view inside the scroll container
   useEffect(() => {
@@ -77,12 +135,13 @@ export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearch
     setSelected(p)
     setPrice(String(editingItem?.unitPrice ?? p.sellPrice))
     if (editingItem && p.id === editingItem.productId) {
-      setPackageQty(String(editingItem.packageQty ?? 0))
-      setLooseQty(String(editingItem.looseQty ?? editingItem.quantity ?? 1))
+      const packageValues = getEditingPackageValues(editingItem)
+      setPackageQty(String(packageValues.packageQty))
+      setLooseQty(String(p.packageUnit ? packageValues.looseQty : (editingItem.looseQty ?? editingItem.quantity ?? 1)))
       return
     }
     setPackageQty('0')
-    setLooseQty(String(Math.max(1, editTotalQty)))
+    setLooseQty(p.packageUnit ? '0' : String(Math.max(1, editTotalQty)))
   }
 
   const handleAdd = () => {
@@ -105,7 +164,7 @@ export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearch
       packageUnit: selected.packageUnit,
       packageSize: selected.packageSize,
       packageQty: hasPackage ? pkg : undefined,
-      looseQty: loose,
+      looseQty: hasPackage ? loose : loose,
       quantity: totalQty,
       unitPrice: parseFloat(price) || selected.sellPrice,
       sellPrice: selected.sellPrice,
@@ -281,8 +340,19 @@ export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearch
                 <Plus size={18} />
                 {editingItem ? '保存修改' : '加入开单'}
               </Button>
-              <Button variant="ghost" className="w-full" onClick={() => setSelected(null)}>
-                返回列表
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() => {
+                  setSelected(null)
+                  if (!editingItem) {
+                    setPackageQty('0')
+                    setLooseQty('1')
+                    setPrice('')
+                  }
+                }}
+              >
+                {editingItem ? '更换商品' : '返回列表'}
               </Button>
             </div>
           )}

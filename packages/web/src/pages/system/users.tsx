@@ -1,16 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import {
   Table, Button, Space, Tag, Card, Modal, Form, Input, Select,
-  Switch, Typography, message,
+  Switch, Popconfirm, Typography, Badge,
 } from 'antd'
 import { PlusOutlined, EditOutlined } from '@ant-design/icons'
 import { systemApi } from '@/api/system'
 import type { RoleProfile, SysUser } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
-import { DEMO_UNSUPPORTED_MESSAGE } from '@/constants/demo'
+import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
-import dayjs from 'dayjs'
-const { Text } = Typography
+const { Title, Text } = Typography
 
 const FALLBACK_ROLE_OPTIONS: RoleProfile[] = [
   { code: 'admin', name: '老板', description: '系统最高权限，管理财务、AI 与系统设置' },
@@ -49,14 +48,16 @@ export default function UsersPage() {
   }
 
   const handleSubmit = async () => {
-    await form.validateFields()
-    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    const values = await form.validateFields()
+    if (editRecord) await systemApi.updateUser(editRecord.id, values)
+    else await systemApi.createUser(values)
+    setModalOpen(false)
+    loadData()
   }
 
   const toggleStatus = async (id: number, checked: boolean) => {
-    void id
-    void checked
-    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    await systemApi.toggleStatus(id, checked ? 1 : 0)
+    loadData()
   }
 
   const columns = [
@@ -81,7 +82,7 @@ export default function UsersPage() {
         />
       ),
     },
-    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => dayjs(v).format('YYYY-MM-DD HH:mm:ss') },
+    { title: '创建时间', dataIndex: 'createdAt', render: (v: string) => formatDateTime(v) },
     {
       title: '操作', width: 140, fixed: 'right' as const,
       render: (_: unknown, r: SysUser) => (
