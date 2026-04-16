@@ -70,15 +70,25 @@ export class DashboardService {
   async getSalesTrend(query: SalesTrendQueryDto) {
     const period = query.period ?? 'day';
     const buckets = this.buildTrendBuckets(period);
+    const start = buckets[0]?.start;
+    const end = buckets[buckets.length - 1]?.end;
+
+    if (!start || !end) {
+      return {
+        period,
+        points: [],
+      };
+    }
+
     const rows = await this.dataSource
       .getRepository(SaleOrderEntity)
       .createQueryBuilder('saleOrder')
-      .select(['saleOrder.created_at AS createdAt', 'saleOrder.total_amount AS totalAmount'])
-      .where('saleOrder.created_at >= :start', {
-        start: buckets[0]?.start.toISOString(),
+      .select(["datetime(saleOrder.created_at, 'localtime') AS createdAt", 'saleOrder.total_amount AS totalAmount'])
+      .where("datetime(saleOrder.created_at, 'localtime') >= :start", {
+        start: this.formatSqliteDateTime(start),
       })
-      .andWhere('saleOrder.created_at <= :end', {
-        end: buckets[buckets.length - 1]?.end.toISOString(),
+      .andWhere("datetime(saleOrder.created_at, 'localtime') <= :end", {
+        end: this.formatSqliteDateTime(end),
       })
       .getRawMany<{ createdAt: string; totalAmount: number }>();
 
@@ -197,8 +207,12 @@ export class DashboardService {
       .getRepository(SaleOrderEntity)
       .createQueryBuilder('saleOrder')
       .select('COALESCE(SUM(saleOrder.total_amount), 0)', 'amount')
-      .where('saleOrder.created_at >= :start', { start: start.toISOString() })
-      .andWhere('saleOrder.created_at <= :end', { end: end.toISOString() })
+      .where("datetime(saleOrder.created_at, 'localtime') >= :start", {
+        start: this.formatSqliteDateTime(start),
+      })
+      .andWhere("datetime(saleOrder.created_at, 'localtime') <= :end", {
+        end: this.formatSqliteDateTime(end),
+      })
       .getRawOne<{ amount: number }>();
 
     return Number(row?.amount ?? 0);
@@ -348,5 +362,16 @@ export class DashboardService {
       remainingDays,
       expireAt: expireAt.toISOString(),
     };
+  }
+
+  private formatSqliteDateTime(date: Date) {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   }
 }
