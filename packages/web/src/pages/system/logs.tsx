@@ -4,6 +4,7 @@ import { SearchOutlined } from '@ant-design/icons'
 import { systemApi } from '@/api/system'
 import type { OperationLog } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
 
 const { Title, Text } = Typography
@@ -77,7 +78,7 @@ export default function LogsPage() {
     },
     { title: '操作', dataIndex: 'action', width: 140, render: (v: string) => ACTION_LABELS[v] || v },
     { title: '详情', dataIndex: 'detail', ellipsis: true, render: (v?: string) => v ? <Text type="secondary">{v}</Text> : '-' },
-    { title: '时间', dataIndex: 'createdAt', width: 160 },
+    { title: '时间', dataIndex: 'createdAt', width: 160, render: (v?: string) => formatDateTime(v) },
   ]
 
   return (

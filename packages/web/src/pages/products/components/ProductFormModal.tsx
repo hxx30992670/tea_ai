@@ -4,6 +4,7 @@ import { ThunderboltOutlined } from '@ant-design/icons'
 import dayjs from 'dayjs'
 import type { Product, Category } from '@/types'
 import { productApi, type ProductMeta, type ProductMetaField } from '@/api/products'
+import { toDateOnlyValue } from '@/utils/date'
 
 function buildTreeData(categories: Category[]): object[] {
   return categories.map((c) => ({
@@ -119,7 +120,7 @@ export default function ProductFormModal({ open, editRecord, categories, product
       sellPrice: values.sellPrice,
       stockQty: values.stockQty,
       remark: values.remark,
-      productionDate: values.productionDate ? values.productionDate.toISOString() : undefined,
+      productionDate: toDateOnlyValue(values.productionDate),
       barcode: values.barcode,
       imageUrl: values.imageUrl,
       extData: values.extData,

@@ -1,5 +1,6 @@
 import request from './index'
 import type { AiChatHistoryItem, AiChatResult, AiConversation, AiSession, AiSuggestion, ApiResponse } from '@/types'
+import type { RecognizeCatalogProduct } from '@shared/ai/recognize-sale-order'
 
 const AI_RECOGNIZE_TIMEOUT = 60000
 
@@ -16,16 +17,7 @@ export interface AiAttachment {
   filename?: string
 }
 
-export interface AiRecognizeProduct {
-  id: number
-  name: string
-  teaType?: string
-  year?: string
-  spec?: string
-  sellPrice?: number
-  unit?: string
-  packageUnit?: string
-}
+export type AiRecognizeProduct = RecognizeCatalogProduct
 
 export interface AiRecognizedSaleOrder {
   customerName: string | null

@@ -12,6 +12,7 @@ import ProductSelect from '@/components/ProductSelect'
 import type { Dayjs } from 'dayjs'
 import dayjs from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
+import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
 
 const { Title, Text } = Typography
@@ -179,8 +180,7 @@ export default function StockPage() {
       title: '时间',
       dataIndex: 'createdAt',
       width: 200,
-      render: (v: string | Date | null | undefined) =>
-        v != null && v !== '' ? dayjs(v).format('YYYY-MM-DD HH:mm:ss') : '—',
+      render: (v: string | Date | null | undefined) => formatDateTime(v),
     },
     { title: '备注', dataIndex: 'remark', ellipsis: true },
   ]

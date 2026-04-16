@@ -1,6 +1,6 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
+import { IsArray, IsIn, IsNumber, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { AiAttachmentDto } from './ai-chat.dto';
 
 export class AiRecognizeProductDto {
@@ -35,6 +35,15 @@ export class AiRecognizeProductDto {
   @IsOptional()
   @IsString()
   packageUnit?: string;
+
+  @IsOptional()
+  @IsString()
+  matchText?: string;
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  keywords?: string[];
 }
 
 export class AiRecognizeDto {
