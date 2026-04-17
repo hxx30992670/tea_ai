@@ -12,6 +12,8 @@ import { AiQueryExecutionResult } from './ai.types';
 import { ensureSqlLimit } from './ai-sql.util';
 import { buildSqlGuardReason, isSafeSelectSql } from './sql-guard.util';
 
+const CHINA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
 @Injectable()
 export class AiSqlService {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
@@ -28,7 +30,8 @@ export class AiSqlService {
     }
 
     try {
-      const rows = (await this.dataSource.query(normalizedSql)) as Record<string, unknown>[];
+      const rows = ((await this.dataSource.query(normalizedSql)) as Record<string, unknown>[])
+        .map((row) => this.normalizeRowDateTimes(row));
       return {
         ok: true,
         sql: normalizedSql,
@@ -106,5 +109,47 @@ export class AiSqlService {
     return nextSql
       .replace(/\s+LIMIT\s+100\s+LIMIT\s+100/gi, ' LIMIT 100')
       .replace(/ORDER\s+BY\s+created_at\s+DESC\s+LIMIT\s+(\d+)\s+LIMIT\s+\1/gi, 'ORDER BY created_at DESC LIMIT $1')
+  }
+
+  private normalizeRowDateTimes(row: Record<string, unknown>) {
+    return Object.fromEntries(
+      Object.entries(row).map(([key, value]) => [key, this.normalizeDateTimeValue(key, value)]),
+    );
+  }
+
+  private normalizeDateTimeValue(key: string, value: unknown) {
+    if (typeof value !== 'string') {
+      return value;
+    }
+
+    const normalizedKey = key.trim();
+    if (!/(?:At|_at)$/.test(normalizedKey)) {
+      return value;
+    }
+
+    const trimmed = value.trim();
+    if (!/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z)?$/.test(trimmed)) {
+      return value;
+    }
+
+    const parsed = new Date(
+      trimmed.includes('T') || trimmed.endsWith('Z')
+        ? trimmed
+        : `${trimmed.replace(' ', 'T')}Z`,
+    );
+
+    if (Number.isNaN(parsed.getTime())) {
+      return value;
+    }
+
+    const chinaDate = new Date(parsed.getTime() + CHINA_OFFSET_MS);
+    const year = chinaDate.getUTCFullYear();
+    const month = String(chinaDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(chinaDate.getUTCDate()).padStart(2, '0');
+    const hours = String(chinaDate.getUTCHours()).padStart(2, '0');
+    const minutes = String(chinaDate.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(chinaDate.getUTCSeconds()).padStart(2, '0');
+
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   }
 }

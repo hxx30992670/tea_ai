@@ -19,6 +19,8 @@ type TrendBucket = {
   end: Date;
 };
 
+const CHINA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -29,8 +31,17 @@ export class DashboardService {
 
   async getOverview() {
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const chinaNow = this.getChinaShiftedDate(now);
+    const todayStart = this.createChinaBoundaryDate(
+      chinaNow.getUTCFullYear(),
+      chinaNow.getUTCMonth(),
+      chinaNow.getUTCDate(),
+    );
+    const monthStart = this.createChinaBoundaryDate(
+      chinaNow.getUTCFullYear(),
+      chinaNow.getUTCMonth(),
+      1,
+    );
 
     const [
       todayRevenue,
@@ -83,12 +94,12 @@ export class DashboardService {
     const rows = await this.dataSource
       .getRepository(SaleOrderEntity)
       .createQueryBuilder('saleOrder')
-      .select(["datetime(saleOrder.created_at, 'localtime') AS createdAt", 'saleOrder.total_amount AS totalAmount'])
-      .where("datetime(saleOrder.created_at, 'localtime') >= :start", {
-        start: this.formatSqliteDateTime(start),
+      .select(['saleOrder.created_at AS createdAt', 'saleOrder.total_amount AS totalAmount'])
+      .where('saleOrder.created_at >= :start', {
+        start: this.formatUtcStorageDateTime(start),
       })
-      .andWhere("datetime(saleOrder.created_at, 'localtime') <= :end", {
-        end: this.formatSqliteDateTime(end),
+      .andWhere('saleOrder.created_at <= :end', {
+        end: this.formatUtcStorageDateTime(end),
       })
       .getRawMany<{ createdAt: string; totalAmount: number }>();
 
@@ -99,7 +110,7 @@ export class DashboardService {
     }));
 
     rows.forEach((row) => {
-      const createdAt = new Date(row.createdAt);
+      const createdAt = this.parseUtcStorageDateTime(row.createdAt);
       const bucketIndex = buckets.findIndex(
         (bucket) => createdAt >= bucket.start && createdAt <= bucket.end,
       );
@@ -207,11 +218,11 @@ export class DashboardService {
       .getRepository(SaleOrderEntity)
       .createQueryBuilder('saleOrder')
       .select('COALESCE(SUM(saleOrder.total_amount), 0)', 'amount')
-      .where("datetime(saleOrder.created_at, 'localtime') >= :start", {
-        start: this.formatSqliteDateTime(start),
+      .where('saleOrder.created_at >= :start', {
+        start: this.formatUtcStorageDateTime(start),
       })
-      .andWhere("datetime(saleOrder.created_at, 'localtime') <= :end", {
-        end: this.formatSqliteDateTime(end),
+      .andWhere('saleOrder.created_at <= :end', {
+        end: this.formatUtcStorageDateTime(end),
       })
       .getRawOne<{ amount: number }>();
 
@@ -283,20 +294,30 @@ export class DashboardService {
   }
 
   private buildTrendBuckets(period: 'day' | 'week' | 'month'): TrendBucket[] {
-    const now = new Date();
+    const chinaNow = this.getChinaShiftedDate();
 
     if (period === 'week') {
       return Array.from({ length: 8 }, (_, index) => {
-        const start = new Date(now);
-        start.setDate(now.getDate() - (7 - index) * 7);
-        start.setHours(0, 0, 0, 0);
+        const startChina = new Date(Date.UTC(
+          chinaNow.getUTCFullYear(),
+          chinaNow.getUTCMonth(),
+          chinaNow.getUTCDate() - (7 - index) * 7,
+        ));
+        const endChina = new Date(Date.UTC(
+          startChina.getUTCFullYear(),
+          startChina.getUTCMonth(),
+          startChina.getUTCDate() + 6,
+          23,
+          59,
+          59,
+          999,
+        ));
 
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
-        end.setHours(23, 59, 59, 999);
+        const start = new Date(startChina.getTime() - CHINA_OFFSET_MS);
+        const end = new Date(endChina.getTime() - CHINA_OFFSET_MS);
 
         return {
-          label: `${start.getMonth() + 1}/${start.getDate()}`,
+          label: `${startChina.getUTCMonth() + 1}/${startChina.getUTCDate()}`,
           start,
           end,
         };
@@ -305,11 +326,25 @@ export class DashboardService {
 
     if (period === 'month') {
       return Array.from({ length: 12 }, (_, index) => {
-        const start = new Date(now.getFullYear(), now.getMonth() - (11 - index), 1);
-        const end = new Date(start.getFullYear(), start.getMonth() + 1, 0, 23, 59, 59, 999);
+        const startChina = new Date(Date.UTC(
+          chinaNow.getUTCFullYear(),
+          chinaNow.getUTCMonth() - (11 - index),
+          1,
+        ));
+        const endChina = new Date(Date.UTC(
+          startChina.getUTCFullYear(),
+          startChina.getUTCMonth() + 1,
+          0,
+          23,
+          59,
+          59,
+          999,
+        ));
+        const start = new Date(startChina.getTime() - CHINA_OFFSET_MS);
+        const end = new Date(endChina.getTime() - CHINA_OFFSET_MS);
 
         return {
-          label: `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}`,
+          label: `${startChina.getUTCFullYear()}-${String(startChina.getUTCMonth() + 1).padStart(2, '0')}`,
           start,
           end,
         };
@@ -317,16 +352,45 @@ export class DashboardService {
     }
 
     return Array.from({ length: 7 }, (_, index) => {
-      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (6 - index));
-      const end = new Date(start);
-      end.setHours(23, 59, 59, 999);
+      const startChina = new Date(Date.UTC(
+        chinaNow.getUTCFullYear(),
+        chinaNow.getUTCMonth(),
+        chinaNow.getUTCDate() - (6 - index),
+      ));
+      const endChina = new Date(Date.UTC(
+        startChina.getUTCFullYear(),
+        startChina.getUTCMonth(),
+        startChina.getUTCDate(),
+        23,
+        59,
+        59,
+        999,
+      ));
+      const start = new Date(startChina.getTime() - CHINA_OFFSET_MS);
+      const end = new Date(endChina.getTime() - CHINA_OFFSET_MS);
 
       return {
-        label: `${start.getMonth() + 1}/${start.getDate()}`,
+        label: `${startChina.getUTCMonth() + 1}/${startChina.getUTCDate()}`,
         start,
         end,
       };
     });
+  }
+
+  private getChinaShiftedDate(date = new Date()) {
+    return new Date(date.getTime() + CHINA_OFFSET_MS);
+  }
+
+  private createChinaBoundaryDate(
+    year: number,
+    month: number,
+    day: number,
+    hours = 0,
+    minutes = 0,
+    seconds = 0,
+    milliseconds = 0,
+  ) {
+    return new Date(Date.UTC(year, month, day, hours, minutes, seconds, milliseconds) - CHINA_OFFSET_MS);
   }
 
   private buildExpiryWarning(product: ProductEntity, now: Date) {
@@ -364,14 +428,12 @@ export class DashboardService {
     };
   }
 
-  private formatSqliteDateTime(date: Date) {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    const seconds = String(date.getSeconds()).padStart(2, '0');
+  private formatUtcStorageDateTime(date: Date) {
+    return date.toISOString().slice(0, 19).replace('T', ' ');
+  }
 
-    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
+  private parseUtcStorageDateTime(value: string) {
+    const normalized = value.trim().replace(' ', 'T');
+    return new Date(normalized.endsWith('Z') ? normalized : `${normalized}Z`);
   }
 }

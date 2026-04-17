@@ -289,6 +289,8 @@ type AttachmentSaleOrderCandidateRow = {
   itemSubtotal: number;
 };
 
+const CHINA_OFFSET_MS = 8 * 60 * 60 * 1000;
+
 @Injectable()
 export class AiService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(AiService.name);
@@ -1555,7 +1557,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       JOIN sale_order_item soi ON soi.order_id = so.id
       JOIN product p ON p.id = soi.product_id
       LEFT JOIN customer c ON c.id = so.customer_id
-      WHERE so.created_at >= datetime('now', 'localtime', '-30 day')
+      WHERE so.created_at >= datetime('now', '-30 day')
       ORDER BY so.created_at DESC, soi.id ASC
       LIMIT 300
     `) as AttachmentSaleOrderCandidateRow[];
@@ -1573,7 +1575,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const scoredOrders = [...grouped.values()]
       .map((rows) => ({ rows, score: this.scoreSaleOrderCandidate(recognized, rows) }))
       .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score || Date.parse(b.rows[0].createdAt) - Date.parse(a.rows[0].createdAt));
+      .sort((a, b) => b.score - a.score || this.parseUtcStorageDateTime(b.rows[0].createdAt).getTime() - this.parseUtcStorageDateTime(a.rows[0].createdAt).getTime());
 
     const best = scoredOrders[0];
     if (!best || best.score < 6) {
@@ -1639,7 +1641,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       return `- ${row.productName}${teaSuffix} ${this.formatQuantityText(row as unknown as Record<string, unknown>)}，单价 ¥${row.unitPrice.toLocaleString()}，小计 ¥${row.itemSubtotal.toLocaleString()}`;
     });
 
-    const createdAt = order.createdAt ? order.createdAt.replace('T', ' ') : '未知';
+    const createdAt = order.createdAt ? this.formatChinaDateTime(this.parseUtcStorageDateTime(order.createdAt)) : '未知';
     const unpaidAmount = Math.max(order.unpaidAmount, 0);
 
     return [
@@ -1716,7 +1718,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       JOIN sale_order_item soi ON soi.order_id = so.id
       JOIN product p ON p.id = soi.product_id
       LEFT JOIN customer c ON c.id = so.customer_id
-      WHERE so.created_at >= datetime('now', 'localtime', '-30 day')
+      WHERE so.created_at >= datetime('now', '-30 day')
       ORDER BY so.created_at DESC, soi.id ASC
       LIMIT 300
     `) as AttachmentSaleOrderCandidateRow[];
@@ -1728,7 +1730,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const scoredOrders = [...grouped.values()]
       .map((rows) => ({ rows, score: this.scoreSaleOrderFollowUpCandidate(rows, productNames, priceHints, quantityHints) }))
       .filter((item) => item.score > 0)
-      .sort((a, b) => b.score - a.score || Date.parse(b.rows[0].createdAt) - Date.parse(a.rows[0].createdAt));
+      .sort((a, b) => b.score - a.score || this.parseUtcStorageDateTime(b.rows[0].createdAt).getTime() - this.parseUtcStorageDateTime(a.rows[0].createdAt).getTime());
 
     const best = scoredOrders[0];
     if (!best || best.score < 8) {
@@ -1771,6 +1773,23 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     }
 
     return score;
+  }
+
+  private parseUtcStorageDateTime(value: string) {
+    const normalized = value.includes('T') ? value : value.replace(' ', 'T');
+    const isoValue = /(?:Z|[+-]\d{2}:\d{2})$/.test(normalized) ? normalized : `${normalized}Z`;
+    return new Date(isoValue);
+  }
+
+  private formatChinaDateTime(date: Date) {
+    const chinaDate = new Date(date.getTime() + CHINA_OFFSET_MS);
+    const year = chinaDate.getUTCFullYear();
+    const month = String(chinaDate.getUTCMonth() + 1).padStart(2, '0');
+    const day = String(chinaDate.getUTCDate()).padStart(2, '0');
+    const hours = String(chinaDate.getUTCHours()).padStart(2, '0');
+    const minutes = String(chinaDate.getUTCMinutes()).padStart(2, '0');
+    const seconds = String(chinaDate.getUTCSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   }
 
   private scoreCustomerIdentity(
