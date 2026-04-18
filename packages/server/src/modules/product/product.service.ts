@@ -19,6 +19,7 @@ import { ProductEntity } from '../../entities/product.entity';
 import { StockRecordEntity } from '../../entities/stock-record.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { ProductExtSchemaService } from './product-ext-schema.service';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
@@ -35,6 +36,7 @@ export class ProductService {
     private readonly categoryRepository: Repository<CategoryEntity>,
     @InjectDataSource()
     private readonly dataSource: DataSource,
+    private readonly productExtSchemaService: ProductExtSchemaService,
   ) {}
 
   async getCategoryTree() {
@@ -326,7 +328,7 @@ export class ProductService {
   }
 
   async createProduct(dto: CreateProductDto, user: AuthUser) {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       await this.ensureCategoryExists(dto.categoryId);
 
       let sku = dto.sku;
@@ -385,6 +387,9 @@ export class ProductService {
 
       return savedProduct;
     });
+
+    this.productExtSchemaService.invalidate();
+    return result;
   }
 
   async updateProduct(id: number, dto: UpdateProductDto, user: AuthUser) {
@@ -439,7 +444,11 @@ export class ProductService {
       product.producedAt = dto.productionDate ?? null;
     }
 
-    return this.productRepository.save(product);
+    const saved = await this.productRepository.save(product);
+    if (dto.extData !== undefined) {
+      this.productExtSchemaService.invalidate();
+    }
+    return saved;
   }
 
   async deleteProduct(id: number) {
@@ -451,6 +460,7 @@ export class ProductService {
     product.status = 0;
     product.deletedAt = new Date().toISOString();
     await this.productRepository.save(product);
+    this.productExtSchemaService.invalidate();
 
     return { success: true };
   }

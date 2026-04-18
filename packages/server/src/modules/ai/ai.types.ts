@@ -107,6 +107,12 @@ export type AiStructuredContext = {
   supplierNames?: string[];
   productNames?: string[];
   reasonCodes?: string[];
+  /** product.ext_data 的可用 key 列表（提示 prompt-center 可用 json_extract 精准过滤） */
+  productExtKeys?: string[];
+  /** product.ext_data 每个 key 对应的枚举示例值（去重后取前若干个） */
+  productExtValues?: Record<string, string[]>;
+  /** product 主表中可能承载专业属性描述的列（spec/remark/origin/...）及其样值 */
+  productAttributeColumns?: Record<string, string[]>;
 };
 
 export type AiPromptFetchResult =

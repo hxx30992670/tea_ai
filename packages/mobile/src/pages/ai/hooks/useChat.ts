@@ -113,18 +113,15 @@ export function useChat() {
     setStatusPhase('')
   }, [])
 
-  // ── 初始化：拉取会话列表，自动加载最新会话 ───────────────
+  // ── 初始化：仅拉取会话列表，进入页面默认保持新对话区 ─────
   useEffect(() => {
     void (async () => {
       try {
         const list = await aiApi.sessions()
         setSessions(list)
-        if (list.length > 0) {
-          await loadSession(list[0].sessionId)
-        }
       } catch { /* ignore */ }
     })()
-  }, [loadSession])
+  }, [])
 
   // ── 发送消息 ──────────────────────────────────────────────
   const sendMessage = useCallback(

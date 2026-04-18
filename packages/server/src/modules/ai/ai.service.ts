@@ -13,6 +13,7 @@ import { extractSqlFromContent, formatRowsForSummary } from './ai-sql.util';
 import { AiHistoryQueryDto } from './dto/ai-history-query.dto';
 import { AiTestDto } from './dto/ai-test.dto';
 import { AiAttachment, AiCapabilityCode, AiChatHistoryItem, AiContentPart, AiPromptMessage, AiRuntimeConfig, AiStructuredContext } from './ai.types';
+import { ProductExtSchemaService } from '../product/product-ext-schema.service';
 import { ModelProviderClient } from './model-provider.interface';
 import { ModelProviderRegistry } from './model-provider.registry';
 
@@ -77,6 +78,15 @@ type StrategyQuestionResolution = {
   mode: AiQuestionMode;
   effectiveQuestion: string;
   summaryQuestion?: string;
+};
+
+type AiInventoryAnswerRow = {
+  label: string;
+  stockQty: number;
+  safeStock: number | null;
+  unit: string;
+  packageUnit: string | null;
+  packageSize: number | null;
 };
 
 const STRATEGY_CITY_CLARIFY_ANSWER = '要按当前城市做本地化方案，我先需要知道城市名。请直接告诉我是哪个城市，比如“贵阳市”或“昆明市”，我再一次性结合销量、天气和当地茶文化给您生成方案。';
@@ -307,7 +317,41 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     private readonly modelProviderRegistry: ModelProviderRegistry,
     private readonly dashboardService: DashboardService,
     private readonly systemService: SystemService,
+    private readonly productExtSchemaService: ProductExtSchemaService,
   ) {}
+
+  /** 把最新的 product.ext_data schema 合并进 structuredContext，供 prompt-center 生成精准 SQL */
+  private async withProductExtSchema(
+    structuredContext: AiStructuredContext,
+  ): Promise<AiStructuredContext> {
+    try {
+      const hints = await this.productExtSchemaService.getHints();
+      const hasExt = hints.productExtKeys.length > 0;
+      const hasColumns = Object.keys(hints.productAttributeColumns).length > 0;
+      if (!hasExt && !hasColumns) {
+        return structuredContext;
+      }
+      return {
+        ...structuredContext,
+        productExtKeys: hints.productExtKeys,
+        productExtValues: hints.productExtValues,
+        productAttributeColumns: hints.productAttributeColumns,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '未知错误';
+      this.logger.warn(`商品扩展字段 schema 提取失败，降级忽略: ${message}`);
+      return structuredContext;
+    }
+  }
+
+  /** 剥离 schema hints，避免写入会话或历史上下文（schema 是全局的，不该按会话沉淀） */
+  private stripProductExtSchema(
+    structuredContext: AiStructuredContext | undefined,
+  ): Omit<AiStructuredContext, 'productExtKeys' | 'productExtValues' | 'productAttributeColumns'> {
+    if (!structuredContext) return {};
+    const { productExtKeys: _k, productExtValues: _v, productAttributeColumns: _c, ...rest } = structuredContext;
+    return rest;
+  }
 
   onModuleInit() {
     this.heartbeatTimer = setInterval(() => {
@@ -602,6 +646,21 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       await this.saveConversation(user.sub, saveQuestion, answer, queryResult.sql, undefined, currentSessionId);
       emit('token', { content: answer });
       return { enabled: true, code: 'OK' as const, reason: '', answer };
+    }
+
+    const deterministicInventoryAnswer = questionMode === 'data'
+      ? this.buildDeterministicInventoryAnswer(queryResult.rows)
+      : null;
+    if (deterministicInventoryAnswer) {
+      const nextStructuredContext = await this.aiPromptClientService.buildStructuredContext(
+        availability.config,
+        structuredContext,
+        queryResult.rows,
+      );
+      await this.saveConversation(user.sub, saveQuestion, deterministicInventoryAnswer, queryResult.sql, nextStructuredContext, currentSessionId);
+      emit('rows', { rows: queryResult.rows });
+      emit('token', { content: deterministicInventoryAnswer });
+      return { enabled: true, code: 'OK' as const, reason: '', answer: deterministicInventoryAnswer };
     }
 
     const deterministicAnswer = questionMode === 'data'
@@ -2239,11 +2298,14 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const startedAt = Date.now();
     emit('status', { phase: 'sql', message: '正在理解问题，生成查询语句...' });
 
+    // 把商品 ext_data 的 key/值样本合并进 context，供 prompt-center 生成 json_extract 的精准过滤条件
+    const schemaAwareContext = await this.withProductExtSchema(structuredContext);
+
     const sqlPromptResult = await this.aiPromptClientService.fetchSqlMessages(
       effectiveQuestion,
       config,
       history,
-      structuredContext,
+      schemaAwareContext,
       userId,
       {
         sessionId,
@@ -2321,7 +2383,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       providerClient,
       config,
       history,
-      structuredContext,
+      schemaAwareContext,
       userId,
       sessionId,
       saveQuestion,
@@ -2336,7 +2398,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
         providerClient,
         config,
         history,
-        structuredContext,
+        schemaAwareContext,
         userId,
       );
       await this.reportUsageLogSafe(config, {
@@ -2655,6 +2717,117 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     return null;
   }
 
+  private buildDeterministicInventoryAnswer(rows: Record<string, unknown>[]) {
+    if (rows.length === 0) {
+      return null;
+    }
+
+    const inventoryRows = rows
+      .map((row) => this.parseInventoryAnswerRow(row))
+      .filter((row): row is AiInventoryAnswerRow => row !== null);
+
+    if (inventoryRows.length === 0 || inventoryRows.length !== rows.length) {
+      return null;
+    }
+
+    if (inventoryRows.length === 1) {
+      const item = inventoryRows[0];
+      const stockText = this.formatInventoryQuantity(item.stockQty, item);
+      const safeText = item.safeStock !== null && item.safeStock > 0
+        ? this.formatInventoryQuantity(item.safeStock, item)
+        : '';
+
+      const statusText = item.safeStock !== null && item.safeStock > 0
+        ? (
+            item.stockQty <= item.safeStock
+              ? item.stockQty === 0
+                ? `⚠️ 当前库存为 0，已低于安全库存（安全线 ${safeText}），建议尽快补货`
+                : `⚠️ 当前库存已低于安全库存（当前 ${stockText}，安全线 ${safeText}），建议尽快补货`
+              : `库存充足（安全线 ${safeText}）`
+          )
+        : (item.stockQty > 0 ? '库存充足' : '当前库存为 0');
+
+      return [
+        `${item.label}：库存 ${stockText}`,
+        statusText,
+      ].join('\n\n');
+    }
+
+    const detailLines = inventoryRows
+      .slice(0, 8)
+      .map((item) => `${item.label}：库存 ${this.formatInventoryQuantity(item.stockQty, item)}`);
+
+    if (inventoryRows.length > 8) {
+      detailLines.push(`……其余 ${inventoryRows.length - 8} 项未展开`);
+    }
+
+    const lowStockRows = inventoryRows.filter((item) => item.safeStock !== null && item.safeStock > 0 && item.stockQty <= item.safeStock);
+    const summary = lowStockRows.length === 0
+      ? '以上商品当前都高于各自安全库存。'
+      : `其中 ${lowStockRows.length} 项低于安全库存，建议优先补货：${lowStockRows.slice(0, 5).map((item) => item.label).join('、')}${lowStockRows.length > 5 ? ' 等' : ''}。`;
+
+    return [...detailLines, '', summary].join('\n');
+  }
+
+  private parseInventoryAnswerRow(row: Record<string, unknown>): AiInventoryAnswerRow | null {
+    const labelBase = this.getText(row, ['product_name', 'productName', 'name']);
+    const stockQty = this.getOptionalNumber(row, ['stock_qty', 'stockQty']);
+    if (!labelBase || stockQty === null) {
+      return null;
+    }
+
+    const spec = this.getText(row, ['spec']);
+    const year = this.getOptionalNumber(row, ['year']);
+    const labelParts = [
+      spec,
+      year && year > 0 ? `${this.formatQuantityNumber(year)}年` : '',
+    ].filter(Boolean);
+
+    const unit = this.getText(row, ['unit', 'base_unit', 'baseUnit']);
+    const packageUnit = this.getText(row, ['package_unit', 'packageUnit']) || null;
+    const packageSize = this.getOptionalNumber(row, ['package_size', 'packageSize']);
+
+    return {
+      label: labelParts.length > 0 ? `${labelBase}（${labelParts.join('·')}）` : labelBase,
+      stockQty,
+      safeStock: this.getOptionalNumber(row, ['safe_stock', 'safeStock']),
+      unit,
+      packageUnit,
+      packageSize: packageSize !== null && packageSize > 0 ? packageSize : null,
+    };
+  }
+
+  private formatInventoryQuantity(value: number, row: Pick<AiInventoryAnswerRow, 'unit' | 'packageUnit' | 'packageSize'>) {
+    const normalizedValue = Number(this.formatQuantityNumber(value));
+    const baseUnit = row.unit ?? '';
+    const packageUnit = row.packageUnit ?? '';
+    const packageSize = row.packageSize ?? 0;
+
+    if (!packageUnit || packageSize <= 0 || normalizedValue < packageSize) {
+      return `${this.formatQuantityNumber(normalizedValue)}${baseUnit}`;
+    }
+
+    const packageQty = Math.floor(normalizedValue / packageSize);
+    const looseQty = Number(this.formatQuantityNumber(normalizedValue - packageQty * packageSize));
+    const parts: string[] = [];
+    if (packageQty > 0) {
+      parts.push(`${this.formatQuantityNumber(packageQty)}${packageUnit}`);
+    }
+    if (looseQty > 0) {
+      parts.push(`${this.formatQuantityNumber(looseQty)}${baseUnit}`);
+    }
+
+    return parts.join('') || `0${baseUnit}`;
+  }
+
+  private formatQuantityNumber(value: number) {
+    if (!Number.isFinite(value)) {
+      return '0';
+    }
+
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
+  }
+
   private buildContactAnswer(question: string, rows: Record<string, unknown>[]) {
     if (!this.isContactQuestion(question) || !this.hasContactColumns(rows)) {
       return null;
@@ -2827,6 +3000,20 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     return 0;
   }
 
+  private getOptionalNumber(row: Record<string, unknown>, keys: string[]) {
+    for (const key of keys) {
+      const value = row[key];
+      if (typeof value === 'number' && Number.isFinite(value)) {
+        return value;
+      }
+      if (typeof value === 'string' && value.trim() && !Number.isNaN(Number(value))) {
+        return Number(value);
+      }
+    }
+
+    return null;
+  }
+
   private formatQuantityText(row: Record<string, unknown>) {
     const packageUnit = this.getText(row, ['package_unit', 'packageUnit']);
     const baseUnit = this.getText(row, ['unit']);
@@ -2852,6 +3039,9 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     sessionId?: string,
     rows?: Record<string, unknown>[],
   ) {
+    // schema hints 属于表结构快照，不随会话持久化
+    const persistedContext = this.stripProductExtSchema(structuredContext);
+
     await this.aiConversationRepository.save(
       this.aiConversationRepository.create({
         userId,
@@ -2860,8 +3050,8 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
         answer,
         sqlGenerated,
         contextJson:
-          structuredContext && Object.values(structuredContext).some((value) => (value?.length ?? 0) > 0)
-            ? JSON.stringify(structuredContext)
+          Object.values(persistedContext).some((value) => (value?.length ?? 0) > 0)
+            ? JSON.stringify(persistedContext)
             : null,
         rowsJson: rows && rows.length > 0 ? JSON.stringify(rows) : null,
       }),
