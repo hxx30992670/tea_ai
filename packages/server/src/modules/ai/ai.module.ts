@@ -8,6 +8,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { AiConversationEntity } from '../../entities/ai-conversation.entity';
 import { ProductEntity } from '../../entities/product.entity';
 import { DashboardModule } from '../dashboard/dashboard.module';
+import { ProductModule } from '../product/product.module';
 import { SystemModule } from '../system/system.module';
 import { AiConfigService } from './ai-config.service';
 import { AiController } from './ai.controller';
@@ -22,6 +23,7 @@ import { QwenProviderClient } from './providers/qwen.provider';
   imports: [
     TypeOrmModule.forFeature([AiConversationEntity, ProductEntity]),  // 注册 AI 对话及产品实体
     DashboardModule,
+    ProductModule,  // 提供 ProductExtSchemaService 供 AI schema hints 使用
     SystemModule,  // 用于读取 AI 配置
   ],
   controllers: [AiController],
