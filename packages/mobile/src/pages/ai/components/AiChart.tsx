@@ -8,7 +8,7 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import type { AiVisualizationSpec } from '@/types'
-import { fieldToLabel, fmtNum, fmtQtyWithUnit, fmtFieldValue, fmtNumRaw } from '@/lib/detectVisualization'
+import { fieldToLabel, fmtNum, fmtQtyWithUnit, fmtFieldValue, fmtNumRaw, prepareVisualizationRows } from '@/lib/detectVisualization'
 import { getDisplayColumns, isSummarizableMetricField } from '@shared/constants/ai-field-label'
 
 const COLORS = ['#D4A853', '#52b788', '#74c69d', '#e76f51', '#457b9d', '#e9c46a', '#a8dadc', '#f4a261']
@@ -28,34 +28,37 @@ function formatCellValue(field: string, value: unknown): string {
 
 // ─── 数据摘要 ─────────────────────────────────────────────────────────────────
 function Summary({ type, rows, spec }: { type: string; rows: Record<string, unknown>[]; spec: AiVisualizationSpec }) {
+  const chartRows = spec.type === 'bar' || spec.type === 'line' || spec.type === 'pie'
+    ? prepareVisualizationRows(rows, spec.type === 'pie' ? spec.nameField ?? '' : spec.xField ?? '', spec.type === 'pie' ? undefined : spec.yField)
+    : rows
   let text = ''
 
   if (type === 'bar' && spec.xField && spec.yField) {
     const yLabel = fieldToLabel(spec.yField)
-    const vals = rows.map((r) => Number(r[spec.yField!]) || 0)
+    const vals = chartRows.map((r) => Number(r[spec.yField!]) || 0)
     const total = vals.reduce((a, b) => a + b, 0)
     const maxVal = Math.max(...vals)
     const minVal = Math.min(...vals)
-    const maxName = String(rows[vals.indexOf(maxVal)]?.[spec.xField] ?? '')
-    const minName = String(rows[vals.indexOf(minVal)]?.[spec.xField] ?? '')
-    const maxRow = rows[vals.indexOf(maxVal)] ?? {}
-    const minRow = rows[vals.indexOf(minVal)] ?? {}
-    text = `共 ${rows.length} 项，${yLabel}合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。最高「${maxName}」${fmtQtyWithUnit(maxVal, spec.yField!, maxRow, rows)}，最低「${minName}」${fmtQtyWithUnit(minVal, spec.yField!, minRow, rows)}。`
+    const maxIdx = vals.indexOf(maxVal)
+    const minIdx = vals.indexOf(minVal)
+    const maxName = String(chartRows[maxIdx]?.[spec.xField] ?? '')
+    const minName = String(chartRows[minIdx]?.[spec.xField] ?? '')
+    text = `共 ${rows.length} 项，${yLabel}合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。最高「${maxName}」${fmtQtyWithUnit(maxVal, spec.yField!, rows[maxIdx] ?? {}, rows)}，最低「${minName}」${fmtQtyWithUnit(minVal, spec.yField!, rows[minIdx] ?? {}, rows)}。`
   }
 
   if (type === 'line' && spec.xField && spec.yField) {
     const yLabel = fieldToLabel(spec.yField)
-    const vals = rows.map((r) => Number(r[spec.yField!]) || 0)
+    const vals = chartRows.map((r) => Number(r[spec.yField!]) || 0)
     const total = vals.reduce((a, b) => a + b, 0)
     const avg = total / vals.length
-    const firstX = String(rows[0]?.[spec.xField] ?? '')
-    const lastX = String(rows[rows.length - 1]?.[spec.xField] ?? '')
+    const firstX = String(chartRows[0]?.[spec.xField] ?? '')
+    const lastX = String(chartRows[chartRows.length - 1]?.[spec.xField] ?? '')
     text = `${firstX}→${lastX} 共 ${rows.length} 个周期，${yLabel}均值 ${fmtQtyWithUnit(avg, spec.yField!, rows[0] ?? {}, rows)}，合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。`
   }
 
   if (type === 'pie' && spec.nameField && spec.valueField) {
     const yLabel = fieldToLabel(spec.valueField)
-    const data = rows
+    const data = chartRows
       .map((r) => ({ name: String(r[spec.nameField!] ?? ''), value: Number(r[spec.valueField!]) || 0 }))
       .filter((d) => d.value > 0)
       .sort((a, b) => b.value - a.value)
@@ -121,7 +124,7 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
 
 // ─── 柱状图 ───────────────────────────────────────────────────────────────────
 function BarViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xField: string; yField: string }) {
-  const data = rows.map((r) => ({ ...r, [yField]: Number(r[yField]) || 0 }))
+  const data = prepareVisualizationRows(rows, xField, yField)
   return (
     <ResponsiveContainer width="100%" height={200}>
       <BarChart data={data} margin={{ top: 6, right: 8, left: -16, bottom: 36 }}>
@@ -137,7 +140,7 @@ function BarViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xFi
 
 // ─── 折线图 ───────────────────────────────────────────────────────────────────
 function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xField: string; yField: string }) {
-  const data = rows.map((r) => ({ ...r, [yField]: Number(r[yField]) || 0 }))
+  const data = prepareVisualizationRows(rows, xField, yField)
   return (
     <ResponsiveContainer width="100%" height={200}>
       <LineChart data={data} margin={{ top: 6, right: 8, left: -16, bottom: 36 }}>
@@ -161,7 +164,7 @@ function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xF
 
 // ─── 饼图 ─────────────────────────────────────────────────────────────────────
 function PieViz({ rows, nameField, valueField }: { rows: Record<string, unknown>[]; nameField: string; valueField: string }) {
-  const data = rows
+  const data = prepareVisualizationRows(rows, nameField)
     .map((r) => ({ name: String(r[nameField] ?? ''), value: Number(r[valueField]) || 0 }))
     .filter((d) => d.value > 0)
   const total = data.reduce((s, d) => s + d.value, 0)

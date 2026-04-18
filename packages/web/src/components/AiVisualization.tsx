@@ -24,6 +24,7 @@ import {
 } from '@shared/constants/ai-field-label'
 
 const COLORS = ['#2D6A4F', '#52b788', '#74c69d', '#f4a261', '#e76f51', '#457b9d', '#e9c46a', '#a8dadc']
+const DERIVED_CATEGORY_FIELD = '__viz_category__'
 
 interface Props {
   rows: Record<string, unknown>[]
@@ -31,9 +32,31 @@ interface Props {
 }
 
 const CHART_REQUEST_RE = /图表|可视化|柱状图|条形图|折线图|饼图|曲线图|趋势图|对比图/
+const COMPARISON_REQUEST_RE = /对比|比较|比一比|和.+比|相比|相较|排名|排行|名次|领先|落后|高低|头部|梯队|其它茶|其他茶/
+const QUANTITY_REQUEST_RE = /销量|卖了多少|卖出|总量|数量|多少斤|多少两|多少饼|多少盒|多少提|多少件|动销|出货量/
+const ORDER_COUNT_REQUEST_RE = /订单数|单量|多少单|几单/
+const AMOUNT_REQUEST_RE = /销售额|销售金额|营收|营业额|收入|成交额|金额|gmv/i
 
-function pickPreferredNumericField(cols: string[]): string | undefined {
-  const preferred = [
+function pickPreferredNumericField(cols: string[], question = ''): string | undefined {
+  const amountPreferred = [
+    'net_sales', 'netSales', 'sales', 'revenue', 'amount', 'total_amount', 'totalAmount',
+    'net_profit', 'netProfit', 'gross_profit', 'grossProfit', 'profit_rate', 'profitRate',
+    'total_qty', 'totalQty', 'quantity', 'available_qty', 'availableQty', 'stock_qty', 'stockQty',
+    'order_count', 'orderCount', 'orders', 'count', 'cnt',
+  ]
+  const quantityPreferred = [
+    'total_qty', 'totalQty', 'quantity', 'available_qty', 'availableQty', 'stock_qty', 'stockQty',
+    'order_count', 'orderCount', 'orders', 'count', 'cnt',
+    'net_sales', 'netSales', 'sales', 'revenue', 'amount', 'total_amount', 'totalAmount',
+    'net_profit', 'netProfit', 'gross_profit', 'grossProfit', 'profit_rate', 'profitRate',
+  ]
+  const orderPreferred = [
+    'order_count', 'orderCount', 'orders', 'count', 'cnt',
+    'total_qty', 'totalQty', 'quantity',
+    'net_sales', 'netSales', 'sales', 'revenue', 'amount', 'total_amount', 'totalAmount',
+    'net_profit', 'netProfit', 'gross_profit', 'grossProfit', 'profit_rate', 'profitRate',
+  ]
+  const fallbackPreferred = [
     'net_sales', 'netSales', 'sales', 'revenue', 'amount', 'total_amount', 'totalAmount',
     'net_profit', 'netProfit', 'gross_profit', 'grossProfit', 'profit_rate', 'profitRate',
     'exchange_amount', 'exchangeAmount', 'return_amount', 'returnAmount', 'refund_amount', 'refundAmount',
@@ -42,7 +65,85 @@ function pickPreferredNumericField(cols: string[]): string | undefined {
   ]
 
   const filtered = cols.filter((field) => !NON_METRIC_NUMERIC_FIELDS.has(field))
+  if (filtered.length === 0) return undefined
+
+  const normalizedQuestion = question.trim()
+  const preferred = ORDER_COUNT_REQUEST_RE.test(normalizedQuestion)
+    ? orderPreferred
+    : QUANTITY_REQUEST_RE.test(normalizedQuestion) && !AMOUNT_REQUEST_RE.test(normalizedQuestion)
+      ? quantityPreferred
+      : AMOUNT_REQUEST_RE.test(normalizedQuestion)
+        ? amountPreferred
+        : fallbackPreferred
+
   return preferred.find((field) => filtered.includes(field)) ?? filtered[0]
+}
+
+function getTextValue(row: Record<string, unknown>, fields: string[]) {
+  for (const field of fields) {
+    const value = row[field]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+
+  return ''
+}
+
+function getDuplicateProductNames(rows: Record<string, unknown>[]) {
+  const countMap = new Map<string, number>()
+
+  rows.forEach((row) => {
+    const productName = getTextValue(row, ['product_name', 'productName', 'name'])
+    if (!productName) return
+    countMap.set(productName, (countMap.get(productName) ?? 0) + 1)
+  })
+
+  return new Set(
+    [...countMap.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name),
+  )
+}
+
+function resolveCategoryField(rows: Record<string, unknown>[], stringCols: string[]) {
+  const preferredField = stringCols[0]
+  if (!preferredField) return undefined
+
+  if (['product_name', 'productName', 'name'].includes(preferredField) && getDuplicateProductNames(rows).size > 0) {
+    return DERIVED_CATEGORY_FIELD
+  }
+
+  return preferredField
+}
+
+function buildDerivedCategoryLabel(row: Record<string, unknown>, duplicateProductNames: Set<string>) {
+  const productName = getTextValue(row, ['product_name', 'productName', 'name'])
+  if (!productName) return '-'
+  if (!duplicateProductNames.has(productName)) return productName
+
+  const spec = getTextValue(row, ['spec'])
+  const year = row.year
+  const yearText = typeof year === 'number' && Number.isFinite(year)
+    ? `${year}年`
+    : (typeof year === 'string' && year.trim() ? `${year.trim()}年` : '')
+  const extraParts = [spec, yearText].filter(Boolean)
+
+  return extraParts.length > 0 ? `${productName}（${extraParts.join('·')}）` : productName
+}
+
+function decorateVisualizationRows(
+  rows: Record<string, unknown>[],
+  xField: string,
+  yField?: string,
+) {
+  const duplicateProductNames = xField === DERIVED_CATEGORY_FIELD ? getDuplicateProductNames(rows) : new Set<string>()
+
+  return rows.map((row) => ({
+    ...row,
+    [xField]: xField === DERIVED_CATEGORY_FIELD
+      ? buildDerivedCategoryLabel(row, duplicateProductNames)
+      : String(row[xField] ?? ''),
+    ...(yField ? { [yField]: Number(row[yField]) || 0 } : {}),
+  }))
 }
 
 // ─── 自动检测可视化类型 ────────────────────────────────────────────────────────
@@ -83,14 +184,16 @@ export function detectVisualization(
 
   const q = question
   const isChartRequest = CHART_REQUEST_RE.test(q)
+  const isComparison = COMPARISON_REQUEST_RE.test(q) && rows.length > 1
   const isProportion = /占比|百分|比例|构成|分布/.test(q) && rows.length <= 10
   const isTrend = /趋势|走势|变化|按月|每月|每周|按日|每天|月份/.test(q) && (dateCols.length > 0 || stringCols.length > 0)
   const hasDetailIdentityField = DETAIL_RECORD_FIELDS.some((field) => cols.includes(field))
-  const hasPreferredMetric = Boolean(pickPreferredNumericField(numericCols))
+  const preferredMetric = pickPreferredNumericField(numericCols, q)
+  const hasPreferredMetric = Boolean(preferredMetric)
 
   const hasEnoughPointsForTrend = rows.length >= 2
   const hasNonZeroMetricValues = (() => {
-    const yField = pickPreferredNumericField(numericCols)
+    const yField = preferredMetric
     if (!yField) return false
     return rows.some((row) => {
       const value = Number(row[yField])
@@ -98,18 +201,25 @@ export function detectVisualization(
     })
   })()
 
+  if (isComparison && preferredMetric) {
+    const xField = resolveCategoryField(rows, stringCols)
+    if (xField) {
+      return { type: 'bar', xField, yField: preferredMetric }
+    }
+  }
+
   if (hasDetailIdentityField && !isChartRequest) {
     return { type: 'table' }
   }
 
   if (isChartRequest && hasPreferredMetric) {
-    const preferredYField = pickPreferredNumericField(numericCols)
+    const preferredYField = preferredMetric
 
     if (isProportion && stringCols.length >= 1 && preferredYField) {
-      return { type: 'pie', nameField: stringCols[0], valueField: preferredYField }
+      return { type: 'pie', nameField: resolveCategoryField(rows, stringCols) ?? stringCols[0], valueField: preferredYField }
     }
 
-    const xField = dateCols[0] || stringCols[0]
+    const xField = dateCols[0] || resolveCategoryField(rows, stringCols)
     if (xField && preferredYField) {
       if (dateCols.length > 0) {
         return hasEnoughPointsForTrend && hasNonZeroMetricValues ? { type: 'line', xField, yField: preferredYField } : { type: 'table' }
@@ -119,13 +229,13 @@ export function detectVisualization(
   }
 
   if (isProportion && hasPreferredMetric && stringCols.length >= 1) {
-    const valueField = pickPreferredNumericField(numericCols)
+    const valueField = preferredMetric
     if (valueField) return { type: 'pie', nameField: stringCols[0], valueField }
   }
 
   if (isTrend && hasPreferredMetric) {
-    const xField = dateCols[0] || stringCols[0]
-    const yField = pickPreferredNumericField(numericCols)
+    const xField = dateCols[0] || resolveCategoryField(rows, stringCols)
+    const yField = preferredMetric
     if (xField && yField) {
       return hasEnoughPointsForTrend && hasNonZeroMetricValues ? { type: 'line', xField, yField } : { type: 'table' }
     }
@@ -133,13 +243,13 @@ export function detectVisualization(
 
   // 有分类列 + 数值列 → 柱状图（行数 ≤ 20）
   if (stringCols.length >= 1 && hasPreferredMetric && rows.length <= 20) {
-    const yField = pickPreferredNumericField(numericCols)
+    const yField = preferredMetric
     if (yField) return { type: 'bar', xField: stringCols[0], yField }
   }
 
   // 有日期列 + 数值列 → 折线图
   if (dateCols.length >= 1 && hasPreferredMetric) {
-    const yField = pickPreferredNumericField(numericCols)
+    const yField = preferredMetric
     if (yField) {
       return hasEnoughPointsForTrend && hasNonZeroMetricValues ? { type: 'line', xField: dateCols[0], yField } : { type: 'table' }
     }
@@ -158,36 +268,39 @@ export function detectVisualization(
 function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string, unknown>[]; spec: AiVisualizationSpec }) {
   if (rows.length === 0) return null
 
+  const chartRows = spec.type === 'bar' || spec.type === 'line' || spec.type === 'pie'
+    ? decorateVisualizationRows(rows, spec.type === 'pie' ? spec.nameField ?? '' : spec.xField ?? '', spec.type === 'pie' ? undefined : spec.yField)
+    : rows
   let text = ''
 
   if (type === 'bar' && spec.xField && spec.yField) {
     const yLabel = fieldToLabel(spec.yField)
-    const values = rows.map((r) => Number(r[spec.yField!]) || 0)
+    const values = chartRows.map((r) => Number(r[spec.yField!]) || 0)
     const total = values.reduce((a, b) => a + b, 0)
     const maxVal = Math.max(...values)
     const minVal = Math.min(...values)
     const maxIdx = values.indexOf(maxVal)
     const minIdx = values.indexOf(minVal)
-    const maxRow = rows[maxIdx]
-    const minRow = rows[minIdx]
+    const maxRow = chartRows[maxIdx]
+    const minRow = chartRows[minIdx]
     const maxName = String(maxRow?.[spec.xField] ?? '')
     const minName = String(minRow?.[spec.xField] ?? '')
     const fmtTotal = fmtQtyWithUnit(total, spec.yField, rows[0], rows)
-    const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, maxRow, rows)
-    const fmtMin = fmtQtyWithUnit(minVal, spec.yField, minRow, rows)
+    const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, rows[maxIdx], rows)
+    const fmtMin = fmtQtyWithUnit(minVal, spec.yField, rows[minIdx], rows)
     text = `共 ${rows.length} 项数据，${yLabel}合计 ${fmtTotal}。其中「${maxName}」最高（${fmtMax}），「${minName}」最低（${fmtMin}）。`
   }
 
   if (type === 'line' && spec.xField && spec.yField) {
     const xLabel = fieldToLabel(spec.xField)
     const yLabel = fieldToLabel(spec.yField)
-    const values = rows.map((r) => Number(r[spec.yField!]) || 0)
+    const values = chartRows.map((r) => Number(r[spec.yField!]) || 0)
     const total = values.reduce((a, b) => a + b, 0)
     const avg = total / values.length
     const maxVal = Math.max(...values)
     const minVal = Math.min(...values)
-    const firstX = String(rows[0]?.[spec.xField] ?? '')
-    const lastX = String(rows[rows.length - 1]?.[spec.xField] ?? '')
+    const firstX = String(chartRows[0]?.[spec.xField] ?? '')
+    const lastX = String(chartRows[chartRows.length - 1]?.[spec.xField] ?? '')
     const fmtAvg = fmtQtyWithUnit(avg, spec.yField, rows[0], rows)
     const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, rows[0], rows)
     const fmtMin = fmtQtyWithUnit(minVal, spec.yField, rows[0], rows)
@@ -197,7 +310,7 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
 
   if (type === 'pie' && spec.nameField && spec.valueField) {
     const yLabel = fieldToLabel(spec.valueField)
-    const data = rows
+    const data = chartRows
       .map((r) => ({ name: String(r[spec.nameField!] ?? ''), value: Number(r[spec.valueField!]) || 0 }))
       .filter((d) => d.value > 0)
       .sort((a, b) => b.value - a.value)
@@ -275,7 +388,7 @@ function tooltipFormatter(value: number | string, name: string): [number | strin
 
 // ─── 柱状图 ───────────────────────────────────────────────────────────────────
 function BarViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xField: string; yField: string }) {
-  const data = rows.map((r) => ({ ...r, [yField]: Number(r[yField]) || 0 }))
+  const data = decorateVisualizationRows(rows, xField, yField)
   return (
     <ResponsiveContainer width="100%" height={240}>
       <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
@@ -291,7 +404,7 @@ function BarViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xFi
 
 // ─── 折线图 ───────────────────────────────────────────────────────────────────
 function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xField: string; yField: string }) {
-  const data = rows.map((r) => ({ ...r, [yField]: Number(r[yField]) || 0 }))
+  const data = decorateVisualizationRows(rows, xField, yField)
   return (
     <ResponsiveContainer width="100%" height={240}>
       <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
@@ -307,7 +420,7 @@ function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xF
 
 // ─── 饼图 ─────────────────────────────────────────────────────────────────────
 function PieViz({ rows, nameField, valueField }: { rows: Record<string, unknown>[]; nameField: string; valueField: string }) {
-  const data = rows
+  const data = decorateVisualizationRows(rows, nameField)
     .map((r) => ({ name: String(r[nameField] ?? ''), value: Number(r[valueField]) || 0 }))
     .filter((d) => d.value > 0)
 
