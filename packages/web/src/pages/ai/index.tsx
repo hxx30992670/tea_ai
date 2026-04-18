@@ -120,9 +120,6 @@ export default function AiPage() {
         setAiReason(suggestionRes.reason)
         setSuggestions(suggestionRes.suggestions)
         setSessions(sessionRes)
-        if (sessionRes.length > 0) {
-          await loadSession(sessionRes[0].sessionId)
-        }
       } catch {
         setAiEnabled(false)
         setAiCode(AI_CAPABILITY_CODES.AI_RUNTIME_ERROR)

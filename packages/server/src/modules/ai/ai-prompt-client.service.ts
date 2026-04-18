@@ -4,6 +4,7 @@
  * 支持授权验证、结构化上下文构建及本地降级处理
  */
 import { Injectable, Logger } from '@nestjs/common';
+import { existsSync, readFileSync } from 'fs';
 import { hostname } from 'os';
 import { fetchWithTimeout, getTimeoutMessage } from './fetch-timeout.util';
 import { attachRequestSignature } from './request-signature.util';
@@ -50,6 +51,8 @@ export class AiPromptClientService {
   /** 授权验证缓存：key → { ok, reason, expireAt } */
   private readonly authCache = new Map<string, { ok: boolean; reason: string; code: AiAuthorizationResult['code']; features: AiAuthorizationResult['features']; expireAt: number }>();
   private readonly AUTH_CACHE_TTL = 5 * 60_000; // 5 分钟
+  private readonly dockerHostAddress = process.env.PROMPT_SERVICE_DOCKER_HOST?.trim() || this.resolveDockerHostGateway();
+  private readonly rewrittenPromptHosts = new Set<string>();
 
   private toCapabilityCode(code?: string): AiAuthorizationResult['code'] {
     const allowedCodes = new Set<AiAuthorizationResult['code']>([
@@ -318,7 +321,7 @@ export class AiPromptClientService {
     }
 
     // 命中缓存则直接返回
-    const cacheKey = `${config.apiKey}:${config.serviceUniqueId}:${config.instanceToken}:${requiredFeature ?? 'none'}`;
+    const cacheKey = `${config.apiKey}:${config.serviceUniqueId}:${config.instanceToken}:${this.resolvePromptBaseUrl(config.promptServiceUrl)}:${requiredFeature ?? 'none'}`;
     const cached = this.authCache.get(cacheKey);
     if (cached && Date.now() < cached.expireAt) {
       return { ok: cached.ok, reason: cached.reason, code: cached.code, features: cached.features };
@@ -482,7 +485,59 @@ export class AiPromptClientService {
   }
 
   private normalizeUrl(baseUrl: string, path: string) {
-    return `${baseUrl.replace(/\/$/, '')}${path}`;
+    return `${this.resolvePromptBaseUrl(baseUrl).replace(/\/$/, '')}${path}`;
+  }
+
+  private resolvePromptBaseUrl(baseUrl: string) {
+    try {
+      const parsed = new URL(baseUrl);
+      const isLoopbackHost = ['localhost', '127.0.0.1', '::1'].includes(parsed.hostname);
+
+      if (!isLoopbackHost || !this.dockerHostAddress) {
+        return baseUrl;
+      }
+
+      parsed.hostname = this.dockerHostAddress;
+      const rewritten = parsed.toString().replace(/\/$/, '');
+      if (!this.rewrittenPromptHosts.has(baseUrl)) {
+        this.rewrittenPromptHosts.add(baseUrl);
+        this.logger.warn(`检测到容器内 Prompt 服务地址使用 ${baseUrl}，已自动改写为 ${rewritten}`);
+      }
+      return rewritten;
+    } catch {
+      return baseUrl;
+    }
+  }
+
+  private resolveDockerHostGateway() {
+    if (!existsSync('/.dockerenv')) {
+      return '';
+    }
+
+    try {
+      const routeTable = readFileSync('/proc/net/route', 'utf8');
+      const defaultRoute = routeTable
+        .split('\n')
+        .map((line) => line.trim().split(/\s+/))
+        .find((columns) => columns[1] === '00000000' && columns[2] && columns[2] !== '00000000');
+
+      if (!defaultRoute) {
+        return '';
+      }
+
+      const gatewayHex = defaultRoute[2];
+      const octets = gatewayHex.match(/../g);
+      if (!octets || octets.length !== 4) {
+        return '';
+      }
+
+      return octets
+        .reverse()
+        .map((segment) => parseInt(segment, 16))
+        .join('.');
+    } catch {
+      return '';
+    }
   }
 
   private buildSecurePayload(config: AiRuntimeConfig, payload: Record<string, unknown>) {
