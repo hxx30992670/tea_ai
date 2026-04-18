@@ -200,10 +200,21 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   avgAmount: "平均金额",
   total_qty: "总数量",
   totalQty: "总数量",
+  total_quantity: "总数量",
   supplier_count: "供应商数",
   supplierCount: "供应商数",
   customer_count: "客户数",
   customerCount: "客户数",
+  total_qty_sold: "总销量",
+  totalQtySold: "总销量",
+  qty_sold: "销量",
+  qtySold: "销量",
+  sold_qty: "销量",
+  soldQty: "销量",
+  sold_quantity: "销量",
+  soldQuantity: "销量",
+  quantity_sold: "销量",
+  quantitySold: "销量",
   // 库存计算字段
   available_qty: "可用库存",
   availableQty: "可用库存",
@@ -231,6 +242,8 @@ export const FIELD_LABEL_MAP: Record<string, string> = {
   lastFollowAt: "最近跟进时间",
   last_follow_date: "最近跟进日期",
   lastFollowDate: "最近跟进日期",
+  days_overdue: "逾期天数",
+  daysOverdue: "逾期天数",
   overdue_days: "逾期天数",
   overdueDays: "逾期天数",
   // 售后/换货
@@ -365,8 +378,20 @@ export const QTY_FIELDS = new Set([
   "stock_qty",
   "stockQty",
   "quantity",
+  "total_quantity",
+  "totalQuantity",
   "total_qty",
   "totalQty",
+  "total_qty_sold",
+  "totalQtySold",
+  "qty_sold",
+  "qtySold",
+  "sold_qty",
+  "soldQty",
+  "sold_quantity",
+  "soldQuantity",
+  "quantity_sold",
+  "quantitySold",
   "available_qty",
   "availableQty",
   "pending_qty",
@@ -377,6 +402,13 @@ export const QTY_FIELDS = new Set([
   "packageQty",
   "loose_qty",
   "looseQty",
+]);
+
+export const DAY_DURATION_FIELDS = new Set([
+  "days_overdue",
+  "daysOverdue",
+  "overdue_days",
+  "overdueDays",
 ]);
 
 // ─── 工具函数 ────────────────────────────────────────────────────────────────────
@@ -402,6 +434,118 @@ export function fmtNum(v: unknown): string {
 /** 基础数值格式化（不处理 null/undefined） */
 export function fmtNumRaw(v: number): string | number {
   return Number.isInteger(v) ? v : Number(v.toFixed(2));
+}
+
+export function fmtCompactNum(v: number): string {
+  const rounded = Number(v.toFixed(2));
+  return Number.isInteger(rounded) ? rounded.toLocaleString() : String(rounded);
+}
+
+/** 将小数天数格式化为“X天Y小时” */
+export function fmtDayDuration(v: number): string {
+  if (!Number.isFinite(v)) return String(v);
+
+  const sign = v < 0 ? "-" : "";
+  const totalHours = Math.round(Math.abs(v) * 24);
+  const days = Math.floor(totalHours / 24);
+  const hours = totalHours % 24;
+
+  if (days > 0 && hours > 0) return `${sign}${days}天${hours}小时`;
+  if (days > 0) return `${sign}${days}天`;
+  if (hours > 0) return `${sign}${hours}小时`;
+  return `${sign}0小时`;
+}
+
+function normalizeFieldKey(field: string): string {
+  return field.replace(/([A-Z])/g, "_$1").toLowerCase();
+}
+
+function isQuantityField(fieldName: string): boolean {
+  return QTY_FIELDS.has(fieldName) || QTY_FIELDS.has(normalizeFieldKey(fieldName));
+}
+
+type QuantityDisplayMeta = {
+  factor: number;
+  unit?: string;
+};
+
+function getRowQuantityDisplayMeta(
+  fieldName: string,
+  row: Record<string, unknown>,
+): QuantityDisplayMeta | null {
+  if (!isQuantityField(fieldName)) return null;
+
+  const unit = (row.unit ?? row.base_unit ?? row.baseUnit) as string | undefined;
+  const packageUnit = (row.package_unit ?? row.packageUnit) as string | undefined;
+  const packageSize = Number(row.package_size ?? row.packageSize) || 0;
+
+  if (packageUnit && packageSize > 1) {
+    return { factor: packageSize, unit: packageUnit };
+  }
+
+  if (unit) {
+    return { factor: 1, unit };
+  }
+
+  return { factor: 1 };
+}
+
+function getCommonQuantityDisplayMeta(
+  fieldName: string,
+  rows: Record<string, unknown>[],
+): QuantityDisplayMeta | null {
+  if (!isQuantityField(fieldName) || rows.length === 0) return null;
+
+  const metas = rows
+    .map((row) => getRowQuantityDisplayMeta(fieldName, row))
+    .filter((meta): meta is QuantityDisplayMeta => meta !== null);
+
+  if (metas.length !== rows.length || metas.length === 0) return null;
+
+  const [first, ...rest] = metas;
+  const consistent = rest.every((meta) => meta.factor === first.factor && meta.unit === first.unit);
+
+  return consistent ? first : null;
+}
+
+export function normalizeChartMetricValue(
+  value: unknown,
+  fieldName: string,
+  row: Record<string, unknown>,
+  rows: Record<string, unknown>[],
+): number {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return 0;
+
+  const displayMeta = getCommonQuantityDisplayMeta(fieldName, rows);
+  if (!displayMeta) return numericValue;
+
+  return Number((numericValue / displayMeta.factor).toFixed(4));
+}
+
+export function getChartMetricUnit(
+  fieldName: string,
+  rows: Record<string, unknown>[],
+): string | null {
+  return getCommonQuantityDisplayMeta(fieldName, rows)?.unit ?? null;
+}
+
+export function formatChartMetricValue(
+  value: unknown,
+  fieldName: string,
+  rows: Record<string, unknown>[],
+): string {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return String(value);
+
+  if (DAY_DURATION_FIELDS.has(fieldName) || DAY_DURATION_FIELDS.has(normalizeFieldKey(fieldName))) {
+    return fmtDayDuration(numericValue);
+  }
+
+  const unit = getChartMetricUnit(fieldName, rows);
+  const formattedNumber = fmtCompactNum(numericValue);
+
+  return unit ? `${formattedNumber}${unit}` : formattedNumber;
 }
 
 /**
@@ -453,6 +597,10 @@ export function fmtFieldValue(field: string, value: unknown): string {
   }
   if (field === "metric" && typeof value === "string") {
     return METRIC_VALUE_MAP[value] ?? value;
+  }
+  if (DAY_DURATION_FIELDS.has(field)) {
+    const dayValue = typeof value === "number" ? value : Number(value);
+    if (!Number.isNaN(dayValue)) return fmtDayDuration(dayValue);
   }
   if (typeof value === "number") {
     return Number.isInteger(value) ? String(value) : value.toFixed(2);

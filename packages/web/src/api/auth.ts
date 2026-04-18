@@ -3,12 +3,28 @@
  * 封装登录、刷新 Token、获取用户信息及修改密码等请求
  */
 import request from './index'
-import type { ApiResponse, LoginForm, LoginResult, UserInfo } from '@/types'
+import type {
+  ApiResponse,
+  LoginCaptchaChallenge,
+  LoginCaptchaVerifyPayload,
+  LoginCaptchaVerifyResult,
+  LoginPayload,
+  LoginResult,
+  UserInfo,
+} from '@/types'
 
 export const authApi = {
   /** 用户登录，返回 Token 及用户信息 */
-  login: (data: LoginForm) =>
+  login: (data: LoginPayload) =>
     request.post<never, ApiResponse<LoginResult>>('/auth/login', data),
+
+  /** 获取登录行为验证码 */
+  createLoginCaptcha: () =>
+    request.post<never, ApiResponse<LoginCaptchaChallenge>>('/auth/captcha/challenge'),
+
+  /** 校验登录行为验证码 */
+  verifyLoginCaptcha: (data: LoginCaptchaVerifyPayload) =>
+    request.post<never, ApiResponse<LoginCaptchaVerifyResult>>('/auth/captcha/verify', data),
 
   /** 使用 refresh_token 刷新访问令牌 */
   refresh: (refreshToken: string) =>

@@ -106,9 +106,29 @@ export class AiSqlService {
       nextSql = nextSql.replace(/join\s+customer\b/gi, 'LEFT JOIN customer');
     }
 
+    nextSql = this.rewriteCreatedAtToChinaTime(nextSql);
+
     return nextSql
       .replace(/\s+LIMIT\s+100\s+LIMIT\s+100/gi, ' LIMIT 100')
       .replace(/ORDER\s+BY\s+created_at\s+DESC\s+LIMIT\s+(\d+)\s+LIMIT\s+\1/gi, 'ORDER BY created_at DESC LIMIT $1')
+  }
+
+  private rewriteCreatedAtToChinaTime(sql: string) {
+    let nextSql = sql;
+
+    // 数据库里的 created_at 目前按 UTC 存储，AI 常用 DATE(created_at)=DATE('now','localtime')
+    // 会把北京时间凌晨的订单误判成前一天，因此统一把 created_at 比较/展示口径转成北京时间。
+    nextSql = nextSql.replace(
+      /DATE\(\s*((?!datetime\()[^()]*?\bcreated_at\b[^()]*)\s*\)/gi,
+      (_matched, columnExpr: string) => `DATE(datetime(${columnExpr.trim()}, '+8 hours'))`,
+    );
+
+    nextSql = nextSql.replace(
+      /strftime\(\s*'(%Y-%m(?:-%d)?)'\s*,\s*((?!datetime\()[^()]*?\bcreated_at\b[^()]*)\s*\)/gi,
+      (_matched, format: string, columnExpr: string) => `strftime('${format}', datetime(${columnExpr.trim()}, '+8 hours'))`,
+    );
+
+    return nextSql;
   }
 
   private normalizeRowDateTimes(row: Record<string, unknown>) {

@@ -8,7 +8,12 @@ import {
   PieChart, Pie, Cell, Legend,
 } from 'recharts'
 import type { AiVisualizationSpec } from '@/types'
-import { fieldToLabel, fmtNum, fmtQtyWithUnit, fmtFieldValue, fmtNumRaw, prepareVisualizationRows } from '@/lib/detectVisualization'
+import {
+  fieldToLabel,
+  formatChartMetricValue,
+  fmtFieldValue,
+  prepareVisualizationRows,
+} from '@/lib/detectVisualization'
 import { getDisplayColumns, isSummarizableMetricField } from '@shared/constants/ai-field-label'
 
 const COLORS = ['#D4A853', '#52b788', '#74c69d', '#e76f51', '#457b9d', '#e9c46a', '#a8dadc', '#f4a261']
@@ -18,8 +23,14 @@ interface Props {
   spec: AiVisualizationSpec
 }
 
-function tooltipFormatter(value: number | string, name: string): [number | string, string] {
-  return [typeof value === 'number' ? fmtNumRaw(value) : value, fieldToLabel(name)]
+function createMetricTickFormatter(fieldName: string, rows: Record<string, unknown>[]) {
+  return (value: number | string) => formatChartMetricValue(value, fieldName, rows)
+}
+
+function createTooltipFormatter(fieldName: string, rows: Record<string, unknown>[]) {
+  return (value: number | string, name: string): [string, string] => (
+    [formatChartMetricValue(value, fieldName, rows), fieldToLabel(name)]
+  )
 }
 
 function formatCellValue(field: string, value: unknown): string {
@@ -43,7 +54,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     const minIdx = vals.indexOf(minVal)
     const maxName = String(chartRows[maxIdx]?.[spec.xField] ?? '')
     const minName = String(chartRows[minIdx]?.[spec.xField] ?? '')
-    text = `共 ${rows.length} 项，${yLabel}合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。最高「${maxName}」${fmtQtyWithUnit(maxVal, spec.yField!, rows[maxIdx] ?? {}, rows)}，最低「${minName}」${fmtQtyWithUnit(minVal, spec.yField!, rows[minIdx] ?? {}, rows)}。`
+    text = `共 ${rows.length} 项，${yLabel}合计 ${formatChartMetricValue(total, spec.yField!, rows)}。最高「${maxName}」${formatChartMetricValue(maxVal, spec.yField!, rows)}，最低「${minName}」${formatChartMetricValue(minVal, spec.yField!, rows)}。`
   }
 
   if (type === 'line' && spec.xField && spec.yField) {
@@ -53,7 +64,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     const avg = total / vals.length
     const firstX = String(chartRows[0]?.[spec.xField] ?? '')
     const lastX = String(chartRows[chartRows.length - 1]?.[spec.xField] ?? '')
-    text = `${firstX}→${lastX} 共 ${rows.length} 个周期，${yLabel}均值 ${fmtQtyWithUnit(avg, spec.yField!, rows[0] ?? {}, rows)}，合计 ${fmtQtyWithUnit(total, spec.yField!, rows[0] ?? {}, rows)}。`
+    text = `${firstX}→${lastX} 共 ${rows.length} 个周期，${yLabel}均值 ${formatChartMetricValue(avg, spec.yField!, rows)}，合计 ${formatChartMetricValue(total, spec.yField!, rows)}。`
   }
 
   if (type === 'pie' && spec.nameField && spec.valueField) {
@@ -65,7 +76,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
     const total = data.reduce((s, d) => s + d.value, 0)
     const top = data[0]
     const topPct = total > 0 ? ((top.value / total) * 100).toFixed(1) : '0'
-    text = `共 ${data.length} 类，${yLabel}合计 ${fmtQtyWithUnit(total, spec.valueField!, rows[0] ?? {}, rows)}。占比最高「${top.name}」${topPct}%。`
+    text = `共 ${data.length} 类，${yLabel}合计 ${formatChartMetricValue(total, spec.valueField!, rows)}。占比最高「${top.name}」${topPct}%。`
   }
 
   if (type === 'table') {
@@ -76,7 +87,7 @@ function Summary({ type, rows, spec }: { type: string; rows: Record<string, unkn
       if (isSummarizableMetricField(col, rawValues)) {
         const vals = rawValues.map((value) => Number(value)).filter((v) => !isNaN(v) && v !== 0)
         const colTotal = vals.reduce((a, b) => a + b, 0)
-        numSummaries.push(`${fieldToLabel(col)} ${fmtQtyWithUnit(colTotal, col, rows[0] ?? {}, rows)}`)
+        numSummaries.push(`${fieldToLabel(col)} ${formatChartMetricValue(colTotal, col, rows)}`)
       }
     }
     text = `共 ${rows.length} 条记录。${numSummaries.length > 0 ? '合计：' + numSummaries.join('，') + '。' : ''}`
@@ -130,8 +141,8 @@ function BarViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xFi
       <BarChart data={data} margin={{ top: 6, right: 8, left: -16, bottom: 36 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
         <XAxis dataKey={xField} tick={{ fontSize: 10 }} angle={-30} textAnchor="end" interval={0} />
-        <YAxis tick={{ fontSize: 10 }} />
-        <Tooltip formatter={tooltipFormatter} contentStyle={{ fontSize: 12 }} />
+        <YAxis tick={{ fontSize: 10 }} tickFormatter={createMetricTickFormatter(yField, rows)} />
+        <Tooltip formatter={createTooltipFormatter(yField, rows)} contentStyle={{ fontSize: 12 }} />
         <Bar dataKey={yField} name={fieldToLabel(yField)} fill="#D4A853" radius={[3, 3, 0, 0]} maxBarSize={40} />
       </BarChart>
     </ResponsiveContainer>
@@ -146,8 +157,8 @@ function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xF
       <LineChart data={data} margin={{ top: 6, right: 8, left: -16, bottom: 36 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
         <XAxis dataKey={xField} tick={{ fontSize: 10 }} angle={-30} textAnchor="end" interval={0} />
-        <YAxis tick={{ fontSize: 10 }} />
-        <Tooltip formatter={tooltipFormatter} contentStyle={{ fontSize: 12 }} />
+        <YAxis tick={{ fontSize: 10 }} tickFormatter={createMetricTickFormatter(yField, rows)} />
+        <Tooltip formatter={createTooltipFormatter(yField, rows)} contentStyle={{ fontSize: 12 }} />
         <Line
           type="monotone"
           dataKey={yField}
@@ -164,8 +175,8 @@ function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xF
 
 // ─── 饼图 ─────────────────────────────────────────────────────────────────────
 function PieViz({ rows, nameField, valueField }: { rows: Record<string, unknown>[]; nameField: string; valueField: string }) {
-  const data = prepareVisualizationRows(rows, nameField)
-    .map((r) => ({ name: String(r[nameField] ?? ''), value: Number(r[valueField]) || 0 }))
+  const data = prepareVisualizationRows(rows, nameField, valueField)
+    .map((r) => ({ ...r, name: String(r[nameField] ?? ''), value: Number(r[valueField]) || 0 }))
     .filter((d) => d.value > 0)
   const total = data.reduce((s, d) => s + d.value, 0)
 
@@ -187,7 +198,7 @@ function PieViz({ rows, nameField, valueField }: { rows: Record<string, unknown>
             <Cell key={i} fill={COLORS[i % COLORS.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number) => [fmtNum(v)]} />
+        <Tooltip formatter={(value: number | string) => [formatChartMetricValue(value, valueField, rows), fieldToLabel(valueField)]} />
         <Legend iconSize={10} wrapperStyle={{ fontSize: 11 }} />
       </PieChart>
     </ResponsiveContainer>

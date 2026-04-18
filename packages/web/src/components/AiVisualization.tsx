@@ -12,11 +12,11 @@ import {
 } from 'recharts'
 import type { AiVisualizationSpec } from '@/types'
 import {
+  formatChartMetricValue,
   fieldToLabel,
   fmtFieldValue,
-  fmtNum,
-  fmtQtyWithUnit,
   getDisplayColumns,
+  normalizeChartMetricValue,
   isStrategySnapshotRows,
   isSummarizableMetricField,
   NON_METRIC_NUMERIC_FIELDS,
@@ -142,7 +142,7 @@ function decorateVisualizationRows(
     [xField]: xField === DERIVED_CATEGORY_FIELD
       ? buildDerivedCategoryLabel(row, duplicateProductNames)
       : String(row[xField] ?? ''),
-    ...(yField ? { [yField]: Number(row[yField]) || 0 } : {}),
+    ...(yField ? { [yField]: normalizeChartMetricValue(row[yField], yField, row, rows) } : {}),
   }))
 }
 
@@ -285,9 +285,9 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
     const minRow = chartRows[minIdx]
     const maxName = String(maxRow?.[spec.xField] ?? '')
     const minName = String(minRow?.[spec.xField] ?? '')
-    const fmtTotal = fmtQtyWithUnit(total, spec.yField, rows[0], rows)
-    const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, rows[maxIdx], rows)
-    const fmtMin = fmtQtyWithUnit(minVal, spec.yField, rows[minIdx], rows)
+    const fmtTotal = formatChartMetricValue(total, spec.yField, rows)
+    const fmtMax = formatChartMetricValue(maxVal, spec.yField, rows)
+    const fmtMin = formatChartMetricValue(minVal, spec.yField, rows)
     text = `共 ${rows.length} 项数据，${yLabel}合计 ${fmtTotal}。其中「${maxName}」最高（${fmtMax}），「${minName}」最低（${fmtMin}）。`
   }
 
@@ -301,10 +301,10 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
     const minVal = Math.min(...values)
     const firstX = String(chartRows[0]?.[spec.xField] ?? '')
     const lastX = String(chartRows[chartRows.length - 1]?.[spec.xField] ?? '')
-    const fmtAvg = fmtQtyWithUnit(avg, spec.yField, rows[0], rows)
-    const fmtMax = fmtQtyWithUnit(maxVal, spec.yField, rows[0], rows)
-    const fmtMin = fmtQtyWithUnit(minVal, spec.yField, rows[0], rows)
-    const fmtTotal = fmtQtyWithUnit(total, spec.yField, rows[0], rows)
+    const fmtAvg = formatChartMetricValue(avg, spec.yField, rows)
+    const fmtMax = formatChartMetricValue(maxVal, spec.yField, rows)
+    const fmtMin = formatChartMetricValue(minVal, spec.yField, rows)
+    const fmtTotal = formatChartMetricValue(total, spec.yField, rows)
     text = `${xLabel}从「${firstX}」到「${lastX}」共 ${rows.length} 个周期，${yLabel}均值 ${fmtAvg}，最高 ${fmtMax}，最低 ${fmtMin}，合计 ${fmtTotal}。`
   }
 
@@ -318,7 +318,7 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
     const top = data[0]
     const topPct = total > 0 ? ((top.value / total) * 100).toFixed(1) : '0'
     const parts = data.slice(0, 3).map((d) => `「${d.name}」占 ${total > 0 ? ((d.value / total) * 100).toFixed(1) : 0}%`).join('，')
-    text = `共 ${data.length} 个分类，${yLabel}合计 ${fmtNum(total)}。排名前三：${parts}。占比最大的是「${top.name}」（${topPct}%）。`
+    text = `共 ${data.length} 个分类，${yLabel}合计 ${formatChartMetricValue(total, spec.valueField, rows)}。排名前三：${parts}。占比最大的是「${top.name}」（${topPct}%）。`
   }
 
   if (type === 'table') {
@@ -331,7 +331,7 @@ function ChartSummary({ type, rows, spec }: { type: string; rows: Record<string,
       if (isSummarizableMetricField(col, rawValues)) {
         const vals = rawValues.map((value) => Number(value)).filter((v) => !isNaN(v) && v !== 0)
         const sum = vals.reduce((a, b) => a + b, 0)
-        numericSummaries.push(`${fieldToLabel(col)}合计 ${fmtQtyWithUnit(sum, col, rows[0], rows)}`)
+        numericSummaries.push(`${fieldToLabel(col)}合计 ${formatChartMetricValue(sum, col, rows)}`)
       }
     }
     text = `共 ${rows.length} 条记录，包含字段：${colLabels}。${numericSummaries.length > 0 ? numericSummaries.join('，') + '。' : ''}`
@@ -378,12 +378,15 @@ function DataTable({ rows }: { rows: Record<string, unknown>[] }) {
   )
 }
 
-// ─── Tooltip 格式化（value + name 都转中文）────────────────────────────────────
-function tooltipFormatter(value: number | string, name: string): [number | string, string] {
-  const displayValue = typeof value === 'number'
-    ? (Number.isInteger(value) ? value : Number(value.toFixed(2)))
-    : value
-  return [displayValue, fieldToLabel(name)]
+// ─── Tooltip / 坐标轴格式化（value + name 都转中文）──────────────────────────────
+function createMetricTickFormatter(fieldName: string, rows: Record<string, unknown>[]) {
+  return (value: number | string) => formatChartMetricValue(value, fieldName, rows)
+}
+
+function createTooltipFormatter(fieldName: string, rows: Record<string, unknown>[]) {
+  return (value: number | string, name: string): [string, string] => (
+    [formatChartMetricValue(value, fieldName, rows), fieldToLabel(name)]
+  )
 }
 
 // ─── 柱状图 ───────────────────────────────────────────────────────────────────
@@ -394,8 +397,8 @@ function BarViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xFi
       <BarChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis dataKey={xField} tick={{ fontSize: 12 }} angle={-30} textAnchor="end" interval={0} />
-        <YAxis tick={{ fontSize: 12 }} />
-        <Tooltip formatter={tooltipFormatter} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={createMetricTickFormatter(yField, rows)} />
+        <Tooltip formatter={createTooltipFormatter(yField, rows)} />
         <Bar dataKey={yField} name={fieldToLabel(yField)} fill="#2D6A4F" radius={[4, 4, 0, 0]} maxBarSize={48} />
       </BarChart>
     </ResponsiveContainer>
@@ -410,8 +413,8 @@ function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xF
       <LineChart data={data} margin={{ top: 8, right: 16, left: 0, bottom: 40 }}>
         <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
         <XAxis dataKey={xField} tick={{ fontSize: 12 }} angle={-30} textAnchor="end" interval={0} />
-        <YAxis tick={{ fontSize: 12 }} />
-        <Tooltip formatter={tooltipFormatter} />
+        <YAxis tick={{ fontSize: 12 }} tickFormatter={createMetricTickFormatter(yField, rows)} />
+        <Tooltip formatter={createTooltipFormatter(yField, rows)} />
         <Line type="monotone" dataKey={yField} name={fieldToLabel(yField)} stroke="#2D6A4F" strokeWidth={2} dot={{ r: 4, fill: '#2D6A4F' }} />
       </LineChart>
     </ResponsiveContainer>
@@ -421,7 +424,11 @@ function LineViz({ rows, xField, yField }: { rows: Record<string, unknown>[]; xF
 // ─── 饼图 ─────────────────────────────────────────────────────────────────────
 function PieViz({ rows, nameField, valueField }: { rows: Record<string, unknown>[]; nameField: string; valueField: string }) {
   const data = decorateVisualizationRows(rows, nameField)
-    .map((r) => ({ name: String(r[nameField] ?? ''), value: Number(r[valueField]) || 0 }))
+    .map((r) => ({
+      ...r,
+      name: String(r[nameField] ?? ''),
+      value: normalizeChartMetricValue(r[valueField], valueField, r, rows),
+    }))
     .filter((d) => d.value > 0)
 
   const total = data.reduce((s, d) => s + d.value, 0)
@@ -442,7 +449,7 @@ function PieViz({ rows, nameField, valueField }: { rows: Record<string, unknown>
             <Cell key={index} fill={COLORS[index % COLORS.length]} />
           ))}
         </Pie>
-        <Tooltip formatter={(v: number, name: string) => [fmtNum(v), name]} />
+        <Tooltip formatter={(value: number | string) => [formatChartMetricValue(value, valueField, rows), fieldToLabel(valueField)]} />
         <Legend />
       </PieChart>
     </ResponsiveContainer>

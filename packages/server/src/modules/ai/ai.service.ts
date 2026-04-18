@@ -575,7 +575,7 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     const emit = (event: string, data: unknown) => emitter?.(event, data);
     // ── 1. 并行获取上下文 + AI 配置 ─────────────────────────────────────────
     const [structuredContext, availability] = await Promise.all([
-      useRecentStructuredContext ? this.getRecentStructuredContext(user.sub) : Promise.resolve({}),
+      useRecentStructuredContext ? this.getRecentStructuredContext(user.sub, currentSessionId) : Promise.resolve({}),
       this.aiConfigService.getAvailability(),
     ]);
 
@@ -2643,36 +2643,39 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     return '我刚刚没有成功查到这条数据。请换一种更具体的问法再试一次，比如带上订单号、客户名、供应商名或时间范围。';
   }
 
-  private async getRecentStructuredContext(userId: number): Promise<AiStructuredContext> {
+  private async getRecentStructuredContext(userId: number, sessionId?: string): Promise<AiStructuredContext> {
+    if (!sessionId) {
+      return {};
+    }
+
     const conversations = await this.aiConversationRepository.find({
-      where: { userId },
+      where: { userId, sessionId },
       order: { id: 'DESC' },
       take: 6,
     });
 
-    return conversations.reduce<AiStructuredContext>((merged, conversation) => {
-      if (!conversation.contextJson) {
-        return merged;
-      }
+    const latestConversationWithContext = conversations.find((conversation) => Boolean(conversation.contextJson?.trim()));
+    if (!latestConversationWithContext?.contextJson) {
+      return {};
+    }
 
-      try {
-        const context = JSON.parse(conversation.contextJson) as AiStructuredContext;
-        return {
-          orderNos: this.mergeContextList(merged.orderNos, context.orderNos),
-          returnNos: this.mergeContextList(merged.returnNos, context.returnNos),
-          refundNos: this.mergeContextList(merged.refundNos, context.refundNos),
-          exchangeNos: this.mergeContextList(merged.exchangeNos, context.exchangeNos),
-          customerNames: this.mergeContextList(merged.customerNames, context.customerNames),
-          customerContacts: this.mergeContextList(merged.customerContacts, context.customerContacts),
-          customerPhones: this.mergeContextList(merged.customerPhones, context.customerPhones),
-          supplierNames: this.mergeContextList(merged.supplierNames, context.supplierNames),
-          productNames: this.mergeContextList(merged.productNames, context.productNames),
-          reasonCodes: this.mergeContextList(merged.reasonCodes, context.reasonCodes),
-        };
-      } catch {
-        return merged;
-      }
-    }, {});
+    try {
+      const context = JSON.parse(latestConversationWithContext.contextJson) as AiStructuredContext;
+      return {
+        orderNos: context.orderNos?.slice(0, 6),
+        returnNos: context.returnNos?.slice(0, 6),
+        refundNos: context.refundNos?.slice(0, 6),
+        exchangeNos: context.exchangeNos?.slice(0, 6),
+        customerNames: context.customerNames?.slice(0, 6),
+        customerContacts: context.customerContacts?.slice(0, 6),
+        customerPhones: context.customerPhones?.slice(0, 6),
+        supplierNames: context.supplierNames?.slice(0, 6),
+        productNames: context.productNames?.slice(0, 6),
+        reasonCodes: context.reasonCodes?.slice(0, 6),
+      };
+    } catch {
+      return {};
+    }
   }
 
   private mergeContextList(current: string[] | undefined, next: string[] | undefined) {

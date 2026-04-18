@@ -10,6 +10,7 @@ import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { SysUserEntity } from '../../entities/sys-user.entity';
 import { SystemModule } from '../system/system.module';
+import { AuthCaptchaService } from './auth-captcha.service';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 
@@ -21,6 +22,7 @@ import { AuthService } from './auth.service';
   ],
   controllers: [AuthController],
   providers: [
+    AuthCaptchaService,
     AuthService,
     // 注册 JWT 鉴权守卫为全局守卫
     {

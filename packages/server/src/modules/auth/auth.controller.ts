@@ -18,6 +18,7 @@ import { AuthService } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
+import { VerifyLoginCaptchaDto } from './dto/verify-login-captcha.dto';
 
 @ApiTags('认证')
 @Controller('auth')
@@ -45,6 +46,23 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.authService.login(dto);
+  }
+
+  @Public()
+  @ApiOperation({ summary: '获取登录行为验证码' })
+  @ApiOkResponse({ description: '返回滑块验证码挑战' })
+  @Post('captcha/challenge')
+  getLoginCaptcha() {
+    return this.authService.getLoginCaptcha();
+  }
+
+  @Public()
+  @ApiOperation({ summary: '校验登录行为验证码' })
+  @ApiBody({ type: VerifyLoginCaptchaDto })
+  @ApiOkResponse({ description: '返回一次性验证码通过令牌' })
+  @Post('captcha/verify')
+  verifyLoginCaptcha(@Body() dto: VerifyLoginCaptchaDto) {
+    return this.authService.verifyLoginCaptcha(dto);
   }
 
   /** 刷新 Token：使用 refresh_token 获取新的访问令牌 */

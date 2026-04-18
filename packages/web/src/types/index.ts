@@ -26,6 +26,12 @@ export interface LoginForm {
   password: string
 }
 
+/** 登录请求载荷 */
+export interface LoginPayload extends LoginForm {
+  captchaId: string
+  captchaToken: string
+}
+
 /** 用户信息 */
 export interface UserInfo {
   id: number
@@ -42,6 +48,32 @@ export interface LoginResult {
   accessToken: string
   refreshToken: string
   user: UserInfo
+}
+
+/** 登录行为验证码挑战 */
+export interface LoginCaptchaChallenge {
+  captchaId: string
+  background: string
+  piece: string
+  pieceSize: number
+  pieceTop: number
+  sliderMax: number
+  expiresIn: number
+}
+
+/** 登录行为验证码校验载荷 */
+export interface LoginCaptchaVerifyPayload {
+  captchaId: string
+  offsetX: number
+  durationMs: number
+  trail: number[]
+}
+
+/** 登录行为验证码校验结果 */
+export interface LoginCaptchaVerifyResult {
+  captchaId: string
+  captchaToken: string
+  expiresIn: number
 }
 
 // ===== 商品相关 =====

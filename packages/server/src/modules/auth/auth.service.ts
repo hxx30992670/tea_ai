@@ -15,8 +15,10 @@ import { getRoleProfile } from '../../common/constants/roles';
 import { SysUserEntity } from '../../entities/sys-user.entity';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { OperationLogService } from '../system/operation-log.service';
+import { AuthCaptchaService } from './auth-captcha.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { VerifyLoginCaptchaDto } from './dto/verify-login-captcha.dto';
 
 @Injectable()
 export class AuthService {
@@ -25,9 +27,20 @@ export class AuthService {
     private readonly userRepository: Repository<SysUserEntity>,
     private readonly jwtService: JwtService,
     private readonly operationLogService: OperationLogService,
+    private readonly authCaptchaService: AuthCaptchaService,
   ) {}
 
+  getLoginCaptcha() {
+    return this.authCaptchaService.createChallenge();
+  }
+
+  verifyLoginCaptcha(dto: VerifyLoginCaptchaDto) {
+    return this.authCaptchaService.verifyChallenge(dto);
+  }
+
   async login(dto: LoginDto) {
+    this.authCaptchaService.consumeVerifiedCaptcha(dto.captchaId, dto.captchaToken);
+
     const user = await this.userRepository.findOne({ where: { username: dto.username } });
 
     if (!user || user.status !== 1) {

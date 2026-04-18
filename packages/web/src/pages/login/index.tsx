@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { startTransition, useRef, useState } from 'react'
 import logoWithText from '@/assets/images/logo-400-light.png'
 import { useNavigate } from 'react-router-dom'
 import {
@@ -7,8 +7,9 @@ import {
 import { UserOutlined, LockOutlined } from '@ant-design/icons'
 import { authApi } from '@/api/auth'
 import { useAuthStore } from '@/store/auth'
-import type { LoginForm } from '@/types'
+import type { LoginCaptchaChallenge, LoginForm, LoginPayload } from '@/types'
 import LoginShowcase from './components/LoginShowcase'
+import LoginCaptchaModal from './components/LoginCaptchaModal'
 import './index.less'
 
 const { Title, Text } = Typography
@@ -16,18 +17,25 @@ const { Title, Text } = Typography
 
 export default function LoginPage() {
   const [loading, setLoading] = useState(false)
+  const [captchaVisible, setCaptchaVisible] = useState(false)
+  const [captchaLoading, setCaptchaLoading] = useState(false)
+  const [captchaVerifying, setCaptchaVerifying] = useState(false)
+  const [captchaChallenge, setCaptchaChallenge] = useState<LoginCaptchaChallenge | null>(null)
   const [form] = Form.useForm<LoginForm>()
   const navigate = useNavigate()
   const { setAuth } = useAuthStore()
+  const pendingLoginRef = useRef<LoginForm | null>(null)
 
-  const handleLogin = async (values: LoginForm) => {
+  const handleLogin = async (values: LoginPayload) => {
     setLoading(true)
     try {
       const res = await authApi.login(values)
       if (res.code === 200 && res.data) {
         setAuth(res.data)
         message.success(`欢迎回来，${res.data.user.realName}！`)
-        navigate('/', { replace: true })
+        startTransition(() => {
+          navigate('/', { replace: true })
+        })
       }
     } catch {
       // 错误已在拦截器中处理
@@ -35,6 +43,66 @@ export default function LoginPage() {
       setLoading(false)
     }
   }
+
+  const refreshCaptcha = async () => {
+    setCaptchaLoading(true)
+    try {
+      const res = await authApi.createLoginCaptcha()
+      if (res.code === 200 && res.data) {
+        setCaptchaChallenge(res.data)
+      }
+    } catch {
+      setCaptchaChallenge(null)
+    } finally {
+      setCaptchaLoading(false)
+    }
+  }
+
+  const handlePrepareLogin = async (values: LoginForm) => {
+    pendingLoginRef.current = values
+    setCaptchaVisible(true)
+    await refreshCaptcha()
+  }
+
+  const handleCloseCaptcha = () => {
+    if (captchaVerifying) {
+      return
+    }
+
+    setCaptchaVisible(false)
+    setCaptchaChallenge(null)
+  }
+
+  const handleVerifyCaptcha = async (payload: { captchaId: string; offsetX: number; durationMs: number; trail: number[] }) => {
+    if (!pendingLoginRef.current) {
+      return false
+    }
+
+    setCaptchaVerifying(true)
+    try {
+      const res = await authApi.verifyLoginCaptcha(payload)
+      if (res.code !== 200 || !res.data) {
+        return false
+      }
+
+      setCaptchaVisible(false)
+      setCaptchaChallenge(null)
+
+      await handleLogin({
+        ...pendingLoginRef.current,
+        captchaId: res.data.captchaId,
+        captchaToken: res.data.captchaToken,
+      })
+      return true
+    } catch {
+      await refreshCaptcha()
+      return false
+    } finally {
+      setCaptchaVerifying(false)
+    }
+  }
+
+  const submitBusy = loading || captchaLoading || captchaVerifying
 
   return (
     <div className="login-page">
@@ -72,7 +140,7 @@ export default function LoginPage() {
             >
               <Form
                 form={form}
-                onFinish={handleLogin}
+                onFinish={handlePrepareLogin}
                 size="large"
                 className="login-form"
                 initialValues={{ username: 'admin', password: 'Admin@123456' }}
@@ -106,10 +174,10 @@ export default function LoginPage() {
                 <Form.Item style={{ marginBottom: 0 }}>
                   <Button
                     htmlType="submit"
-                    loading={loading}
+                    loading={submitBusy}
                     className="login-submit-btn"
                   >
-                    {loading ? '验证中...' : '立即登录'}
+                    {submitBusy ? '验证中...' : '立即登录'}
                   </Button>
                 </Form.Item>
               </Form>
@@ -124,6 +192,16 @@ export default function LoginPage() {
         </div>
 
       </div>
+
+      <LoginCaptchaModal
+        open={captchaVisible}
+        challenge={captchaChallenge}
+        loading={captchaLoading}
+        verifying={captchaVerifying || loading}
+        onCancel={handleCloseCaptcha}
+        onRefresh={refreshCaptcha}
+        onVerify={handleVerifyCaptcha}
+      />
     </div>
   )
 }

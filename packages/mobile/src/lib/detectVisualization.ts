@@ -4,18 +4,29 @@
  */
 import type { AiVisualizationSpec } from '@/types'
 import {
+  formatChartMetricValue,
   fieldToLabel,
+  fmtCompactNum,
   fmtNum,
   fmtQtyWithUnit,
   fmtFieldValue,
   fmtNumRaw,
   getDisplayColumns,
+  normalizeChartMetricValue,
   isStrategySnapshotRows,
   NON_METRIC_NUMERIC_FIELDS,
   DETAIL_RECORD_FIELDS,
 } from '@shared/constants/ai-field-label'
 
-export { fieldToLabel, fmtNum, fmtQtyWithUnit, fmtFieldValue, fmtNumRaw }
+export {
+  fieldToLabel,
+  formatChartMetricValue,
+  fmtCompactNum,
+  fmtNum,
+  fmtQtyWithUnit,
+  fmtFieldValue,
+  fmtNumRaw,
+}
 
 const CHART_REQUEST_RE = /图表|可视化|柱状图|条形图|折线图|饼图|曲线图|趋势图|对比图/
 const COMPARISON_REQUEST_RE = /对比|比较|比一比|和.+比|相比|相较|排名|排行|名次|领先|落后|高低|头部|梯队|其它茶|其他茶/
@@ -128,7 +139,7 @@ export function prepareVisualizationRows(
     [xField]: xField === DERIVED_CATEGORY_FIELD
       ? buildDerivedCategoryLabel(row, duplicateProductNames)
       : String(row[xField] ?? ''),
-    ...(yField ? { [yField]: Number(row[yField]) || 0 } : {}),
+    ...(yField ? { [yField]: normalizeChartMetricValue(row[yField], yField, row, rows) } : {}),
   }))
 }
 
