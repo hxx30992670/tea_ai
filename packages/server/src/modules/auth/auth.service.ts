@@ -34,8 +34,12 @@ export class AuthService {
     return this.authCaptchaService.createChallenge();
   }
 
-  verifyLoginCaptcha(dto: VerifyLoginCaptchaDto) {
-    return this.authCaptchaService.verifyChallenge(dto);
+  verifyLoginCaptcha(
+    dto: VerifyLoginCaptchaDto,
+    clientPlatform?: string,
+    captchaViewportWidth?: string,
+  ) {
+    return this.authCaptchaService.verifyChallenge(dto, clientPlatform, captchaViewportWidth);
   }
 
   async login(dto: LoginDto) {

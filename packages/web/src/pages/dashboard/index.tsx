@@ -127,7 +127,11 @@ export default function DashboardPage() {
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={topProducts} layout="vertical" margin={{ left: 120 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
-                  <XAxis type="number" tick={{ fontSize: 11 }} tickFormatter={(v) => `¥${(v / 1000).toFixed(0)}k`} />
+                  <XAxis
+                    type="number"
+                    tick={{ fontSize: 11 }}
+                    tickFormatter={(v) => `¥${Number(v ?? 0).toLocaleString()}`}
+                  />
                   <YAxis type="category" dataKey="productName" tick={{ fontSize: 12 }} width={120} />
                   <Tooltip formatter={(v: number) => [`¥${v.toLocaleString()}`, '销售额']} />
                   <Bar dataKey="totalAmount" name="销售额" fill="#2D6A4F" radius={[0, 6, 6, 0]} />

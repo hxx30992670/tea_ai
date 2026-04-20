@@ -1,9 +1,34 @@
 import request from './index'
-import type { ApiResponse, LoginForm, LoginResult, UserInfo } from '@/types'
+import type {
+  ApiResponse,
+  LoginCaptchaChallenge,
+  LoginCaptchaVerifyPayload,
+  LoginCaptchaVerifyResult,
+  LoginPayload,
+  LoginResult,
+  UserInfo,
+} from '@/types'
+
+interface VerifyLoginCaptchaOptions {
+  viewportWidth?: number
+}
 
 export const authApi = {
-  login: (data: LoginForm) =>
+  login: (data: LoginPayload) =>
     request.post<never, ApiResponse<LoginResult>>('/auth/login', data),
+
+  createLoginCaptcha: () =>
+    request.post<never, ApiResponse<LoginCaptchaChallenge>>('/auth/captcha/challenge'),
+
+  verifyLoginCaptcha: (data: LoginCaptchaVerifyPayload, options?: VerifyLoginCaptchaOptions) =>
+    request.post<never, ApiResponse<LoginCaptchaVerifyResult>>('/auth/captcha/verify', data, {
+      headers: {
+        'X-Client-Platform': 'mobile',
+        ...(options?.viewportWidth
+          ? { 'X-Captcha-Viewport-Width': String(Math.round(options.viewportWidth)) }
+          : {}),
+      },
+    }),
 
   refresh: (refreshToken: string) =>
     request.post<never, ApiResponse<LoginResult>>('/auth/refresh', { refreshToken }),

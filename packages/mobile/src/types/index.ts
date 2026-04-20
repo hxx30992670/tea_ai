@@ -18,6 +18,11 @@ export interface LoginForm {
   password: string
 }
 
+export interface LoginPayload extends LoginForm {
+  captchaId: string
+  captchaToken: string
+}
+
 export interface UserInfo {
   id: number
   username: string
@@ -36,6 +41,29 @@ export interface LoginResult {
   accessToken: string
   refreshToken: string
   user: UserInfo
+}
+
+export interface LoginCaptchaChallenge {
+  captchaId: string
+  background: string
+  piece: string
+  pieceSize: number
+  pieceTop: number
+  sliderMax: number
+  expiresIn: number
+}
+
+export interface LoginCaptchaVerifyPayload {
+  captchaId: string
+  offsetX: number
+  durationMs: number
+  trail: number[]
+}
+
+export interface LoginCaptchaVerifyResult {
+  captchaId: string
+  captchaToken: string
+  expiresIn: number
 }
 
 // ===== Product =====

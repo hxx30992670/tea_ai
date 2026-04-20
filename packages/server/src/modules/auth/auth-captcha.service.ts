@@ -16,6 +16,9 @@ const CAPTCHA_WIDTH = 320;
 const CAPTCHA_HEIGHT = 180;
 const CAPTCHA_SIZE = 56;
 const CAPTCHA_TOLERANCE = 12;
+const MOBILE_VISUAL_TOLERANCE_PX = 10;
+const MOBILE_VIEWPORT_MIN = 240;
+const MOBILE_VIEWPORT_MAX = 1200;
 const CHALLENGE_TTL_MS = 2 * 60 * 1000;
 const VERIFIED_TTL_MS = 90 * 1000;
 
@@ -55,7 +58,11 @@ export class AuthCaptchaService {
     };
   }
 
-  verifyChallenge(dto: VerifyLoginCaptchaDto) {
+  verifyChallenge(
+    dto: VerifyLoginCaptchaDto,
+    clientPlatform?: string,
+    captchaViewportWidth?: string,
+  ) {
     this.pruneExpiredChallenges();
 
     const record = this.challenges.get(dto.captchaId);
@@ -63,7 +70,7 @@ export class AuthCaptchaService {
       throw new BadRequestException('验证码已失效，请刷新后重试');
     }
 
-    if (!this.isHumanTrail(dto, record.answerX)) {
+    if (!this.isHumanTrail(dto, record.answerX, clientPlatform, captchaViewportWidth)) {
       this.challenges.delete(dto.captchaId);
       throw new BadRequestException('行为验证未通过，请重试');
     }
@@ -96,10 +103,34 @@ export class AuthCaptchaService {
     this.challenges.delete(captchaId);
   }
 
-  private isHumanTrail(dto: VerifyLoginCaptchaDto, answerX: number) {
+  private isHumanTrail(
+    dto: VerifyLoginCaptchaDto,
+    answerX: number,
+    clientPlatform?: string,
+    captchaViewportWidth?: string,
+  ) {
     const finalOffset = dto.offsetX;
-    if (Math.abs(finalOffset - answerX) > CAPTCHA_TOLERANCE) {
+    const offsetDelta = Math.abs(finalOffset - answerX);
+
+    // base 坐标误差兜底：任何平台都必须通过，防止伪造 viewportWidth 绕过视觉容差
+    if (offsetDelta > CAPTCHA_TOLERANCE) {
       return false;
+    }
+
+    // 移动端额外校验视觉像素误差；viewportWidth 超出合理区间时忽略该校验
+    if (clientPlatform === 'mobile') {
+      const viewportWidth = Number(captchaViewportWidth);
+      const trustworthy =
+        Number.isFinite(viewportWidth) &&
+        viewportWidth >= MOBILE_VIEWPORT_MIN &&
+        viewportWidth <= MOBILE_VIEWPORT_MAX;
+
+      if (trustworthy) {
+        const visualDeltaPx = (offsetDelta * viewportWidth) / CAPTCHA_WIDTH;
+        if (visualDeltaPx > MOBILE_VISUAL_TOLERANCE_PX) {
+          return false;
+        }
+      }
     }
 
     if (dto.durationMs < 250 || dto.durationMs > 20000) {

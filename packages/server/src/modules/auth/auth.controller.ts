@@ -3,7 +3,7 @@
  * 处理用户登录、Token 刷新、获取个人信息及修改密码等请求
  * 使用 Swagger 装饰器生成 API 文档
  */
-import { Body, Controller, Get, Post, Put } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Post, Put } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
@@ -61,8 +61,12 @@ export class AuthController {
   @ApiBody({ type: VerifyLoginCaptchaDto })
   @ApiOkResponse({ description: '返回一次性验证码通过令牌' })
   @Post('captcha/verify')
-  verifyLoginCaptcha(@Body() dto: VerifyLoginCaptchaDto) {
-    return this.authService.verifyLoginCaptcha(dto);
+  verifyLoginCaptcha(
+    @Body() dto: VerifyLoginCaptchaDto,
+    @Headers('x-client-platform') clientPlatform?: string,
+    @Headers('x-captcha-viewport-width') captchaViewportWidth?: string,
+  ) {
+    return this.authService.verifyLoginCaptcha(dto, clientPlatform, captchaViewportWidth);
   }
 
   /** 刷新 Token：使用 refresh_token 获取新的访问令牌 */
