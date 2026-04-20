@@ -1,15 +1,20 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { In, Repository } from 'typeorm';
 import { CustomerEntity } from '../../entities/customer.entity';
 import { FollowUpEntity } from '../../entities/follow-up.entity';
 import { SaleOrderEntity } from '../../entities/sale-order.entity';
+import { SysUserEntity } from '../../entities/sys-user.entity';
+import { CancelFollowUpDto } from './dto/cancel-follow-up.dto';
+import { CompleteFollowUpDto } from './dto/complete-follow-up.dto';
 import { CreateFollowUpDto } from './dto/create-follow-up.dto';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CustomerQueryDto } from './dto/customer-query.dto';
 import { FollowUpQueryDto } from './dto/follow-up-query.dto';
 import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
 import { UpdateCustomerDto } from './dto/update-customer.dto';
+
+type FollowUpDisplayStatus = 'pending' | 'completed' | 'cancelled' | 'overdue';
 
 @Injectable()
 export class CustomerService {
@@ -18,6 +23,8 @@ export class CustomerService {
     private readonly customerRepository: Repository<CustomerEntity>,
     @InjectRepository(FollowUpEntity)
     private readonly followUpRepository: Repository<FollowUpEntity>,
+    @InjectRepository(SysUserEntity)
+    private readonly userRepository: Repository<SysUserEntity>,
   ) {}
 
   async getCustomers(query: CustomerQueryDto) {
@@ -63,32 +70,34 @@ export class CustomerService {
       .createQueryBuilder('followUp')
       .where('followUp.customer_id IN (:...customerIds)', { customerIds })
       .andWhere('followUp.next_follow_date IS NOT NULL')
+      .andWhere("(followUp.status IS NULL OR followUp.status = 'pending')")
       .select([
         'followUp.id AS id',
         'followUp.customer_id AS customerId',
         'followUp.intent_level AS intentLevel',
         'followUp.next_follow_date AS nextFollowDate',
+        'followUp.status AS status',
+        'followUp.created_at AS createdAt',
       ])
+      .orderBy('followUp.next_follow_date', 'ASC')
+      .addOrderBy('followUp.created_at', 'DESC')
       .getRawMany();
 
-    const nowTs = Date.now();
-    const nearestFollowUpMap = new Map<number, { intentLevel?: string; nextFollowDate?: string; distance: number }>();
+    const nearestFollowUpMap = new Map<number, { intentLevel?: string; nextFollowDate?: string; status?: FollowUpDisplayStatus }>();
 
     for (const row of followUps) {
       const customerId = Number(row.customerId);
       const nextFollowDate = row.nextFollowDate as string | undefined;
       if (!customerId || !nextFollowDate) continue;
 
-      const ts = new Date(nextFollowDate).getTime();
-      if (!Number.isFinite(ts)) continue;
-
-      const distance = Math.abs(ts - nowTs);
-      const prev = nearestFollowUpMap.get(customerId);
-      if (!prev || distance < prev.distance) {
+      if (!nearestFollowUpMap.has(customerId)) {
         nearestFollowUpMap.set(customerId, {
           intentLevel: (row.intentLevel as string | undefined) ?? undefined,
           nextFollowDate,
-          distance,
+          status: this.resolveFollowUpDisplayStatus({
+            nextFollowDate,
+            status: (row.status as string | undefined) ?? 'pending',
+          }),
         });
       }
     }
@@ -100,6 +109,7 @@ export class CustomerService {
         ...item,
         latestIntentLevel: nearest?.intentLevel,
         nextFollowDate: nearest?.nextFollowDate,
+        nextFollowStatus: nearest?.status,
       };
     });
 
@@ -135,18 +145,56 @@ export class CustomerService {
 
   async getFollowUps(query: FollowUpQueryDto) {
     const page = query.page ?? 1;
-    const pageSize = query.pageSize ?? 10;
+    const pageSize = query.pageSize ?? 3;
+    const now = this.nowString();
     const qb = this.followUpRepository.createQueryBuilder('followUp');
+    qb.setParameter('now', now);
 
     if (query.customerId) {
       qb.andWhere('followUp.customer_id = :customerId', { customerId: query.customerId });
     }
 
-    qb.orderBy('followUp.id', 'DESC');
+    if (query.keyword) {
+      qb.andWhere('(followUp.content LIKE :keyword OR followUp.feedback LIKE :keyword)', {
+        keyword: `%${query.keyword}%`,
+      });
+    }
+
+    if (query.followType) {
+      qb.andWhere('followUp.follow_type = :followType', { followType: query.followType });
+    }
+
+    if (query.dateFrom) {
+      qb.andWhere('followUp.next_follow_date >= :dateFrom', { dateFrom: query.dateFrom });
+    }
+
+    if (query.dateTo) {
+      qb.andWhere('followUp.next_follow_date <= :dateTo', { dateTo: query.dateTo });
+    }
+
+    if (query.status === 'overdue') {
+      qb.andWhere("(followUp.status IS NULL OR followUp.status = 'pending')")
+        .andWhere('followUp.next_follow_date IS NOT NULL')
+        .andWhere('followUp.next_follow_date < :now', { now });
+    } else if (query.status === 'pending') {
+      qb.andWhere("(followUp.status IS NULL OR followUp.status = 'pending')")
+        .andWhere('(followUp.next_follow_date IS NULL OR followUp.next_follow_date >= :now)', { now });
+    } else if (query.status) {
+      qb.andWhere('followUp.status = :status', { status: query.status });
+    }
+
+    qb.orderBy(
+      "CASE WHEN (followUp.status IS NULL OR followUp.status = 'pending') AND followUp.next_follow_date IS NOT NULL AND followUp.next_follow_date < :now THEN 0 WHEN (followUp.status IS NULL OR followUp.status = 'pending') THEN 1 WHEN followUp.status = 'completed' THEN 2 ELSE 3 END",
+      'ASC',
+    );
+    qb.addOrderBy("CASE WHEN followUp.next_follow_date IS NULL THEN 1 ELSE 0 END", 'ASC');
+    qb.addOrderBy('followUp.next_follow_date', 'DESC');
+    qb.addOrderBy('followUp.created_at', 'DESC');
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [list, total] = await qb.getManyAndCount();
-    return { list, total, page, pageSize };
+    const decoratedList = await this.decorateFollowUps(list);
+    return { list: decoratedList, total, page, pageSize };
   }
 
   async deleteCustomer(id: number) {
@@ -176,11 +224,20 @@ export class CustomerService {
       content: dto.content,
       followType: dto.followType ?? null,
       intentLevel: dto.intentLevel ?? null,
+      status: 'pending',
+      feedback: null,
       nextFollowDate: dto.nextFollowDate ?? null,
       operatorId: operatorId ?? null,
+      completedBy: null,
+      completedAt: null,
+      cancelledBy: null,
+      cancelledAt: null,
+      cancelReason: null,
+      updatedAt: this.nowString(),
     });
 
-    return this.followUpRepository.save(followUp);
+    const saved = await this.followUpRepository.save(followUp);
+    return this.decorateFollowUp(saved);
   }
 
   async updateFollowUp(id: number, dto: UpdateFollowUpDto, operatorId?: number) {
@@ -189,12 +246,135 @@ export class CustomerService {
       throw new NotFoundException('跟进记录不存在');
     }
 
+    this.assertFollowUpEditable(followUp);
+
     if (dto.content !== undefined) followUp.content = dto.content;
-    if (dto.followType !== undefined) followUp.followType = dto.followType;
-    if (dto.intentLevel !== undefined) followUp.intentLevel = dto.intentLevel;
+    if (dto.followType !== undefined) followUp.followType = dto.followType ?? null;
+    if (dto.intentLevel !== undefined) followUp.intentLevel = dto.intentLevel ?? null;
     if (dto.nextFollowDate !== undefined) followUp.nextFollowDate = dto.nextFollowDate ?? null;
     if (operatorId !== undefined) followUp.operatorId = operatorId;
+    followUp.updatedAt = this.nowString();
 
-    return this.followUpRepository.save(followUp);
+    const saved = await this.followUpRepository.save(followUp);
+    return this.decorateFollowUp(saved);
+  }
+
+  async completeFollowUp(id: number, dto: CompleteFollowUpDto, operatorId?: number) {
+    const followUp = await this.followUpRepository.findOne({ where: { id } });
+    if (!followUp) {
+      throw new NotFoundException('跟进记录不存在');
+    }
+
+    if ((followUp.status ?? 'pending') !== 'pending') {
+      throw new BadRequestException('当前状态下不能确认跟进');
+    }
+
+    followUp.feedback = dto.feedback;
+    if (dto.followType !== undefined) followUp.followType = dto.followType ?? null;
+    if (dto.intentLevel !== undefined) followUp.intentLevel = dto.intentLevel ?? null;
+    followUp.status = 'completed';
+    followUp.completedBy = operatorId ?? null;
+    followUp.completedAt = this.nowString();
+    followUp.updatedAt = followUp.completedAt;
+
+    const saved = await this.followUpRepository.save(followUp);
+    return this.decorateFollowUp(saved);
+  }
+
+  async cancelFollowUp(id: number, dto: CancelFollowUpDto, operatorId?: number) {
+    const followUp = await this.followUpRepository.findOne({ where: { id } });
+    if (!followUp) {
+      throw new NotFoundException('跟进记录不存在');
+    }
+
+    this.assertFollowUpCancelable(followUp);
+
+    followUp.status = 'cancelled';
+    followUp.cancelReason = dto.reason?.trim() || null;
+    followUp.cancelledBy = operatorId ?? null;
+    followUp.cancelledAt = this.nowString();
+    followUp.updatedAt = followUp.cancelledAt;
+
+    const saved = await this.followUpRepository.save(followUp);
+    return this.decorateFollowUp(saved);
+  }
+
+  private async decorateFollowUps(list: FollowUpEntity[]) {
+    const userIds = new Set<number>();
+
+    for (const item of list) {
+      if (item.operatorId) userIds.add(item.operatorId);
+      if (item.completedBy) userIds.add(item.completedBy);
+      if (item.cancelledBy) userIds.add(item.cancelledBy);
+    }
+
+    const users = userIds.size > 0
+      ? await this.userRepository.findBy({ id: In([...userIds]) })
+      : [];
+
+    const userMap = new Map(users.map((user) => [user.id, user.realName]));
+
+    return list.map((item) => this.decorateFollowUp(item, userMap));
+  }
+
+  private decorateFollowUp(followUp: FollowUpEntity, userMap = new Map<number, string>()) {
+    const displayStatus = this.resolveFollowUpDisplayStatus(followUp);
+    const isOverdue = displayStatus === 'overdue';
+
+    return {
+      ...followUp,
+      displayStatus,
+      isOverdue,
+      canEdit: (followUp.status ?? 'pending') === 'pending' && !isOverdue,
+      canCancel: (followUp.status ?? 'pending') === 'pending' && !isOverdue,
+      canConfirm: (followUp.status ?? 'pending') === 'pending',
+      operatorName: followUp.operatorId ? userMap.get(followUp.operatorId) : undefined,
+      completedByName: followUp.completedBy ? userMap.get(followUp.completedBy) : undefined,
+      cancelledByName: followUp.cancelledBy ? userMap.get(followUp.cancelledBy) : undefined,
+    };
+  }
+
+  private resolveFollowUpDisplayStatus(followUp: { nextFollowDate?: string | null; status?: string | null }): FollowUpDisplayStatus {
+    const status = followUp.status ?? 'pending';
+
+    if (status === 'completed' || status === 'cancelled') {
+      return status;
+    }
+
+    if (this.isFollowUpOverdue(followUp)) {
+      return 'overdue';
+    }
+
+    return 'pending';
+  }
+
+  private assertFollowUpEditable(followUp: FollowUpEntity) {
+    if ((followUp.status ?? 'pending') !== 'pending') {
+      throw new BadRequestException('只有待跟进记录可以编辑');
+    }
+
+    if (this.isFollowUpOverdue(followUp)) {
+      throw new BadRequestException('逾期未跟进记录不能编辑');
+    }
+  }
+
+  private assertFollowUpCancelable(followUp: FollowUpEntity) {
+    if ((followUp.status ?? 'pending') !== 'pending') {
+      throw new BadRequestException('只有待跟进记录可以取消');
+    }
+
+    if (this.isFollowUpOverdue(followUp)) {
+      throw new BadRequestException('逾期未跟进记录不能取消');
+    }
+  }
+
+  private isFollowUpOverdue(followUp: { nextFollowDate?: string | null; status?: string | null }) {
+    return (followUp.status ?? 'pending') === 'pending'
+      && !!followUp.nextFollowDate
+      && new Date(followUp.nextFollowDate).getTime() < Date.now();
+  }
+
+  private nowString() {
+    return new Date().toISOString();
   }
 }

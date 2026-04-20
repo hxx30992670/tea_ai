@@ -4,6 +4,8 @@ import { ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF } from '../../common/constants/rol
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../../common/types/auth-user.type';
+import { CancelFollowUpDto } from './dto/cancel-follow-up.dto';
+import { CompleteFollowUpDto } from './dto/complete-follow-up.dto';
 import { CreateFollowUpDto } from './dto/create-follow-up.dto';
 import { FollowUpQueryDto } from './dto/follow-up-query.dto';
 import { UpdateFollowUpDto } from './dto/update-follow-up.dto';
@@ -42,5 +44,31 @@ export class FollowUpController {
     @CurrentUser() user: AuthUser,
   ) {
     return this.customerService.updateFollowUp(id, dto, user.sub);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
+  @ApiOperation({ summary: '确认完成跟进' })
+  @ApiBody({ type: CompleteFollowUpDto })
+  @ApiOkResponse({ description: '返回确认后的跟进记录' })
+  @Post(':id/complete')
+  completeFollowUp(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CompleteFollowUpDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.customerService.completeFollowUp(id, dto, user.sub);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
+  @ApiOperation({ summary: '取消待跟进计划' })
+  @ApiBody({ type: CancelFollowUpDto })
+  @ApiOkResponse({ description: '返回取消后的跟进记录' })
+  @Post(':id/cancel')
+  cancelFollowUp(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CancelFollowUpDto,
+    @CurrentUser() user: AuthUser,
+  ) {
+    return this.customerService.cancelFollowUp(id, dto, user.sub);
   }
 }

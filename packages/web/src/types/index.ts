@@ -167,6 +167,9 @@ export interface Customer {
   remark?: string
   totalAmount?: number
   receivableAmount?: number
+  latestIntentLevel?: 'high' | 'medium' | 'low' | 'lost'
+  nextFollowDate?: string
+  nextFollowStatus?: 'pending' | 'overdue'
   createdAt: string
 }
 
