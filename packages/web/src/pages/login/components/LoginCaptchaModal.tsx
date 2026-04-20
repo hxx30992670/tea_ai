@@ -5,7 +5,6 @@ import type { LoginCaptchaChallenge, LoginCaptchaVerifyPayload } from '@/types'
 
 const { Text } = Typography
 const CAPTCHA_BASE_WIDTH = 320
-const CAPTCHA_BASE_HEIGHT = 180
 
 type CaptchaStatus = 'idle' | 'dragging' | 'error' | 'success'
 
@@ -28,23 +27,66 @@ export default function LoginCaptchaModal({
   onRefresh,
   onVerify,
 }: LoginCaptchaModalProps) {
-  const [offsetX, setOffsetX] = useState(0)
   const [status, setStatus] = useState<CaptchaStatus>('idle')
   const [viewportWidth, setViewportWidth] = useState(CAPTCHA_BASE_WIDTH)
 
   const viewportRef = useRef<HTMLDivElement | null>(null)
   const sliderRef = useRef<HTMLDivElement | null>(null)
+  const pieceRef = useRef<HTMLImageElement | null>(null)
+  const fillRef = useRef<HTMLDivElement | null>(null)
+  const handleRef = useRef<HTMLButtonElement | null>(null)
   const pointerIdRef = useRef<number | null>(null)
   const startPointerXRef = useRef(0)
   const startOffsetXRef = useRef(0)
+  const sliderTravelRef = useRef(1)
   const dragStartedAtRef = useRef(0)
   const trailRef = useRef<number[]>([])
   const latestOffsetRef = useRef(0)
+  const pendingOffsetRef = useRef(0)
   const latestChallengeIdRef = useRef<string | null>(null)
+  const viewportScaleRef = useRef(1)
+  const frameRef = useRef<number | null>(null)
+  const viewportScale = viewportWidth / CAPTCHA_BASE_WIDTH
 
-  useEffect(() => {
-    latestOffsetRef.current = offsetX
-  }, [offsetX])
+  const cancelScheduledOffsetSync = () => {
+    if (frameRef.current !== null) {
+      window.cancelAnimationFrame(frameRef.current)
+      frameRef.current = null
+    }
+  }
+
+  const applyOffsetToDom = (nextOffset: number) => {
+    const maxOffset = challenge?.sliderMax ?? 0
+    const safeOffset = Math.max(0, Math.min(nextOffset, maxOffset))
+    const progress = maxOffset > 0 ? safeOffset / maxOffset : 0
+
+    latestOffsetRef.current = safeOffset
+
+    if (handleRef.current) {
+      handleRef.current.style.transform = `translate3d(${safeOffset}px, 0, 0)`
+    }
+
+    if (fillRef.current) {
+      fillRef.current.style.transform = `scaleX(${progress})`
+    }
+
+    if (pieceRef.current) {
+      pieceRef.current.style.transform = `translate3d(${safeOffset * viewportScaleRef.current}px, 0, 0)`
+    }
+  }
+
+  const scheduleOffsetSync = (nextOffset: number) => {
+    pendingOffsetRef.current = nextOffset
+
+    if (frameRef.current !== null) {
+      return
+    }
+
+    frameRef.current = window.requestAnimationFrame(() => {
+      frameRef.current = null
+      applyOffsetToDom(pendingOffsetRef.current)
+    })
+  }
 
   useEffect(() => {
     if (!viewportRef.current) {
@@ -53,7 +95,8 @@ export default function LoginCaptchaModal({
 
     const updateWidth = () => {
       const nextWidth = viewportRef.current?.getBoundingClientRect().width ?? CAPTCHA_BASE_WIDTH
-      setViewportWidth(nextWidth || CAPTCHA_BASE_WIDTH)
+      const safeWidth = nextWidth || CAPTCHA_BASE_WIDTH
+      setViewportWidth((currentWidth) => (currentWidth === safeWidth ? currentWidth : safeWidth))
     }
 
     updateWidth()
@@ -69,8 +112,14 @@ export default function LoginCaptchaModal({
   }, [open])
 
   useEffect(() => {
+    viewportScaleRef.current = viewportScale
+    applyOffsetToDom(latestOffsetRef.current)
+  }, [viewportScale, challenge?.captchaId])
+
+  useEffect(() => {
     if (!open) {
-      setOffsetX(0)
+      cancelScheduledOffsetSync()
+      applyOffsetToDom(0)
       setStatus('idle')
       trailRef.current = []
       pointerIdRef.current = null
@@ -80,31 +129,34 @@ export default function LoginCaptchaModal({
 
     if (challenge?.captchaId && latestChallengeIdRef.current !== challenge.captchaId) {
       latestChallengeIdRef.current = challenge.captchaId
-      setOffsetX(0)
+      cancelScheduledOffsetSync()
+      applyOffsetToDom(0)
       setStatus('idle')
       trailRef.current = []
       pointerIdRef.current = null
     }
   }, [open, challenge?.captchaId])
 
+  useEffect(() => () => {
+    cancelScheduledOffsetSync()
+  }, [])
+
   useEffect(() => {
     const handlePointerMove = (event: PointerEvent) => {
-      if (!challenge || pointerIdRef.current !== event.pointerId || !sliderRef.current) {
+      if (!challenge || pointerIdRef.current !== event.pointerId) {
         return
       }
 
-      const { width } = sliderRef.current.getBoundingClientRect()
       const maxOffset = challenge.sliderMax
-      const travel = Math.max(width - 44, 1)
       const deltaX = event.clientX - startPointerXRef.current
       const nextOffset = Math.max(
         0,
-        Math.min(maxOffset, startOffsetXRef.current + (deltaX / travel) * maxOffset),
+        Math.min(maxOffset, startOffsetXRef.current + (deltaX / sliderTravelRef.current) * maxOffset),
       )
       const rounded = Math.round(nextOffset)
 
       latestOffsetRef.current = rounded
-      setOffsetX(rounded)
+      scheduleOffsetSync(rounded)
 
       const last = trailRef.current[trailRef.current.length - 1]
       if (last !== rounded) {
@@ -118,6 +170,8 @@ export default function LoginCaptchaModal({
       }
 
       pointerIdRef.current = null
+      cancelScheduledOffsetSync()
+      applyOffsetToDom(latestOffsetRef.current)
 
       if (latestOffsetRef.current <= 0) {
         setStatus('idle')
@@ -154,16 +208,20 @@ export default function LoginCaptchaModal({
     pointerIdRef.current = event.pointerId
     startPointerXRef.current = event.clientX
     startOffsetXRef.current = latestOffsetRef.current
+    sliderTravelRef.current = Math.max((sliderRef.current?.getBoundingClientRect().width ?? 44) - 44, 1)
     dragStartedAtRef.current = Date.now()
     trailRef.current = [latestOffsetRef.current]
     setStatus('dragging')
+
+    event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const refreshChallenge = () => {
     if (verifying) {
       return
     }
-    setOffsetX(0)
+    cancelScheduledOffsetSync()
+    applyOffsetToDom(0)
     setStatus('idle')
     trailRef.current = []
     latestOffsetRef.current = 0
@@ -172,12 +230,10 @@ export default function LoginCaptchaModal({
   }
 
   const statusText = status === 'error'
-    ? '轨迹不自然或未对准缺口，已刷新挑战'
+    ? '轨迹不自然或未对准缺口，请重试或刷新挑战'
     : status === 'success'
       ? '验证通过，正在登录'
       : '按住滑块拖动，让拼图回到缺口位置'
-
-  const viewportScale = viewportWidth / CAPTCHA_BASE_WIDTH
 
   return (
     <Modal
@@ -233,12 +289,13 @@ export default function LoginCaptchaModal({
                     src={challenge.piece}
                     alt="验证码拼图"
                     className="login-captcha__piece"
+                    ref={pieceRef}
                     draggable={false}
                     style={{
                       width: challenge.pieceSize * viewportScale,
                       height: challenge.pieceSize * viewportScale,
                       top: challenge.pieceTop * viewportScale,
-                      left: offsetX * viewportScale,
+                      left: 0,
                     }}
                   />
                   <div className="login-captcha__scan" />
@@ -253,15 +310,15 @@ export default function LoginCaptchaModal({
         <div className="login-captcha__slider" ref={sliderRef}>
           <div
             className="login-captcha__slider-fill"
-            style={{ width: challenge ? `${(offsetX / challenge.sliderMax) * 100}%` : 0 }}
+            ref={fillRef}
           />
           <div className="login-captcha__slider-label">拖动完成验证</div>
           <button
             type="button"
             className="login-captcha__handle"
+            ref={handleRef}
             onPointerDown={handlePointerDown}
             disabled={!challenge || loading || verifying}
-            style={{ transform: `translateX(${offsetX}px)` }}
             aria-label="拖动滑块完成验证"
           >
             <span />
