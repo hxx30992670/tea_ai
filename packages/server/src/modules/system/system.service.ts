@@ -28,6 +28,22 @@ const SYSTEM_SETTING_KEYS = [
   'aiIndustry',
 ] as const;
 
+export interface SpeechProviderConfig {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  apiKey: string;
+  reason: string;
+}
+
+export interface SpeechCapabilities {
+  enabled: boolean;
+  provider: string;
+  model: string;
+  realtimeSupported: boolean;
+  reason: string;
+}
+
 @Injectable()
 export class SystemService {
   constructor(
@@ -111,6 +127,66 @@ export class SystemService {
     const instanceToken = `inst-${randomUUID().replace(/-/g, '')}`;
     await this.upsertSetting('aiInstanceToken', instanceToken);
     return instanceToken;
+  }
+
+  private buildSpeechProviderConfig(settings: Record<string, string>): SpeechProviderConfig {
+    const aiModelApiKey = settings.aiModelApiKey?.trim();
+    const aiModelBaseUrl = settings.aiModelBaseUrl?.trim();
+    const isDashScope = aiModelBaseUrl.includes('dashscope.aliyuncs.com');
+
+    if (!aiModelApiKey) {
+      return {
+        enabled: false,
+        provider: '',
+        model: '',
+        apiKey: '',
+        reason: '未配置语音服务密钥',
+      };
+    }
+
+    if (!aiModelBaseUrl) {
+      return {
+        enabled: false,
+        provider: '',
+        model: '',
+        apiKey: '',
+        reason: '未配置语音服务地址',
+      };
+    }
+
+    if (!isDashScope) {
+      return {
+        enabled: false,
+        provider: '',
+        model: '',
+        apiKey: '',
+        reason: '当前模型服务未启用阿里云实时语音识别',
+      };
+    }
+
+    return {
+      enabled: true,
+      provider: 'aliyun-dashscope',
+      model: 'paraformer-realtime-v2',
+      apiKey: aiModelApiKey,
+      reason: '',
+    };
+  }
+
+  async getSpeechProviderConfig(user?: AuthUser) {
+    const settingMap = await this.getAllSettings();
+    return this.buildSpeechProviderConfig(settingMap);
+  }
+
+  async getSpeechCapabilities(user?: AuthUser): Promise<SpeechCapabilities> {
+    const speechConfig = await this.getSpeechProviderConfig(user);
+    return {
+      enabled: speechConfig.enabled,
+      provider: speechConfig.provider,
+      model: speechConfig.model,
+      realtimeSupported: speechConfig.enabled,
+      reason: speechConfig.reason,
+    };
   }
 
   async getSettings(user?: AuthUser) {

@@ -1,100 +1,177 @@
-import { useEffect, useRef, useState } from 'react'
-import { Trash2, History } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { PageHeader } from '@/components/layout/PageHeader'
-import { Skeleton } from '@/components/ui/skeleton'
-import logoIcon from '@/assets/images/logo-icon.png'
-import type { SpeechConfig } from '@/hooks/useSpeech'
-import { useChat } from './hooks/useChat'
-import { ChatMessage } from './components/ChatMessage'
-import { ChatInput } from './components/ChatInput'
-import { QuickSuggestions } from './components/QuickSuggestions'
-import { SessionDrawer } from './components/SessionDrawer'
+import { useEffect, useRef, useState } from 'react';
+import { Trash2, History } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { PageHeader } from '@/components/layout/PageHeader';
+import { Skeleton } from '@/components/ui/skeleton';
+import logoIcon from '@/assets/images/logo-icon.png';
+import type { SpeechConfig } from '@/hooks/useSpeech';
+import { systemApi } from '@/api/system';
+import { useAuthStore } from '@/store/auth';
+import { useChat } from './hooks/useChat';
+import { ChatMessage } from './components/ChatMessage';
+import { ChatInput } from './components/ChatInput';
+import { QuickSuggestions } from './components/QuickSuggestions';
+import { SessionDrawer } from './components/SessionDrawer';
 
-const AUTO_SCROLL_THRESHOLD = 80
+const AUTO_SCROLL_THRESHOLD = 80;
 
 function isNearBottom(element: HTMLDivElement) {
-  return element.scrollHeight - element.scrollTop - element.clientHeight <= AUTO_SCROLL_THRESHOLD
+  return (
+    element.scrollHeight - element.scrollTop - element.clientHeight <=
+    AUTO_SCROLL_THRESHOLD
+  );
 }
 
-interface AiPageProps {
-  speechConfig?: SpeechConfig
+function useSpeechConfig() {
+  const isLoggedIn = useAuthStore((s) => s.isLoggedIn);
+  const accessToken = useAuthStore((s) => s.accessToken);
+  const [speechConfig, setSpeechConfig] = useState<SpeechConfig | undefined>();
+
+  useEffect(() => {
+    if (!isLoggedIn || !accessToken) {
+      setSpeechConfig(undefined);
+      return;
+    }
+
+    let cancelled = false;
+    setSpeechConfig({ accessToken, enabled: false, reason: null });
+
+    void systemApi
+      .speechCapabilities()
+      .then((capabilities) => {
+        if (cancelled) {
+          return;
+        }
+
+        const enabled = Boolean(
+          capabilities.enabled && capabilities.realtimeSupported
+        );
+        setSpeechConfig({
+          accessToken,
+          enabled,
+          reason: enabled ? null : capabilities.reason || '当前未开启语音识别',
+          provider: capabilities.provider || undefined,
+          model: capabilities.model || undefined,
+          realtimeSupported: capabilities.realtimeSupported
+        });
+      })
+      .catch((error) => {
+        if (cancelled) {
+          return;
+        }
+
+        const reason =
+          error instanceof Error ? error.message : '语音服务状态获取失败';
+        setSpeechConfig({
+          accessToken,
+          enabled: false,
+          reason
+        });
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoggedIn, accessToken]);
+
+  return speechConfig;
 }
 
-export default function AiPage({ speechConfig }: AiPageProps) {
+export default function AiPage() {
+  const speechConfig = useSpeechConfig();
   const {
-    messages, loading, loadingHistory, statusPhase,
-    sessions, activeSessionId,
-    sendMessage, stopMessage, newChat, loadSession, deleteSession,
-  } = useChat()
+    messages,
+    loading,
+    loadingHistory,
+    statusPhase,
+    sessions,
+    activeSessionId,
+    sendMessage,
+    stopMessage,
+    newChat,
+    loadSession,
+    deleteSession
+  } = useChat();
 
-  const [showSessions, setShowSessions] = useState(false)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
-  const shouldAutoScrollRef = useRef(true)
+  const [showSessions, setShowSessions] = useState(false);
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const shouldAutoScrollRef = useRef(true);
 
   // 新消息时自动滚到底部
   useEffect(() => {
     if (shouldAutoScrollRef.current) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
-  }, [messages])
+  }, [messages]);
 
   useEffect(() => {
-    const viewport = scrollAreaRef.current?.querySelector('[data-radix-scroll-area-viewport]')
-    if (!(viewport instanceof HTMLDivElement)) return
+    const viewport = scrollAreaRef.current?.querySelector(
+      '[data-radix-scroll-area-viewport]'
+    );
+    if (!(viewport instanceof HTMLDivElement)) return;
 
     const handleScroll = () => {
-      shouldAutoScrollRef.current = isNearBottom(viewport)
-    }
+      shouldAutoScrollRef.current = isNearBottom(viewport);
+    };
 
-    handleScroll()
-    viewport.addEventListener('scroll', handleScroll)
-    return () => viewport.removeEventListener('scroll', handleScroll)
-  }, [])
+    handleScroll();
+    viewport.addEventListener('scroll', handleScroll);
+    return () => viewport.removeEventListener('scroll', handleScroll);
+  }, []);
 
   useEffect(() => {
-    shouldAutoScrollRef.current = true
-  }, [activeSessionId])
+    shouldAutoScrollRef.current = true;
+  }, [activeSessionId]);
 
-  const activeSession = sessions.find((s) => s.sessionId === activeSessionId)
+  const activeSession = sessions.find((s) => s.sessionId === activeSessionId);
 
   return (
     // h-full + overflow-hidden：让 AppLayout 的 <main> 不整体滚动
     // 头部 / 底部 shrink-0 固定，中间 ScrollArea flex-1 独立滚动
-    <div className="flex h-full flex-col overflow-hidden bg-background">
+    <div className='flex h-full flex-col overflow-hidden bg-background'>
       <PageHeader
-        title="AI 助手"
+        title='AI 助手'
         subtitle={activeSession?.title ?? '语音或打字，快速查询数据'}
         action={
-          <div className="flex items-center gap-1">
+          <div className='flex items-center gap-1'>
             {messages.length > 0 && (
-              <Button variant="ghost" size="icon" onClick={newChat} aria-label="新建对话">
-                <Trash2 size={18} className="text-muted-foreground" />
+              <Button
+                variant='ghost'
+                size='icon'
+                onClick={newChat}
+                aria-label='新建对话'
+              >
+                <Trash2 size={18} className='text-muted-foreground' />
               </Button>
             )}
             <Button
-              variant="ghost"
-              size="icon"
+              variant='ghost'
+              size='icon'
               onClick={() => setShowSessions(true)}
-              aria-label="历史对话"
+              aria-label='历史对话'
             >
-              <History size={18} className="text-muted-foreground" />
+              <History size={18} className='text-muted-foreground' />
             </Button>
           </div>
         }
       />
 
       {/* 消息列表 */}
-      <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1">
-        <div className="min-h-full overflow-x-hidden px-4 py-4 space-y-4">
+      <ScrollArea ref={scrollAreaRef} className='min-h-0 flex-1'>
+        <div className='min-h-full overflow-x-hidden px-4 py-4 space-y-4'>
           {loadingHistory ? (
-            <div className="space-y-4 py-4">
+            <div className='space-y-4 py-4'>
               {Array.from({ length: 4 }).map((_, i) => (
-                <div key={i} className={`flex gap-2.5 ${i % 2 === 0 ? 'flex-row-reverse' : ''}`}>
-                  <Skeleton className="h-8 w-8 shrink-0 rounded-full" />
-                  <Skeleton className={`h-10 rounded-2xl ${i % 2 === 0 ? 'w-48' : 'w-64'}`} />
+                <div
+                  key={i}
+                  className={`flex gap-2.5 ${i % 2 === 0 ? 'flex-row-reverse' : ''}`}
+                >
+                  <Skeleton className='h-8 w-8 shrink-0 rounded-full' />
+                  <Skeleton
+                    className={`h-10 rounded-2xl ${i % 2 === 0 ? 'w-48' : 'w-64'}`}
+                  />
                 </div>
               ))}
             </div>
@@ -108,8 +185,8 @@ export default function AiPage({ speechConfig }: AiPageProps) {
       </ScrollArea>
 
       {/* 快捷提问 + 输入框 — shrink-0 固定在底部，不参与滚动 */}
-      <div className="shrink-0 border-t border-border bg-background/95 backdrop-blur-md">
-        <div className="px-3 pt-3">
+      <div className='shrink-0 border-t border-border bg-background/95 backdrop-blur-md'>
+        <div className='px-3 pt-3'>
           <QuickSuggestions onSelect={sendMessage} disabled={loading} />
         </div>
         <ChatInput
@@ -134,23 +211,26 @@ export default function AiPage({ speechConfig }: AiPageProps) {
         onDelete={deleteSession}
       />
     </div>
-  )
+  );
 }
 
 function WelcomeScreen() {
   return (
-    <div className="flex flex-col items-center gap-4 py-12 text-center">
-      <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10"
-        style={{ boxShadow: '0 0 20px rgba(212,168,83,0.12)' }}>
-        <img src={logoIcon} alt="" className="h-10 w-10 object-contain" />
+    <div className='flex flex-col items-center gap-4 py-12 text-center'>
+      <div
+        className='flex h-16 w-16 items-center justify-center rounded-2xl border border-primary/20 bg-primary/10'
+        style={{ boxShadow: '0 0 20px rgba(212,168,83,0.12)' }}
+      >
+        <img src={logoIcon} alt='' className='h-10 w-10 object-contain' />
       </div>
       <div>
-        <h2 className="text-lg font-semibold text-foreground">茶掌柜 AI</h2>
-        <p className="mt-1.5 text-sm text-muted-foreground leading-relaxed">
-          用自然语言查询经营数据<br />
+        <h2 className='text-lg font-semibold text-foreground'>茶掌柜 AI</h2>
+        <p className='mt-1.5 text-sm text-muted-foreground leading-relaxed'>
+          用自然语言查询经营数据
+          <br />
           比如：「今天卖了多少钱？」
         </p>
       </div>
     </div>
-  )
+  );
 }

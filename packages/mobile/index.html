@@ -36,23 +36,6 @@
   </head>
   <body>
     <div id="root"></div>
-    <script>
-      /*
-       * 移动端语音输入默认关闭，开源仓库不再内置任何讯飞凭证。
-       *
-       * 如果你想启用语音输入：
-       * 1. 到讯飞开放平台注册账号并开通“实时语音转写”
-       * 2. 新账号通常有可用的免费额度，足够先本地试起来
-       * 3. 拿到 APPID 和 APIKey 后，在部署环境里注入下面这段配置
-       *
-       * window.__SMARTSTOCK_MOBILE_CONFIG__ = {
-       *   speech: {
-       *     appId: '你的 APPID',
-       *     apiKey: '你的 APIKey',
-       *   },
-       * }
-       */
-    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

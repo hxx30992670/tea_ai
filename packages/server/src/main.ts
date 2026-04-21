@@ -7,6 +7,9 @@ import { NestFactory } from '@nestjs/core';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 import { ResponseInterceptor } from './common/interceptors/response.interceptor';
+import { JwtService } from '@nestjs/jwt';
+import { SystemService } from './modules/system/system.service';
+import { setupSpeechWsProxy } from './modules/system/speech-ws-proxy';
 
 /** 应用启动引导函数 */
 async function bootstrap() {
@@ -51,6 +54,11 @@ async function bootstrap() {
   // 从环境变量读取端口，默认 3000
   const port = Number(process.env.PORT ?? 3000);
   await app.listen(port);
+
+  const httpServer = app.getHttpServer();
+  const jwtService = app.get(JwtService);
+  const systemService = app.get(SystemService);
+  setupSpeechWsProxy(jwtService, systemService, httpServer);
 }
 
 // 启动应用

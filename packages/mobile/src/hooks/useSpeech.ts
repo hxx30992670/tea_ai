@@ -1,7 +1,5 @@
-import CryptoJS from 'crypto-js'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-const XF_RTASR_URL = 'wss://rtasr.xfyun.cn/v1/ws'
 const PCM_SAMPLE_RATE = 16000
 const PCM_FRAME_SIZE = 1280
 const PRE_SPEECH_BUFFER_BYTES = 19200
@@ -9,10 +7,15 @@ const MIN_SPEECH_RMS = 0.02
 const MAX_SPEECH_ZCR = 0.2
 const MIN_SPEECH_FRAMES = 3
 const AUTO_STOP_SILENCE_MS = 2600
+const WS_CONNECT_TIMEOUT_MS = 12000
 
 export interface SpeechConfig {
-  appId: string
-  apiKey: string
+  accessToken: string
+  enabled: boolean
+  reason?: string | null
+  provider?: string
+  model?: string
+  realtimeSupported?: boolean
 }
 
 interface SpeechOptions {
@@ -40,12 +43,33 @@ function hasSpeechPrerequisites() {
   )
 }
 
-function buildWebSocketUrl({ appId, apiKey }: SpeechConfig) {
-  const ts = Math.floor(Date.now() / 1000).toString()
-  const signa = CryptoJS.MD5(`${appId}${ts}`).toString()
-  const signature = CryptoJS.enc.Base64.stringify(CryptoJS.HmacSHA1(signa, apiKey))
+function buildProxyWsUrl(accessToken: string) {
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+  return `${protocol}//${window.location.host}/api/speech/ws?token=${encodeURIComponent(accessToken)}`
+}
 
-  return `${XF_RTASR_URL}?appid=${encodeURIComponent(appId)}&ts=${ts}&signa=${encodeURIComponent(signature)}&vadMdn=2`
+function normalizeSpeechError(error: unknown) {
+  if (error instanceof DOMException) {
+    if (error.name === 'NotAllowedError') {
+      return '未获得麦克风权限，请允许浏览器访问麦克风'
+    }
+    if (error.name === 'NotFoundError') {
+      return '未检测到可用的麦克风设备'
+    }
+    if (error.name === 'NotReadableError') {
+      return '麦克风当前被其他应用占用，请稍后重试'
+    }
+  }
+
+  if (error instanceof Error && error.message) {
+    return error.message
+  }
+
+  return '语音识别初始化失败，请稍后重试'
+}
+
+function generateTaskId() {
+  return `task_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`
 }
 
 function downsampleBuffer(buffer: Float32Array, inputSampleRate: number, outputSampleRate: number) {
@@ -131,47 +155,50 @@ function isSpeechFrame(input: Float32Array) {
   return rms >= MIN_SPEECH_RMS && zcr <= MAX_SPEECH_ZCR
 }
 
-function extractRecognitionText(payload: string) {
-  const message = JSON.parse(payload) as {
-    action?: string
-    code?: number
-    desc?: string
-    data?: string
-  }
+interface ServerHeader {
+  task_id?: string
+  event?: string
+  error_code?: string
+  error_message?: string
+}
 
-  if (message.action === 'error') {
-    throw new Error(message.desc || '讯飞语音服务异常')
-  }
+interface SentenceResult {
+  begin_time?: number
+  end_time?: number | null
+  text?: string
+  sentence_end?: boolean
+}
 
-  if (message.action !== 'result' || !message.data) {
-    return { finalText: '', partialText: '' }
-  }
-
-  const result = JSON.parse(message.data) as {
-    seg_id?: number
-    cn?: {
-      st?: {
-        type?: number | string
-        rt?: Array<{
-          ws?: Array<{
-            cw?: Array<{ w?: string; rl?: number }>
-          }>
-        }>
-      }
+interface ServerMessage {
+  header: ServerHeader
+  payload?: {
+    output?: {
+      sentence?: SentenceResult
     }
   }
+}
 
-  const text = result.cn?.st?.rt
-    ?.flatMap((rt) => rt.ws ?? [])
-    .flatMap((ws) => ws.cw ?? [])
-    .map((cw) => cw.w ?? '')
-    .join('') ?? ''
+function parseServerMessage(rawData: string) {
+  const message = JSON.parse(rawData) as ServerMessage
+  const event = message.header?.event
 
-  const resultType = String(result.cn?.st?.type ?? '')
+  if (event === 'task-failed') {
+    throw new Error(message.header?.error_message || '语音服务异常')
+  }
 
-  return resultType === '0'
-    ? { finalText: text, partialText: '' }
-    : { finalText: '', partialText: text }
+  if (event === 'result-generated') {
+    const sentence = message.payload?.output?.sentence
+    if (!sentence?.text) {
+      return { finalText: '', partialText: '' }
+    }
+
+    const isFinal = Boolean(sentence.sentence_end) && sentence.end_time != null
+    return isFinal
+      ? { finalText: sentence.text, partialText: '' }
+      : { finalText: '', partialText: sentence.text }
+  }
+
+  return { finalText: '', partialText: '' }
 }
 
 export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, speechConfig }: SpeechOptions) {
@@ -194,6 +221,9 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
   const voicedFramesRef = useRef(0)
   const lastSpeechAtRef = useRef(0)
   const autoStoppingRef = useRef(false)
+  const taskIdRef = useRef<string>('')
+  const taskStartedRef = useRef(false)
+  const connectTimeoutRef = useRef<number | null>(null)
 
   const resetRecognitionState = useCallback(() => {
     finalizedTextRef.current = ''
@@ -202,6 +232,12 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     voicedFramesRef.current = 0
     lastSpeechAtRef.current = 0
     autoStoppingRef.current = false
+    taskIdRef.current = ''
+    taskStartedRef.current = false
+    if (connectTimeoutRef.current != null) {
+      window.clearTimeout(connectTimeoutRef.current)
+      connectTimeoutRef.current = null
+    }
   }, [])
 
   const clearAudioResources = useCallback(async () => {
@@ -285,8 +321,15 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
 
     await clearAudioResources()
 
-    if (ws?.readyState === WebSocket.OPEN) {
-      ws.send('{"end": true}')
+    if (ws?.readyState === WebSocket.OPEN && taskIdRef.current) {
+      ws.send(JSON.stringify({
+        header: {
+          task_id: taskIdRef.current,
+          action: 'finish-task',
+          streaming: 'duplex',
+        },
+        payload: { input: {} },
+      }))
     } else {
       setIsListening(false)
       setSupportInfo(null)
@@ -366,13 +409,18 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
   }, [flushAudioFrames, stop])
 
   const start = useCallback(async () => {
-    if (!speechConfig?.appId || !speechConfig?.apiKey) {
-      onError?.('还没有配置讯飞语音。去讯飞开放平台注册账号并开通“实时语音转写”后，把 APPID 和 APIKey 注入到移动端配置里即可，新账号一般有免费额度可先试用。')
+    if (!speechConfig?.accessToken) {
+      onError?.('需要登录后才能使用语音识别')
+      return
+    }
+
+    if (!speechConfig.enabled) {
+      onError?.(speechConfig.reason || '当前未开启语音识别')
       return
     }
 
     if (!hasSpeechPrerequisites()) {
-      onError?.('当前环境不支持讯飞语音，请使用 HTTPS，并确认浏览器支持麦克风与 WebSocket')
+      onError?.('当前环境不支持语音识别，请使用 HTTPS，并确认浏览器支持麦克风与 WebSocket')
       return
     }
 
@@ -382,26 +430,92 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
 
     isStoppingRef.current = false
     resetRecognitionState()
-    setSupportInfo('正在连接讯飞语音服务...')
+    setSupportInfo('正在连接语音服务...')
 
-    const ws = new WebSocket(buildWebSocketUrl(speechConfig))
+    const taskId = generateTaskId()
+    taskIdRef.current = taskId
+
+    const ws = new WebSocket(buildProxyWsUrl(speechConfig.accessToken))
     wsRef.current = ws
-
-    ws.onopen = async () => {
-      try {
-        await startRecorder()
-        setIsListening(true)
-        setSupportInfo('请开始说话，停顿后会自动结束')
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '麦克风启动失败'
-        onError?.(message)
-        ws.close()
+    connectTimeoutRef.current = window.setTimeout(() => {
+      if (taskStartedRef.current || ws.readyState !== WebSocket.OPEN) {
+        return
       }
-    }
+
+      onError?.('语音服务启动超时，请检查阿里云语音配置后重试')
+      isStoppingRef.current = true
+      ws.close()
+    }, WS_CONNECT_TIMEOUT_MS)
+
+    ws.onopen = () => {}
 
     ws.onmessage = (event) => {
+      if (typeof event.data !== 'string') {
+        return
+      }
+
       try {
-        const { finalText, partialText } = extractRecognitionText(String(event.data))
+        const message = JSON.parse(event.data)
+        const serverEvent = message.header?.event ?? message.event
+
+        if (serverEvent === 'proxy-ready') {
+          ws.send(JSON.stringify({
+            header: {
+              task_id: taskId,
+              action: 'run-task',
+              streaming: 'duplex',
+            },
+            payload: {
+              task_group: 'audio',
+              task: 'asr',
+              function: 'recognition',
+              model: speechConfig.model || 'paraformer-realtime-v2',
+              parameters: {
+                format: 'pcm',
+                sample_rate: PCM_SAMPLE_RATE,
+              },
+              input: {},
+            },
+          }))
+          return
+        }
+
+        if (serverEvent === 'task-started') {
+          taskStartedRef.current = true
+          if (connectTimeoutRef.current != null) {
+            window.clearTimeout(connectTimeoutRef.current)
+            connectTimeoutRef.current = null
+          }
+          void startRecorder()
+            .then(() => {
+              setIsListening(true)
+              setSupportInfo('请开始说话，停顿后会自动结束')
+            })
+            .catch((error) => {
+              isStoppingRef.current = true
+              setSupportInfo(null)
+              onError?.(normalizeSpeechError(error))
+              ws.close()
+            })
+          return
+        }
+
+        if (serverEvent === 'task-failed') {
+          onError?.(message.header?.error_message || '语音识别服务异常')
+          ws.close()
+          return
+        }
+
+        if (serverEvent === 'task-finished') {
+          ws.close()
+          return
+        }
+
+        if (serverEvent !== 'result-generated') {
+          return
+        }
+
+        const { finalText, partialText } = parseServerMessage(String(event.data))
         if (partialText) {
           latestPartialRef.current = mergeTranscript(latestPartialRef.current, partialText)
           const combinedText = mergeTranscript(finalizedTextRef.current, latestPartialRef.current)
@@ -416,17 +530,21 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
           onPartialResult?.('')
         }
       } catch (error) {
-        const message = error instanceof Error ? error.message : '解析讯飞识别结果失败'
-        onError?.(message)
+        const errorMsg = error instanceof Error ? error.message : '解析识别结果失败'
+        onError?.(errorMsg)
       }
     }
 
     ws.onerror = () => {
-      onError?.('讯飞语音连接失败，请检查 APPID/API_KEY 或当前网络环境')
+      onError?.('语音连接失败，请检查网络或重新登录')
       ws.close()
     }
 
     ws.onclose = async () => {
+      if (connectTimeoutRef.current != null) {
+        window.clearTimeout(connectTimeoutRef.current)
+        connectTimeoutRef.current = null
+      }
       await clearAudioResources()
       wsRef.current = null
       setIsListening(false)
@@ -434,7 +552,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       resetRecognitionState()
 
       if (!isStoppingRef.current) {
-        onError?.('讯飞语音连接已中断，请重试')
+        onError?.('语音连接已中断，请重试')
       }
     }
   }, [clearAudioResources, isListening, mergeTranscript, onError, onPartialResult, onResult, resetRecognitionState, speechConfig, startRecorder])
@@ -449,21 +567,27 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
   }, [isListening, start, stop])
 
   useEffect(() => {
-    if (!speechConfig?.appId || !speechConfig?.apiKey) {
+    if (!speechConfig?.accessToken) {
       setIsSupported(false)
-      setSupportInfo('语音输入默认未开启。到讯飞开放平台注册账号并开通“实时语音转写”后，注入 APPID 和 APIKey 就能使用，新账号一般有免费额度。')
+      setSupportInfo('需要登录后才能使用语音识别')
+      return
+    }
+
+    if (!speechConfig.enabled) {
+      setIsSupported(false)
+      setSupportInfo(speechConfig.reason || null)
       return
     }
 
     if (!hasSpeechPrerequisites()) {
       setIsSupported(false)
-      setSupportInfo('当前环境不支持讯飞语音，请使用 HTTPS 打开页面')
+      setSupportInfo('当前环境不支持语音识别，请使用 HTTPS 打开页面')
       return
     }
 
     setIsSupported(true)
     setSupportInfo(null)
-  }, [speechConfig?.apiKey, speechConfig?.appId])
+  }, [speechConfig?.accessToken, speechConfig?.enabled, speechConfig?.reason])
 
   useEffect(() => {
     return () => {

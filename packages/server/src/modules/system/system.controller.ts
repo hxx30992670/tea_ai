@@ -29,6 +29,20 @@ export class SystemController {
     return this.systemService.getSettings(user);
   }
 
+  @ApiOperation({ summary: '获取语音识别能力' })
+  @ApiOkResponse({ description: '返回语音识别是否可用、供应商与模型信息' })
+  @Get('speech-capabilities')
+  getSpeechCapabilities(@CurrentUser() user: AuthUser) {
+    return this.systemService.getSpeechCapabilities(user);
+  }
+
+  @ApiOperation({ summary: '获取语音识别能力（兼容旧版路径）' })
+  @ApiOkResponse({ description: '返回语音识别是否可用、供应商与模型信息' })
+  @Get('speech-config')
+  getSpeechConfigCompat(@CurrentUser() user: AuthUser) {
+    return this.systemService.getSpeechCapabilities(user);
+  }
+
   @Roles(ROLE_ADMIN)
   @ApiOperation({ summary: '更新系统设置' })
   @ApiBody({ type: UpdateSystemSettingsDto })
