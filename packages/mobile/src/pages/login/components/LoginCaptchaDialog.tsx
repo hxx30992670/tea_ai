@@ -87,6 +87,7 @@ export function LoginCaptchaDialog({
   const dragStartHandleLeftRef = useRef(0)
   const dragStartedAtRef = useRef(0)
   const handleTravelPxRef = useRef(1)
+  const latestHandleLeftPxRef = useRef(0)
   const trailRef = useRef<number[]>([])
   const latestChallengeIdRef = useRef<string | null>(null)
 
@@ -145,6 +146,7 @@ export function LoginCaptchaDialog({
 
   const resetDragState = () => {
     setHandleLeftPx(0)
+    latestHandleLeftPxRef.current = 0
     trailRef.current = []
     activePointerIdRef.current = null
     dragStartClientXRef.current = 0
@@ -207,6 +209,7 @@ export function LoginCaptchaDialog({
       const progress = handleTravelPxRef.current > 0 ? nextHandleLeftPx / handleTravelPxRef.current : 0
       const nextOffsetX = Math.round(progress * sliderMax)
 
+      latestHandleLeftPxRef.current = nextHandleLeftPx
       setHandleLeftPx(nextHandleLeftPx)
 
       if (trailRef.current[trailRef.current.length - 1] !== nextOffsetX) {
@@ -221,7 +224,11 @@ export function LoginCaptchaDialog({
 
       activePointerIdRef.current = null
 
-      if (captchaOffsetX <= 0) {
+      const finalHandleLeft = latestHandleLeftPxRef.current
+      const finalProgress = handleTravelPxRef.current > 0 ? finalHandleLeft / handleTravelPxRef.current : 0
+      const finalOffsetX = sliderMax > 0 ? Math.round(finalProgress * sliderMax) : 0
+
+      if (finalOffsetX <= 0) {
         resetDragState()
         return
       }
@@ -230,9 +237,9 @@ export function LoginCaptchaDialog({
 
       const passed = await onVerify({
         captchaId: challenge.captchaId,
-        offsetX: captchaOffsetX,
+        offsetX: finalOffsetX,
         durationMs: Math.max(Date.now() - dragStartedAtRef.current, 320),
-        trail: buildSubmitTrail(trailRef.current, captchaOffsetX),
+        trail: buildSubmitTrail(trailRef.current, finalOffsetX),
       }, {
         viewportWidth: viewportRect.width,
       })
@@ -259,7 +266,7 @@ export function LoginCaptchaDialog({
       window.removeEventListener('pointerup', handlePointerUp)
       window.removeEventListener('pointercancel', handlePointerUp)
     }
-  }, [captchaOffsetX, challenge, onVerify, sliderMax, verifying])
+  }, [challenge, onVerify, sliderMax, verifying])
 
   const handlePointerDown = (event: ReactPointerEvent<HTMLButtonElement>) => {
     if (!challenge || loading || verifying) {
@@ -378,7 +385,7 @@ export function LoginCaptchaDialog({
               className="relative h-[56px] overflow-hidden rounded-2xl border border-primary/15 bg-secondary/70"
             >
               <div
-                className="absolute inset-y-0 left-0 origin-left rounded-2xl bg-gradient-to-r from-primary/30 via-primary/18 to-primary/8 transition-transform"
+                className="absolute inset-y-0 left-0 origin-left rounded-2xl bg-gradient-to-r from-primary/30 via-primary/18 to-primary/8"
                 style={{ width: '100%', transform: `scaleX(${normalizedProgress})` }}
               />
               <div className="absolute inset-0 flex items-center justify-center px-16 text-[11px] font-medium tracking-[0.22em] text-muted-foreground/55">
@@ -389,7 +396,7 @@ export function LoginCaptchaDialog({
                 aria-label="拖动滑块完成验证"
                 disabled={loading || verifying || !challenge}
                 onPointerDown={handlePointerDown}
-                className="absolute left-0 top-0 flex h-[52px] w-[52px] items-center justify-center rounded-2xl border border-primary/25 bg-gradient-to-br from-[#d4a853] via-[#dfb762] to-[#f0d18a] text-[#0a0e1a] shadow-lg shadow-primary/25 transition-transform active:scale-[0.98] disabled:opacity-60"
+                className={`absolute left-0 top-0 flex h-[52px] w-[52px] items-center justify-center rounded-2xl border border-primary/25 bg-gradient-to-br from-[#d4a853] via-[#dfb762] to-[#f0d18a] text-[#0a0e1a] shadow-lg shadow-primary/25 disabled:opacity-60${status === 'dragging' ? '' : ' transition-transform active:scale-[0.98]'}`}
                 style={{
                   transform: `translate3d(${handleLeftPx}px, 2px, 0)`,
                 }}

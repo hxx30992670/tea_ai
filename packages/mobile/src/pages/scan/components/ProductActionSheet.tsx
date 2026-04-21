@@ -30,6 +30,7 @@ export function ProductActionSheet({
   const [remark, setRemark] = useState('')
   const [done, setDone] = useState<ActionType | null>(null)
   const [activeType, setActiveType] = useState<ActionType | null>(null)
+  const keyboardInset = useVisualViewportInset(open && !!product)
 
   const hasPackage = product?.packageUnit && product?.packageSize
 
@@ -62,7 +63,6 @@ export function ProductActionSheet({
   if (!product) return null
 
   const reasons = activeType === 'in' ? STOCK_IN_REASONS : activeType === 'out' ? STOCK_OUT_REASONS : []
-  const keyboardInset = useVisualViewportInset(open)
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose()}>
