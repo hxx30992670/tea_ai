@@ -3,9 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 const PCM_SAMPLE_RATE = 16000
 const PCM_FRAME_SIZE = 1280
 const PRE_SPEECH_BUFFER_BYTES = 19200
-const MIN_SPEECH_RMS = 0.02
-const MAX_SPEECH_ZCR = 0.2
-const MIN_SPEECH_FRAMES = 3
+const MIN_SPEECH_RMS = 0.022
+const MAX_SPEECH_ZCR = 0.18
+const MIN_SPEECH_FRAMES = 4
+const NOISE_CALIBRATION_FRAMES = 4
+const NOISE_FLOOR_SMOOTHING = 0.12
+const NOISE_GATE_MULTIPLIER = 2.4
+const NOISE_GATE_MARGIN = 0.008
 const AUTO_STOP_SILENCE_MS = 2600
 const WS_CONNECT_TIMEOUT_MS = 12000
 
@@ -149,10 +153,12 @@ function calculateZcr(input: Float32Array) {
   return crossings / input.length
 }
 
-function isSpeechFrame(input: Float32Array) {
-  const rms = calculateRms(input)
-  const zcr = calculateZcr(input)
-  return rms >= MIN_SPEECH_RMS && zcr <= MAX_SPEECH_ZCR
+function getSpeechRmsThreshold(noiseFloorRms: number) {
+  return Math.max(MIN_SPEECH_RMS, noiseFloorRms * NOISE_GATE_MULTIPLIER + NOISE_GATE_MARGIN)
+}
+
+function isSpeechFrame(rms: number, zcr: number, noiseFloorRms: number) {
+  return rms >= getSpeechRmsThreshold(noiseFloorRms) && zcr <= MAX_SPEECH_ZCR
 }
 
 interface ServerHeader {
@@ -203,6 +209,7 @@ function parseServerMessage(rawData: string) {
 
 export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, speechConfig }: SpeechOptions) {
   const [isListening, setIsListening] = useState(false)
+  const [isConnecting, setIsConnecting] = useState(false)
   const [isSupported, setIsSupported] = useState(false)
   const [supportInfo, setSupportInfo] = useState<string | null>(null)
 
@@ -224,6 +231,9 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
   const taskIdRef = useRef<string>('')
   const taskStartedRef = useRef(false)
   const connectTimeoutRef = useRef<number | null>(null)
+  const startRequestIdRef = useRef(0)
+  const noiseFloorRmsRef = useRef(0)
+  const noiseCalibrationFramesRef = useRef(0)
 
   const resetRecognitionState = useCallback(() => {
     finalizedTextRef.current = ''
@@ -234,6 +244,15 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     autoStoppingRef.current = false
     taskIdRef.current = ''
     taskStartedRef.current = false
+    noiseFloorRmsRef.current = 0
+    noiseCalibrationFramesRef.current = 0
+    if (connectTimeoutRef.current != null) {
+      window.clearTimeout(connectTimeoutRef.current)
+      connectTimeoutRef.current = null
+    }
+  }, [])
+
+  const clearConnectTimeout = useCallback(() => {
     if (connectTimeoutRef.current != null) {
       window.clearTimeout(connectTimeoutRef.current)
       connectTimeoutRef.current = null
@@ -301,6 +320,16 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
 
   const stop = useCallback(async () => {
     isStoppingRef.current = true
+    startRequestIdRef.current += 1
+    clearConnectTimeout()
+    setIsConnecting(false)
+
+    if (!isListening && !taskStartedRef.current) {
+      setSupportInfo(null)
+      wsRef.current?.close()
+      return
+    }
+
     setSupportInfo('正在结束录音...')
 
     const combinedText = mergeTranscript(finalizedTextRef.current, latestPartialRef.current.trim(), latestPartialRef.current)
@@ -334,9 +363,9 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       setIsListening(false)
       setSupportInfo(null)
     }
-  }, [clearAudioResources, flushAudioFrames, mergeTranscript, onPartialResult, onStopCapture])
+  }, [clearAudioResources, clearConnectTimeout, flushAudioFrames, isListening, mergeTranscript, onPartialResult, onStopCapture])
 
-  const startRecorder = useCallback(async () => {
+  const startRecorder = useCallback(async (startRequestId: number) => {
     const AudioContextClass = getAudioContextCtor()
     if (!AudioContextClass) {
       throw new Error('当前浏览器不支持音频采集')
@@ -356,13 +385,32 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     const silentGain = audioContext.createGain()
     silentGain.gain.value = 0
 
+    if (startRequestIdRef.current !== startRequestId || isStoppingRef.current) {
+      stream.getTracks().forEach((track) => track.stop())
+      await audioContext.close().catch(() => undefined)
+      return false
+    }
+
     processorNode.onaudioprocess = (event) => {
       const inputData = event.inputBuffer.getChannelData(0)
       const now = Date.now()
-      const speechFrame = isSpeechFrame(inputData)
+      const rms = calculateRms(inputData)
+      const zcr = calculateZcr(inputData)
+      const speechThreshold = getSpeechRmsThreshold(noiseFloorRmsRef.current)
+      const isCalibratingNoise = noiseCalibrationFramesRef.current < NOISE_CALIBRATION_FRAMES
+      const speechFrame = isCalibratingNoise
+        ? (rms >= speechThreshold + 0.01 && zcr <= MAX_SPEECH_ZCR)
+        : isSpeechFrame(rms, zcr, noiseFloorRmsRef.current)
       const pcmData = floatTo16BitPCM(downsampleBuffer(inputData, audioContext.sampleRate, PCM_SAMPLE_RATE))
 
       if (!speechDetectedRef.current) {
+        if (!speechFrame) {
+          noiseFloorRmsRef.current = noiseCalibrationFramesRef.current === 0
+            ? rms
+            : (noiseFloorRmsRef.current * (1 - NOISE_FLOOR_SMOOTHING)) + (rms * NOISE_FLOOR_SMOOTHING)
+          noiseCalibrationFramesRef.current += 1
+        }
+
         preSpeechPcmBufferRef.current = appendWithByteLimit(
           preSpeechPcmBufferRef.current,
           pcmData,
@@ -406,6 +454,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     sourceNodeRef.current = sourceNode
     processorNodeRef.current = processorNode
     silentGainRef.current = silentGain
+    return true
   }, [flushAudioFrames, stop])
 
   const start = useCallback(async () => {
@@ -424,16 +473,19 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
       return
     }
 
-    if (wsRef.current || isListening) {
+    if (wsRef.current || isListening || isConnecting) {
       return
     }
 
     isStoppingRef.current = false
+    startRequestIdRef.current += 1
     resetRecognitionState()
+    setIsConnecting(true)
     setSupportInfo('正在连接语音服务...')
 
     const taskId = generateTaskId()
     taskIdRef.current = taskId
+    const startRequestId = startRequestIdRef.current
 
     const ws = new WebSocket(buildProxyWsUrl(speechConfig.accessToken))
     wsRef.current = ws
@@ -444,6 +496,7 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
 
       onError?.('语音服务启动超时，请检查阿里云语音配置后重试')
       isStoppingRef.current = true
+      setIsConnecting(false)
       ws.close()
     }, WS_CONNECT_TIMEOUT_MS)
 
@@ -482,17 +535,20 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
 
         if (serverEvent === 'task-started') {
           taskStartedRef.current = true
-          if (connectTimeoutRef.current != null) {
-            window.clearTimeout(connectTimeoutRef.current)
-            connectTimeoutRef.current = null
-          }
-          void startRecorder()
-            .then(() => {
+          clearConnectTimeout()
+          setSupportInfo('正在打开麦克风...')
+          void startRecorder(startRequestId)
+            .then((started) => {
+              if (!started || isStoppingRef.current || startRequestIdRef.current !== startRequestId) {
+                return
+              }
+              setIsConnecting(false)
               setIsListening(true)
               setSupportInfo('请开始说话，停顿后会自动结束')
             })
             .catch((error) => {
               isStoppingRef.current = true
+              setIsConnecting(false)
               setSupportInfo(null)
               onError?.(normalizeSpeechError(error))
               ws.close()
@@ -501,7 +557,9 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
         }
 
         if (serverEvent === 'task-failed') {
-          onError?.(message.header?.error_message || '语音识别服务异常')
+          if (!isStoppingRef.current) {
+            onError?.(message.header?.error_message || '语音识别服务异常')
+          }
           ws.close()
           return
         }
@@ -536,17 +594,17 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     }
 
     ws.onerror = () => {
-      onError?.('语音连接失败，请检查网络或重新登录')
+      if (!isStoppingRef.current) {
+        onError?.('语音连接失败，请检查网络或重新登录')
+      }
       ws.close()
     }
 
     ws.onclose = async () => {
-      if (connectTimeoutRef.current != null) {
-        window.clearTimeout(connectTimeoutRef.current)
-        connectTimeoutRef.current = null
-      }
+      clearConnectTimeout()
       await clearAudioResources()
       wsRef.current = null
+      setIsConnecting(false)
       setIsListening(false)
       setSupportInfo(null)
       resetRecognitionState()
@@ -555,16 +613,16 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
         onError?.('语音连接已中断，请重试')
       }
     }
-  }, [clearAudioResources, isListening, mergeTranscript, onError, onPartialResult, onResult, resetRecognitionState, speechConfig, startRecorder])
+  }, [clearAudioResources, clearConnectTimeout, isConnecting, isListening, mergeTranscript, onError, onPartialResult, onResult, resetRecognitionState, speechConfig, startRecorder])
 
   const toggle = useCallback(() => {
-    if (isListening) {
+    if (isListening || isConnecting) {
       void stop()
       return
     }
 
     void start()
-  }, [isListening, start, stop])
+  }, [isConnecting, isListening, start, stop])
 
   useEffect(() => {
     if (!speechConfig?.accessToken) {
@@ -598,5 +656,5 @@ export function useSpeech({ onResult, onPartialResult, onStopCapture, onError, s
     }
   }, [clearAudioResources, resetRecognitionState])
 
-  return { isListening, isSupported, supportInfo, start, stop, toggle }
+  return { isListening, isConnecting, isSupported, supportInfo, start, stop, toggle }
 }

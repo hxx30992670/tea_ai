@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Send, Mic, MicOff, X } from 'lucide-react';
+import { Send, Mic, MicOff, X, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { useSpeech } from '@/hooks/useSpeech';
@@ -32,6 +32,7 @@ export function ChatInput({
 
   const {
     isListening,
+    isConnecting,
     isSupported,
     supportInfo,
     toggle: toggleSpeech
@@ -128,17 +129,23 @@ export function ChatInput({
         {/* 语音按钮 */}
         {isSupported && (
           <Button
-            variant={isListening ? 'destructive' : 'ghost'}
+            variant={isListening || isConnecting ? 'destructive' : 'ghost'}
             size='icon'
             className={cn(
               'shrink-0 rounded-full transition-all duration-300',
-              isListening &&
+              (isListening || isConnecting) &&
                 'animate-voice-listening shadow-lg shadow-red-500/20'
             )}
             onClick={toggleSpeech}
             disabled={disabled}
           >
-            {isListening ? <MicOff size={18} /> : <Mic size={18} />}
+            {isConnecting ? (
+              <Loader2 size={18} className='animate-spin' />
+            ) : isListening ? (
+              <MicOff size={18} />
+            ) : (
+              <Mic size={18} />
+            )}
           </Button>
         )}
 
@@ -146,8 +153,8 @@ export function ChatInput({
         <Textarea
           ref={textareaRef}
           placeholder={
-            isListening
-              ? '正在识别，停顿后会自动结束...'
+            (isListening || isConnecting)
+              ? (isConnecting ? '正在连接语音服务，可再次点击取消...' : '正在识别，停顿后会自动结束...')
               : '问任何关于茶叶经营的问题'
           }
           value={text}
@@ -158,7 +165,7 @@ export function ChatInput({
             setText(nextValue);
           }}
           onKeyDown={handleKeyDown}
-          disabled={disabled || isListening}
+          disabled={disabled || isListening || isConnecting}
           rows={1}
           className='min-h-[40px] max-h-24 resize-none rounded-xl py-2.5 text-sm'
         />
