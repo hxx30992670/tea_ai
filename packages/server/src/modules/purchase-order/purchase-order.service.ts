@@ -211,7 +211,8 @@ export class PurchaseOrderService {
       qb.andWhere('DATE(purchaseOrder.created_at) <= :dateTo', { dateTo: query.dateTo });
     }
 
-    qb.orderBy('purchaseOrder.id', 'DESC');
+    qb.orderBy('purchaseOrder.created_at', 'DESC');
+    qb.addOrderBy('purchaseOrder.id', 'DESC');
     qb.skip((page - 1) * pageSize).take(pageSize);
 
     const [list, total] = await Promise.all([qb.getRawMany(), qb.getCount()]);
