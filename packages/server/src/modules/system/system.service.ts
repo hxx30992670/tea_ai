@@ -4,6 +4,7 @@ import { randomUUID } from 'crypto';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { getRoleProfile, isAppRole, ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF } from '../../common/constants/roles';
+import { DEMO_UNSUPPORTED_MESSAGE, isDemoDeployment } from '../../common/utils/deployment.util';
 import { SystemSettingEntity } from '../../entities/system-setting.entity';
 import { SysUserEntity } from '../../entities/sys-user.entity';
 import { AuthUser } from '../../common/types/auth-user.type';
@@ -207,6 +208,10 @@ export class SystemService {
   }
 
   async updateSettings(dto: UpdateSystemSettingsDto, user: AuthUser) {
+    if (isDemoDeployment()) {
+      throw new BadRequestException(DEMO_UNSUPPORTED_MESSAGE);
+    }
+
     const entries = Object.entries(dto).filter(([, value]) => value !== undefined);
     const touchedAiSettings = entries.some(([key]) => key.startsWith('ai'));
 

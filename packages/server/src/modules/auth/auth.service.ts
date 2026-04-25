@@ -4,6 +4,7 @@
  * 使用 bcrypt 加密存储密码，JWT 实现无状态认证
  */
 import {
+  BadRequestException,
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,6 +15,7 @@ import { Repository } from 'typeorm';
 import { getRoleProfile } from '../../common/constants/roles';
 import { SysUserEntity } from '../../entities/sys-user.entity';
 import { AuthUser } from '../../common/types/auth-user.type';
+import { DEMO_UNSUPPORTED_MESSAGE, isDemoDeployment } from '../../common/utils/deployment.util';
 import { OperationLogService } from '../system/operation-log.service';
 import { AuthCaptchaService } from './auth-captcha.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -96,6 +98,10 @@ export class AuthService {
   }
 
   async changePassword(userId: number, dto: ChangePasswordDto) {
+    if (isDemoDeployment()) {
+      throw new BadRequestException(DEMO_UNSUPPORTED_MESSAGE);
+    }
+
     const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user || user.status !== 1) {
       throw new UnauthorizedException('用户不存在或已禁用');

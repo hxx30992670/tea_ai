@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { IsNull, Repository } from 'typeorm';
 import { AuthUser } from '../../common/types/auth-user.type';
+import { DEMO_UNSUPPORTED_MESSAGE, isDemoDeployment } from '../../common/utils/deployment.util';
 import { AiConversationEntity } from '../../entities/ai-conversation.entity';
 import { ProductEntity } from '../../entities/product.entity';
 import { DashboardService } from '../dashboard/dashboard.service';
@@ -2148,6 +2149,10 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
     message: string;
     checks: Array<{ key: string; label: string; ok: boolean; message: string }>;
   }> {
+    if (isDemoDeployment()) {
+      throw new BadRequestException(DEMO_UNSUPPORTED_MESSAGE);
+    }
+
     const availability = await this.aiConfigService.getAvailability();
     const checks: Array<{ key: string; label: string; ok: boolean; message: string }> = [];
 

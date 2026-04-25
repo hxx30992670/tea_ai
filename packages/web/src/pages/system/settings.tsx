@@ -12,6 +12,7 @@ import { authApi } from '@/api/auth'
 import { systemApi, type SystemSettings } from '@/api/system'
 import { useAuthStore } from '@/store/auth'
 import PageHeader from '@/components/page/PageHeader'
+import { DEMO_UNSUPPORTED_MESSAGE, IS_DEMO_DEPLOYMENT } from '@/constants/demo'
 import '@/styles/page.less'
 
 const serviceQrcode = new URL('@/assets/images/service_qcode.JPG', import.meta.url).href
@@ -78,6 +79,12 @@ export default function SettingsPage() {
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin'
 
+  const warnDemoUnsupported = () => {
+    if (!IS_DEMO_DEPLOYMENT) return false
+    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    return true
+  }
+
   const loadSettings = async () => {
     const data = await systemApi.getSettings()
     const defaultAiFields = getDefaultAiFields(data.aiProvider)
@@ -127,6 +134,8 @@ export default function SettingsPage() {
   }
 
   const handleSaveShop = async () => {
+    if (warnDemoUnsupported()) return
+
     try {
       const values = await shopForm.validateFields()
       setShopLoading(true)
@@ -143,6 +152,8 @@ export default function SettingsPage() {
   }
 
   const handleSaveAi = async () => {
+    if (warnDemoUnsupported()) return
+
     try {
       const values = await aiForm.validateFields()
       setAiLoading(true)
@@ -162,6 +173,8 @@ export default function SettingsPage() {
   }
 
   const handleTestAi = async () => {
+    if (warnDemoUnsupported()) return
+
     try {
       const values = await aiForm.validateFields()
       setTestStatus('testing')
@@ -193,6 +206,8 @@ export default function SettingsPage() {
   }
 
   const handleChangePwd = async () => {
+    if (warnDemoUnsupported()) return
+
     try {
       const values = await pwdForm.validateFields()
       if (values.newPassword !== values.confirmPassword) {
@@ -226,6 +241,15 @@ export default function SettingsPage() {
       label: <Space><ShopOutlined />店铺信息</Space>,
       children: (
         <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', maxWidth: 520 }}>
+          {IS_DEMO_DEPLOYMENT && (
+            <Alert
+              type="warning"
+              showIcon
+              message="当前为演示环境"
+              description="店铺信息、AI 配置和密码修改仅供查看，暂不支持保存或测试连接。"
+              style={{ marginBottom: 16 }}
+            />
+          )}
           <Alert
             type="info"
             showIcon
@@ -250,6 +274,15 @@ export default function SettingsPage() {
       label: <Space><RobotOutlined />AI 配置</Space>,
       children: (
         <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', maxWidth: 760 }}>
+          {IS_DEMO_DEPLOYMENT && (
+            <Alert
+              type="warning"
+              showIcon
+              message="当前为演示环境"
+              description="AI 配置仅供查看，暂不支持测试连接、保存配置或重新设置。"
+              style={{ marginBottom: 16 }}
+            />
+          )}
           {/* 联系提示卡片 */}
           <div style={{
             background: 'linear-gradient(135deg, #f0fdf4 0%, #dcfce7 100%)',
@@ -312,6 +345,7 @@ export default function SettingsPage() {
               <Button
                 icon={<RobotOutlined />}
                 onClick={() => {
+                  if (warnDemoUnsupported()) return
                   setShowAiForm(true)
                   setTestStatus('idle')
                   setTestMsg('')
@@ -452,6 +486,15 @@ export default function SettingsPage() {
       label: <Space><LockOutlined />修改密码</Space>,
       children: (
         <Card style={{ borderRadius: 12, border: 'none', boxShadow: '0 2px 8px rgba(0,0,0,0.06)', maxWidth: 400 }}>
+          {IS_DEMO_DEPLOYMENT && (
+            <Alert
+              type="warning"
+              showIcon
+              message="当前为演示环境"
+              description="演示环境不支持修改账号密码。"
+              style={{ marginBottom: 16 }}
+            />
+          )}
           <Form form={pwdForm} layout="vertical">
             <Form.Item name="oldPassword" label="当前密码" rules={[{ required: true }]}>
               <Input.Password placeholder="当前密码" />
