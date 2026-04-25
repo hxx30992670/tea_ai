@@ -4,6 +4,7 @@
  */
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import path from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { appConfig } from './config/app.config';
@@ -22,12 +23,21 @@ import { StockModule } from './modules/stock/stock.module';
 import { SupplierModule } from './modules/supplier/supplier.module';
 import { SystemModule } from './modules/system/system.module';
 
+const REPO_ROOT = path.resolve(__dirname, '../../..');
+const SERVER_ROOT = path.resolve(__dirname, '..');
+const ENV_FILE_PATHS = [
+  path.join(REPO_ROOT, '.env'),
+  path.join(REPO_ROOT, '.env.local'),
+  path.join(SERVER_ROOT, '.env'),
+  path.join(SERVER_ROOT, '.env.local'),
+];
+
 @Module({
   imports: [
     // 全局配置模块：加载环境变量、校验必要配置
     ConfigModule.forRoot({
       isGlobal: true,           // 全局可用，无需在其他模块重复导入
-      envFilePath: ['.env', '.env.local'],  // 环境变量文件路径
+      envFilePath: ENV_FILE_PATHS,  // 同时支持仓库根目录和 server 包目录的环境变量文件
       load: [appConfig, databaseConfig],    // 加载自定义配置
       validate: validateEnv,    // 启动时校验必要环境变量
     }),
