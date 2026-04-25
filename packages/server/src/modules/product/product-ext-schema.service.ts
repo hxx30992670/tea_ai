@@ -18,6 +18,7 @@ export type ProductExtSchemaHints = {
 /** 需要扫样值的商品主表列；key=数据库列名，value=ProductEntity 属性名 */
 const ATTRIBUTE_COLUMNS: Array<{ column: string; prop: keyof ProductEntity }> = [
   { column: 'spec', prop: 'spec' },
+  { column: 'unit', prop: 'unit' },
   { column: 'remark', prop: 'remark' },
   { column: 'origin', prop: 'origin' },
   { column: 'season', prop: 'season' },
