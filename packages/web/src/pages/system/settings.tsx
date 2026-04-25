@@ -2,16 +2,16 @@ import React, { useEffect, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import {
   Form, Input, Button, Card, Select, Divider, message,
-  Typography, Space, Tag, Tabs, Alert, Collapse, Image,
+  Typography, Space, Tag, Tabs, Alert, Image,
 } from 'antd'
 import {
   ShopOutlined, RobotOutlined, KeyOutlined,
   CheckCircleOutlined, LockOutlined, ApiOutlined,
 } from '@ant-design/icons'
-import type { SystemSettings } from '@/api/system'
+import { authApi } from '@/api/auth'
+import { systemApi, type SystemSettings } from '@/api/system'
 import { useAuthStore } from '@/store/auth'
 import PageHeader from '@/components/page/PageHeader'
-import { DEMO_SHOP_NAME, DEMO_UNSUPPORTED_MESSAGE } from '@/constants/demo'
 import '@/styles/page.less'
 
 const serviceQrcode = new URL('@/assets/images/service_qcode.JPG', import.meta.url).href
@@ -51,6 +51,15 @@ function getDefaultAiFields(provider = DEFAULT_PROVIDER) {
 type TestStatus = 'idle' | 'testing' | 'success' | 'fail'
 type TestCheck = { key: string; label: string; ok: boolean; message: string }
 
+function isFormValidationError(error: unknown) {
+  return Boolean(
+    error &&
+      typeof error === 'object' &&
+      'errorFields' in error &&
+      Array.isArray((error as { errorFields?: unknown }).errorFields),
+  )
+}
+
 export default function SettingsPage() {
   const navigate = useNavigate()
   const [searchParams] = useSearchParams()
@@ -69,22 +78,24 @@ export default function SettingsPage() {
   const { user } = useAuthStore()
   const isAdmin = user?.role === 'admin'
 
-  const loadSettings = () => {
-    const data: SystemSettings = {
-      shopName: DEMO_SHOP_NAME,
-      aiConfigured: false,
-      ...getDefaultAiFields(),
-    }
-    setSettings(data)
-    shopForm.setFieldsValue(data)
-
+  const loadSettings = async () => {
+    const data = await systemApi.getSettings()
     const defaultAiFields = getDefaultAiFields(data.aiProvider)
+    const normalizedData: SystemSettings = {
+      ...data,
+      aiProvider: data.aiProvider || defaultAiFields.aiProvider,
+      aiModelName: data.aiModelName || defaultAiFields.aiModelName,
+    }
+
+    setSettings(normalizedData)
+    shopForm.setFieldsValue({ shopName: data.shopName || '' })
+
     const nextAiValues = {
       aiApiKey: '',
       aiPromptServiceUrl: '',
       aiModelApiKey: '',
-      aiProvider: data.aiProvider || defaultAiFields.aiProvider,
-      aiModelName: data.aiModelName || defaultAiFields.aiModelName,
+      aiProvider: normalizedData.aiProvider || defaultAiFields.aiProvider,
+      aiModelName: normalizedData.aiModelName || defaultAiFields.aiModelName,
       aiModelBaseUrl: defaultAiFields.aiModelBaseUrl,
     }
 
@@ -98,7 +109,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (isAdmin) {
-      loadSettings()
+      void loadSettings()
     }
   }, [isAdmin, aiForm, shopForm])
 
@@ -116,19 +127,93 @@ export default function SettingsPage() {
   }
 
   const handleSaveShop = async () => {
-    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    try {
+      const values = await shopForm.validateFields()
+      setShopLoading(true)
+      const nextSettings = await systemApi.updateSettings({ shopName: values.shopName })
+      setSettings((prev) => ({ ...prev, ...nextSettings }))
+      message.success('店铺信息已保存')
+    } catch (error) {
+      if (!isFormValidationError(error)) {
+        message.error('店铺信息保存失败')
+      }
+    } finally {
+      setShopLoading(false)
+    }
   }
 
   const handleSaveAi = async () => {
-    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    try {
+      const values = await aiForm.validateFields()
+      setAiLoading(true)
+      const nextSettings = await systemApi.updateSettings(values)
+      setSettings(nextSettings)
+      setShowAiForm(!nextSettings.aiConfigured)
+      setTestStatus(nextSettings.aiConfigured ? 'success' : 'idle')
+      setTestMsg(nextSettings.aiConfigured ? '配置已保存，AI 已接通' : '')
+      message.success('AI 配置已保存')
+    } catch (error) {
+      if (!isFormValidationError(error)) {
+        message.error('AI 配置保存失败')
+      }
+    } finally {
+      setAiLoading(false)
+    }
   }
 
   const handleTestAi = async () => {
-    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    try {
+      const values = await aiForm.validateFields()
+      setTestStatus('testing')
+      setTestMsg('')
+      setTestChecks([])
+
+      const result = await systemApi.testAi({
+        apiKey: values.aiApiKey,
+        promptServiceUrl: values.aiPromptServiceUrl,
+        provider: values.aiProvider,
+        modelApiKey: values.aiModelApiKey,
+        modelName: values.aiModelName,
+        modelBaseUrl: values.aiModelBaseUrl,
+      })
+
+      setTestStatus(result.ok ? 'success' : 'fail')
+      setTestMsg(result.message)
+      setTestChecks(result.checks)
+    } catch (error) {
+      if (isFormValidationError(error)) {
+        setTestStatus('idle')
+        return
+      }
+
+      setTestStatus('fail')
+      setTestMsg('连接测试失败，请检查网络或服务配置')
+      setTestChecks([])
+    }
   }
 
   const handleChangePwd = async () => {
-    message.warning(DEMO_UNSUPPORTED_MESSAGE)
+    try {
+      const values = await pwdForm.validateFields()
+      if (values.newPassword !== values.confirmPassword) {
+        pwdForm.setFields([{ name: 'confirmPassword', errors: ['两次输入的新密码不一致'] }])
+        return
+      }
+
+      setPwdLoading(true)
+      await authApi.changePassword({
+        oldPassword: values.oldPassword,
+        newPassword: values.newPassword,
+      })
+      pwdForm.resetFields()
+      message.success('密码已修改，请使用新密码登录')
+    } catch (error) {
+      if (!isFormValidationError(error)) {
+        message.error('密码修改失败')
+      }
+    } finally {
+      setPwdLoading(false)
+    }
   }
 
   const testTagColor = testStatus === 'success' ? 'success' : testStatus === 'fail' ? 'error' : testStatus === 'testing' ? 'processing' : 'default'
@@ -144,8 +229,8 @@ export default function SettingsPage() {
           <Alert
             type="info"
             showIcon
-            message="当前为 Demo 环境"
-            description="店铺信息、AI 配置和密码修改在 demo 版中均已禁用，不会调用后端设置接口。"
+            message="店铺资料"
+            description="店铺名称会保存到后端系统设置，并用于单据、看板和 AI 场景中的门店信息展示。"
             style={{ marginBottom: 16 }}
           />
           <Form form={shopForm} layout="vertical">
@@ -220,12 +305,20 @@ export default function SettingsPage() {
               <Alert
                 type="success"
                 showIcon
-                message="AI 已开通"
+                message="AI 已接通"
                 description={`当前使用模型：${settings.aiModelName || '-'}${settings.aiProvider ? `（${PROVIDERS.find((item) => item.value === settings.aiProvider)?.label || settings.aiProvider}）` : ''}`}
                 style={{ marginBottom: 20 }}
               />
-              <Button onClick={() => setShowAiForm(true)}>
-                重新配置
+              <Button
+                icon={<RobotOutlined />}
+                onClick={() => {
+                  setShowAiForm(true)
+                  setTestStatus('idle')
+                  setTestMsg('')
+                  setTestChecks([])
+                }}
+              >
+                重新设置 AI
               </Button>
             </div>
           ) : (
@@ -310,7 +403,7 @@ export default function SettingsPage() {
                     setTestStatus('idle')
                     setTestMsg('')
                     setTestChecks([])
-                    loadSettings()
+                    void loadSettings()
                   }}
                 >
                   取消重配
@@ -383,7 +476,7 @@ export default function SettingsPage() {
   const requestedTab = searchParams.get('tab')
   const activeTab = visibleTabItems.some((item) => item.key === requestedTab)
     ? requestedTab!
-    : 'password'
+    : isAdmin ? 'shop' : 'password'
 
   return (
     <div>

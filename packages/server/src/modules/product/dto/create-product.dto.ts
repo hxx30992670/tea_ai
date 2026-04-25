@@ -25,6 +25,10 @@ export class CreateProductDto {
   @IsString()
   barcode?: string;
 
+  @ApiProperty({ description: '商品计量单位', example: '斤' })
+  @IsString()
+  unit!: string;
+
   @ApiProperty({ description: '分类 ID', example: 1 })
   @Type(() => Number)
   @IsInt()
@@ -70,7 +74,7 @@ export class CreateProductDto {
   @IsString()
   imageUrl?: string;
 
-  @ApiPropertyOptional({ description: '扩展字段 JSON 对象', example: { origin: '浙江杭州', year: 2026, season: '春茶', shelfLife: 18, unit: '斤', safeStock: 10 } })
+  @ApiPropertyOptional({ description: '扩展字段 JSON 对象', example: { origin: '浙江杭州', year: 2026, season: '春茶', shelfLife: 18, safeStock: 10 } })
   @IsOptional()
   @IsObject()
   extData?: Record<string, unknown>;

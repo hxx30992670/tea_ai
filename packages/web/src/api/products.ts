@@ -21,6 +21,14 @@ export interface ProductMeta {
   categoryFieldPresets: Record<string, string[]>
 }
 
+export interface ProductUnit {
+  id: number
+  name: string
+  sortOrder: number
+  productCount: number
+  createdAt?: string
+}
+
 export const productApi = {
   list: async (params?: Record<string, unknown>): Promise<{ list: Product[]; total: number }> => {
     const res = await request.get<never, ApiResponse<PageResult<Product>>>('/products', { params })
@@ -45,6 +53,25 @@ export const productApi = {
   meta: async (): Promise<ProductMeta> => {
     const res = await request.get<never, ApiResponse<ProductMeta>>('/products/meta')
     return res.data
+  },
+
+  units: async (): Promise<ProductUnit[]> => {
+    const res = await request.get<never, ApiResponse<ProductUnit[]>>('/products/units')
+    return res.data
+  },
+
+  createUnit: async (data: { name: string; sortOrder?: number }): Promise<ProductUnit> => {
+    const res = await request.post<never, ApiResponse<ProductUnit>>('/products/units', data)
+    return res.data
+  },
+
+  updateUnit: async (id: number, data: { name?: string; sortOrder?: number }): Promise<ProductUnit> => {
+    const res = await request.put<never, ApiResponse<ProductUnit>>(`/products/units/${id}`, data)
+    return res.data
+  },
+
+  deleteUnit: async (id: number): Promise<void> => {
+    await request.delete(`/products/units/${id}`)
   },
 
   generateSku: async (categoryId?: number): Promise<string> => {

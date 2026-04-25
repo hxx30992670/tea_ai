@@ -19,6 +19,7 @@ interface ProductSearchSheetProps {
   open: boolean
   onClose: () => void
   editingItem?: DraftItem | null
+  onAdded?: (item: DraftItem) => void
 }
 
 function buildEditingProductSnapshot(editingItem: DraftItem): Product {
@@ -63,7 +64,7 @@ function getEditingPackageValues(editingItem: DraftItem) {
   }
 }
 
-export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearchSheetProps) {
+export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: ProductSearchSheetProps) {
   const { addItem, removeItem } = useOrderDraftStore()
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState<Product | null>(null)
@@ -156,7 +157,7 @@ export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearch
       removeItem(editingItem.productId)
     }
 
-    addItem({
+    const nextItem: DraftItem = {
       productId: selected.id,
       productName: selected.name,
       spec: selected.spec,
@@ -168,14 +169,16 @@ export function ProductSearchSheet({ open, onClose, editingItem }: ProductSearch
       quantity: totalQty,
       unitPrice: parseFloat(price) || selected.sellPrice,
       sellPrice: selected.sellPrice,
-    })
+    }
+
+    addItem(nextItem)
     if (editingItem) {
       onClose()
       return
     }
 
-    // 保持面板打开，继续添加
-    setSelected(null)
+    onAdded?.(nextItem)
+    onClose()
   }
 
   const currentUnitPrice = parseFloat(price) || (selected?.sellPrice ?? 0)

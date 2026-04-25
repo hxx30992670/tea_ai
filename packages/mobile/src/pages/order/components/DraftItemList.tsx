@@ -1,13 +1,14 @@
 import { Pencil, Trash2 } from 'lucide-react'
 import { useOrderDraftStore } from '@/store/order-draft'
-import { calcTotalQuantity, formatMoney, formatNumber, formatQuantity, roundQuantity } from '@/lib/utils'
+import { calcTotalQuantity, cn, formatMoney, formatNumber, formatQuantity, roundQuantity } from '@/lib/utils'
 import type { DraftItem } from '@/store/order-draft'
 
 interface DraftItemListProps {
   onEditItem: (item: DraftItem) => void
+  highlightedProductId?: number | null
 }
 
-export function DraftItemList({ onEditItem }: DraftItemListProps) {
+export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemListProps) {
   const { draft, removeItem, updateItem } = useOrderDraftStore()
 
   if (!draft.items.length) {
@@ -27,7 +28,15 @@ export function DraftItemList({ onEditItem }: DraftItemListProps) {
         const subtotal = displayQty * item.unitPrice
 
         return (
-          <div key={item.productId} className="flex items-center gap-3 rounded-xl border border-border bg-card p-3">
+          <div
+            key={item.productId}
+            className={cn(
+              'flex items-center gap-3 rounded-xl border bg-card p-3 transition-all duration-300',
+              highlightedProductId === item.productId
+                ? 'border-primary/60 bg-primary/10 shadow-lg shadow-primary/10'
+                : 'border-border',
+            )}
+          >
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium truncate">{item.productName}</p>
               <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">

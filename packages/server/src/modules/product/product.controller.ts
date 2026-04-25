@@ -29,9 +29,11 @@ import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { CreateProductUnitDto } from './dto/create-product-unit.dto';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { UpdateProductUnitDto } from './dto/update-product-unit.dto';
 import { ProductService } from './product.service';
 
 @ApiTags('商品与分类')
@@ -54,12 +56,47 @@ export class ProductController {
     return this.productService.getProductMeta();
   }
 
+  @ApiOperation({ summary: '商品单位列表' })
+  @ApiOkResponse({ description: '返回商品单位及使用数量' })
+  @Get('products/units')
+  getProductUnits() {
+    return this.productService.getProductUnits();
+  }
+
   @ApiOperation({ summary: '生成商品 SKU' })
   @ApiQuery({ name: 'categoryId', required: false, example: 1 })
   @ApiOkResponse({ description: '返回生成的 SKU 编码' })
   @Get('products/generate-sku')
   generateSku(@Query('categoryId') categoryId?: number) {
     return this.productService.generateSku(Number(categoryId) || undefined);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
+  @ApiOperation({ summary: '创建商品单位' })
+  @ApiBody({ type: CreateProductUnitDto })
+  @ApiOkResponse({ description: '返回新建单位' })
+  @Post('products/units')
+  createProductUnit(@Body() dto: CreateProductUnitDto) {
+    return this.productService.createProductUnit(dto);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
+  @ApiOperation({ summary: '更新商品单位' })
+  @ApiParam({ name: 'id', description: '单位 ID', example: 1 })
+  @ApiBody({ type: UpdateProductUnitDto })
+  @ApiOkResponse({ description: '返回更新后的单位' })
+  @Put('products/units/:id')
+  updateProductUnit(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateProductUnitDto) {
+    return this.productService.updateProductUnit(id, dto);
+  }
+
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
+  @ApiOperation({ summary: '删除商品单位' })
+  @ApiParam({ name: 'id', description: '单位 ID', example: 1 })
+  @ApiOkResponse({ description: '删除结果' })
+  @Delete('products/units/:id')
+  deleteProductUnit(@Param('id', ParseIntPipe) id: number) {
+    return this.productService.deleteProductUnit(id);
   }
 
   @Roles(ROLE_ADMIN, ROLE_MANAGER)

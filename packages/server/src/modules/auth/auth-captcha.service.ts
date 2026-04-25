@@ -141,18 +141,36 @@ export class AuthCaptchaService {
       return false;
     }
 
-    let backwards = 0;
     let duplicate = 0;
     let positiveMoves = 0;
+    let reverseDistance = 0;
+    let directionChanges = 0;
+    let previousDirection = 0;
 
     for (let i = 1; i < dto.trail.length; i += 1) {
       const delta = dto.trail[i] - dto.trail[i - 1];
-      if (delta < 0) backwards += 1;
+      const direction = delta === 0 ? 0 : delta > 0 ? 1 : -1;
+
+      if (delta < 0) reverseDistance += Math.abs(delta);
       if (delta === 0) duplicate += 1;
       if (delta > 0) positiveMoves += 1;
+
+      if (direction !== 0) {
+        if (previousDirection !== 0 && previousDirection !== direction) {
+          directionChanges += 1;
+        }
+        previousDirection = direction;
+      }
     }
 
-    if (backwards > 3 || duplicate > Math.floor(dto.trail.length * 0.8) || positiveMoves < 3) {
+    const maxReverseDistance = Math.max(CAPTCHA_WIDTH * 0.55, answerX * 0.75);
+
+    if (
+      reverseDistance > maxReverseDistance ||
+      directionChanges > 12 ||
+      duplicate > Math.floor(dto.trail.length * 0.8) ||
+      positiveMoves < 3
+    ) {
       return false;
     }
 

@@ -65,6 +65,7 @@ export default function ProductFormModal({ open, editRecord, categories, product
           name: editRecord.name,
           sku: editRecord.sku,
           barcode: editRecord.barcode,
+          unit: editRecord.unit,
           categoryId: editRecord.categoryId,
           costPrice: editRecord.costPrice,
           sellPrice: editRecord.sellPrice,
@@ -77,10 +78,16 @@ export default function ProductFormModal({ open, editRecord, categories, product
         })
       } else {
         form.resetFields()
-        form.setFieldsValue({ stockQty: 0, status: 1 })
+        form.setFieldsValue({ stockQty: 0, status: 1, unit: productMeta?.units[0] })
       }
     }
   }, [open, editRecord, form])
+
+  React.useEffect(() => {
+    if (open && !editRecord && !form.getFieldValue('unit') && productMeta?.units[0]) {
+      form.setFieldValue('unit', productMeta.units[0])
+    }
+  }, [open, editRecord, form, productMeta?.units])
 
   const handleCategoryChange = (value?: number) => {
     if (!value) return
@@ -115,6 +122,7 @@ export default function ProductFormModal({ open, editRecord, categories, product
     const payload = {
       name: values.name,
       sku: values.sku,
+      unit: values.unit,
       categoryId: values.categoryId,
       costPrice: values.costPrice,
       sellPrice: values.sellPrice,
@@ -185,6 +193,16 @@ export default function ProductFormModal({ open, editRecord, categories, product
                 placeholder="选择分类"
                 treeDefaultExpandAll
                 onChange={(value) => handleCategoryChange(value as number | undefined)}
+              />
+            </Form.Item>
+          </Col>
+          <Col span={12}>
+            <Form.Item name="unit" label="单位" rules={[{ required: true, message: '请选择商品单位' }]}>
+              <Select
+                options={(productMeta?.units || []).map((unit) => ({ value: unit, label: unit }))}
+                placeholder="请选择商品单位"
+                showSearch
+                optionFilterProp="label"
               />
             </Form.Item>
           </Col>

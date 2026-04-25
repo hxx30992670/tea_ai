@@ -9,6 +9,12 @@ const request = axios.create({
   headers: { 'Content-Type': 'application/json' },
 })
 
+function shouldRedirectOnUnauthorized(url?: string) {
+  if (!url) return true
+
+  return !url.includes('/auth/login')
+}
+
 request.interceptors.request.use((config) => {
   const token = useAuthStore.getState().accessToken
   if (token) config.headers.Authorization = `Bearer ${token}`
@@ -24,7 +30,7 @@ request.interceptors.response.use(
     return data
   },
   (error) => {
-    if (error.response?.status === 401) {
+    if (error.response?.status === 401 && shouldRedirectOnUnauthorized(error.config?.url)) {
       useAuthStore.getState().logout()
       window.location.href = loginPath
     }

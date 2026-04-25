@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Table, Button, Space, Tag, Card, Popconfirm, Typography, Image, Tree, Input, message } from 'antd'
-import { PlusOutlined, EditOutlined, DeleteOutlined, SearchOutlined, FolderOutlined, FolderOpenOutlined, PrinterOutlined, AppstoreOutlined } from '@ant-design/icons'
+import { PlusOutlined, EditOutlined, DeleteOutlined, FolderOutlined, FolderOpenOutlined, PrinterOutlined, AppstoreOutlined, TagsOutlined } from '@ant-design/icons'
 import { productApi, type ProductMeta } from '@/api/products'
 import type { Product, Category } from '@/types'
 import PageHeader from '@/components/page/PageHeader'
@@ -8,6 +8,7 @@ import { formatDate } from '@/utils/date'
 import ProductFormModal from './components/ProductFormModal'
 import CategoryFormModal from './components/CategoryFormModal'
 import PrintLabelsModal from './components/PrintLabelsModal'
+import UnitManagementModal from './components/UnitManagementModal'
 import '@/styles/page.less'
 
 const { Text } = Typography
@@ -34,6 +35,7 @@ export default function ProductsPage() {
   const [productMeta, setProductMeta] = useState<ProductMeta | null>(null)
   const [printProducts, setPrintProducts] = useState<Product[]>([])
   const [printModalOpen, setPrintModalOpen] = useState(false)
+  const [unitModalOpen, setUnitModalOpen] = useState(false)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([])
   const [categoryHovered, setCategoryHovered] = useState<string | null>(null)
 
@@ -359,6 +361,9 @@ export default function ProductsPage() {
               <Button icon={<PrinterOutlined />} onClick={handleBatchPrint} disabled={selectedRowKeys.length === 0}>
                 批量打印标签 ({selectedRowKeys.length})
               </Button>
+              <Button icon={<TagsOutlined />} onClick={() => setUnitModalOpen(true)}>
+                单位管理
+              </Button>
             </Space>
           </Card>
 
@@ -412,6 +417,12 @@ export default function ProductsPage() {
         open={printModalOpen}
         products={printProducts}
         onClose={() => setPrintModalOpen(false)}
+      />
+
+      <UnitManagementModal
+        open={unitModalOpen}
+        onClose={() => setUnitModalOpen(false)}
+        onChanged={loadData}
       />
     </div>
   )

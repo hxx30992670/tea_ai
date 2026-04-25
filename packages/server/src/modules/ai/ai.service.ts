@@ -26,6 +26,10 @@ type AiSuggestion = {
   content: string;
 };
 
+function formatSuggestionMoney(value: number) {
+  return `¥${Math.round(value).toLocaleString('zh-CN')}`;
+}
+
 type AiRecognizedSaleOrderItem = {
   customerName: string | null;
   lineText: string | null;
@@ -441,11 +445,16 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
       return this.buildSuggestionDisabled(authCheck.code, authCheck.reason);
     }
 
-    const lowStockProducts = await this.productRepository.find({
-      where: { status: 1, deletedAt: IsNull() },
-      order: { stockQty: 'ASC', id: 'DESC' },
-      take: 3,
-    });
+    const [overview, salesTrend, topProducts, lowStockProducts] = await Promise.all([
+      this.dashboardService.getOverview(),
+      this.dashboardService.getSalesTrend({ period: 'day' }),
+      this.dashboardService.getTopProducts({ type: 'top', limit: 1 }),
+      this.productRepository.find({
+        where: { status: 1, deletedAt: IsNull() },
+        order: { stockQty: 'ASC', id: 'DESC' },
+        take: 3,
+      }),
+    ]);
 
     const suggestions: AiSuggestion[] = lowStockProducts
       .filter((product) => product.stockQty <= product.safeStock)
@@ -455,11 +464,54 @@ export class AiService implements OnModuleInit, OnModuleDestroy {
         content: `${product.name} 库存 ${product.stockQty}${product.unit ?? ''}，建议尽快补货`,
       }));
 
+    if (overview.receivableTotal > 0) {
+      suggestions.push({
+        type: 'receivable',
+        content: `当前待收款 ${formatSuggestionMoney(overview.receivableTotal)}，建议优先跟进金额较大的未结清订单`,
+      });
+    }
+
+    const todayRevenue = Number(overview.todayRevenue ?? 0);
+    const latestTrendPoint = [...salesTrend.points].reverse().find((point) => Number(point.amount ?? 0) > 0);
+    const topProduct = topProducts.list[0];
+
+    if (todayRevenue > 0) {
+      suggestions.push({
+        type: 'sales',
+        content: `今日销售 ${formatSuggestionMoney(todayRevenue)}，建议复盘高频成交商品并同步检查库存`,
+      });
+    } else if (latestTrendPoint) {
+      suggestions.push({
+        type: 'sales',
+        content: `最近有销售入账的是 ${latestTrendPoint.label}，建议今天主动回访老客户促成复购`,
+      });
+    } else {
+      suggestions.push({
+        type: 'sales',
+        content: '近期销售较安静，建议从老客户复购和常购茶品组合包开始跟进',
+      });
+    }
+
+    if (topProduct) {
+      suggestions.push({
+        type: 'product',
+        productId: Number(topProduct.productId),
+        content: `${topProduct.productName} 是当前热销品，建议保持陈列和备货优先级`,
+      });
+    }
+
+    if (overview.saleReturnTotal > 0 || overview.refundTotal > 0) {
+      suggestions.push({
+        type: 'after_sale',
+        content: `售后金额 ${formatSuggestionMoney(overview.saleReturnTotal + overview.refundTotal)}，建议复查退货原因和开单备注`,
+      });
+    }
+
     if (suggestions.length === 0) {
       suggestions.push({ type: 'info', content: 'AI 助手已启用，当前暂无紧急补货建议' });
     }
 
-    return { enabled: true, code: 'OK' as const, reason: '', suggestions };
+    return { enabled: true, code: 'OK' as const, reason: '', suggestions: suggestions.slice(0, 5) };
   }
 
   async getHistory(user: AuthUser, query: AiHistoryQueryDto) {

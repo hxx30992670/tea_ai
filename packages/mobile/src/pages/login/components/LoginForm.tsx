@@ -1,8 +1,9 @@
 import { startTransition, useRef, useState, type FormEvent } from 'react'
 import axios from 'axios'
 import { useNavigate } from 'react-router-dom'
-import { Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
+import { AlertCircle, Eye, EyeOff, Loader2, ArrowRight } from 'lucide-react'
 import { authApi } from '@/api/auth'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/store/auth'
 import type {
   LoginCaptchaChallenge,
@@ -124,6 +125,12 @@ export function LoginForm() {
   }
 
   const submitBusy = loading || captchaLoading || captchaVerifying
+  const inputClassName = cn(
+    'h-12 w-full rounded-xl border bg-input/60 text-sm text-foreground placeholder:text-muted-foreground/40 outline-none transition-all focus:bg-input',
+    error
+      ? 'border-destructive/70 focus:border-destructive focus:ring-2 focus:ring-destructive/25'
+      : 'border-border focus:border-primary/60 focus:ring-2 focus:ring-primary/15',
+  )
 
   return (
     <>
@@ -135,6 +142,21 @@ export function LoginForm() {
         {/* 表单卡片 */}
         <div className="rounded-2xl border border-border/60 bg-card/80 p-5 shadow-2xl backdrop-blur-sm">
           <h2 className="mb-5 text-base font-semibold text-foreground/90">登录账号</h2>
+
+          {error && (
+            <div
+              id="login-error"
+              role="alert"
+              aria-live="assertive"
+              className="mb-4 flex items-start gap-3 rounded-xl border border-destructive/50 bg-destructive/15 px-3.5 py-3 text-destructive shadow-lg shadow-destructive/10 animate-in fade-in slide-in-from-top-1"
+            >
+              <AlertCircle size={18} className="mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-sm font-semibold leading-5">登录失败</p>
+                <p className="mt-0.5 break-words text-xs leading-5 text-destructive/90">{error}</p>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-3">
             {/* 账号输入 */}
@@ -150,13 +172,18 @@ export function LoginForm() {
                   type="text"
                   placeholder="请输入账号"
                   value={form.username}
-                  onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, username: e.target.value }))
+                    if (error) setError('')
+                  }}
                   autoComplete="username"
                   autoCapitalize="none"
                   autoCorrect="off"
                   spellCheck={false}
                   enterKeyHint="next"
-                  className="h-12 w-full rounded-xl border border-border bg-input/60 pl-9 pr-4 text-sm text-foreground placeholder:text-muted-foreground/40 outline-none transition-all focus:border-primary/60 focus:bg-input focus:ring-2 focus:ring-primary/15"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
+                  className={cn(inputClassName, 'pl-9 pr-4')}
                 />
               </div>
             </div>
@@ -174,10 +201,15 @@ export function LoginForm() {
                   type={showPwd ? 'text' : 'password'}
                   placeholder="请输入密码"
                   value={form.password}
-                  onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, password: e.target.value }))
+                    if (error) setError('')
+                  }}
                   autoComplete="current-password"
                   enterKeyHint="done"
-                  className="h-12 w-full rounded-xl border border-border bg-input/60 pl-9 pr-11 text-sm text-foreground placeholder:text-muted-foreground/40 outline-none transition-all focus:border-primary/60 focus:bg-input focus:ring-2 focus:ring-primary/15"
+                  aria-invalid={Boolean(error)}
+                  aria-describedby={error ? 'login-error' : undefined}
+                  className={cn(inputClassName, 'pl-9 pr-11')}
                 />
                 <button
                   type="button"
@@ -190,14 +222,6 @@ export function LoginForm() {
               </div>
             </div>
           </div>
-
-          {/* 错误提示 */}
-          {error && (
-            <div className="mt-3 flex items-center gap-2 rounded-lg border border-destructive/20 bg-destructive/10 px-3 py-2">
-              <span className="text-sm text-destructive">⚠</span>
-              <p className="text-xs text-destructive/90">{error}</p>
-            </div>
-          )}
         </div>
 
         {/* 登录按钮 — 独立在卡片外，更突出 */}

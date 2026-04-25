@@ -16,22 +16,29 @@ import { AuthUser } from '../../common/types/auth-user.type';
 import { roundQuantity, compareQuantity } from '../../common/utils/precision.util';
 import { CategoryEntity } from '../../entities/category.entity';
 import { ProductEntity } from '../../entities/product.entity';
+import { ProductUnitEntity } from '../../entities/product-unit.entity';
 import { StockRecordEntity } from '../../entities/stock-record.entity';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
+import { CreateProductUnitDto } from './dto/create-product-unit.dto';
 import { ProductExtSchemaService } from './product-ext-schema.service';
 import { ProductQueryDto } from './dto/product-query.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { UpdateProductUnitDto } from './dto/update-product-unit.dto';
 
 type CategoryTreeNode = CategoryEntity & { children: CategoryTreeNode[] };
 type ProductExtData = Record<string, unknown>;
+
+const DEFAULT_PRODUCT_UNITS = ['斤', '克', '两', '饼', '盒', '罐', '箱', '件', '提', '包', '袋'];
 
 @Injectable()
 export class ProductService {
   constructor(
     @InjectRepository(ProductEntity)
     private readonly productRepository: Repository<ProductEntity>,
+    @InjectRepository(ProductUnitEntity)
+    private readonly productUnitRepository: Repository<ProductUnitEntity>,
     @InjectRepository(CategoryEntity)
     private readonly categoryRepository: Repository<CategoryEntity>,
     @InjectDataSource()
@@ -112,9 +119,10 @@ export class ProductService {
     return { success: true };
   }
 
-  getProductMeta() {
+  async getProductMeta() {
+    const units = await this.getProductUnits();
     return {
-      units: ['斤', '克', '两', '饼', '盒', '罐', '箱', '件', '提', '包', '袋'],
+      units: units.map((unit) => unit.name),
       seasons: ['春茶', '夏茶', '秋茶', '冬茶'],
       shelfLifePresets: {
         绿茶: 18,
@@ -125,7 +133,6 @@ export class ProductService {
         { key: 'year', label: '年份', type: 'number' },
         { key: 'season', label: '采摘季', type: 'select', source: 'seasons' },
         { key: 'shelfLife', label: '保质期(月)', type: 'number' },
-        { key: 'unit', label: '单位', type: 'select', source: 'units' },
         { key: 'packageUnit', label: '包装单位', type: 'select', source: 'units' },
         { key: 'packageSize', label: '每包装数量', type: 'number' },
         { key: 'safeStock', label: '安全库存', type: 'number' },
@@ -134,10 +141,89 @@ export class ProductService {
         { key: 'storageCond', label: '存储条件', type: 'input' },
       ],
       categoryFieldPresets: {
-        绿茶: ['origin', 'year', 'season', 'shelfLife', 'unit', 'safeStock', 'batchNo'],
-        普洱: ['origin', 'year', 'season', 'shelfLife', 'unit', 'safeStock', 'batchNo', 'storageCond'],
+        绿茶: ['origin', 'year', 'season', 'shelfLife', 'safeStock', 'batchNo'],
+        普洱: ['origin', 'year', 'season', 'shelfLife', 'safeStock', 'batchNo', 'storageCond'],
       },
     };
+  }
+
+  async getProductUnits() {
+    await this.ensureProductUnitsSeeded();
+    const units = await this.productUnitRepository.find({ order: { sortOrder: 'ASC', id: 'ASC' } });
+    const usageCounts = await this.getUnitUsageCounts(units.map((unit) => unit.name));
+    return units.map((unit) => ({
+      ...unit,
+      productCount: usageCounts.get(unit.name) ?? 0,
+    }));
+  }
+
+  async createProductUnit(dto: CreateProductUnitDto) {
+    const name = this.normalizeUnitName(dto.name);
+    await this.ensureProductUnitNameAvailable(name);
+
+    const unit = this.productUnitRepository.create({
+      name,
+      sortOrder: dto.sortOrder ?? 0,
+    });
+
+    const saved = await this.productUnitRepository.save(unit);
+    return { ...saved, productCount: 0 };
+  }
+
+  async updateProductUnit(id: number, dto: UpdateProductUnitDto) {
+    const unit = await this.productUnitRepository.findOne({ where: { id } });
+    if (!unit) {
+      throw new NotFoundException('单位不存在');
+    }
+
+    const nextName = dto.name !== undefined ? this.normalizeUnitName(dto.name) : unit.name;
+    const previousName = unit.name;
+
+    if (nextName !== previousName) {
+      await this.ensureProductUnitNameAvailable(nextName, id);
+    }
+
+    if (dto.sortOrder !== undefined) unit.sortOrder = dto.sortOrder;
+    unit.name = nextName;
+
+    return this.dataSource.transaction(async (manager) => {
+      const saved = await manager.getRepository(ProductUnitEntity).save(unit);
+
+      if (nextName !== previousName) {
+        await manager
+          .getRepository(ProductEntity)
+          .createQueryBuilder()
+          .update(ProductEntity)
+          .set({ unit: nextName })
+          .where('unit = :previousName', { previousName })
+          .andWhere('deleted_at IS NULL')
+          .execute();
+        this.productExtSchemaService.invalidate();
+      }
+
+      const productCount = await manager.getRepository(ProductEntity).count({
+        where: { unit: nextName, deletedAt: IsNull() },
+      });
+
+      return { ...saved, productCount };
+    });
+  }
+
+  async deleteProductUnit(id: number) {
+    const unit = await this.productUnitRepository.findOne({ where: { id } });
+    if (!unit) {
+      throw new NotFoundException('单位不存在');
+    }
+
+    const productCount = await this.productRepository.count({
+      where: { unit: unit.name, deletedAt: IsNull() },
+    });
+    if (productCount > 0) {
+      throw new BadRequestException('该单位已被商品使用，不能删除，请先修改相关商品或直接编辑该单位名称');
+    }
+
+    await this.productUnitRepository.delete(id);
+    return { success: true };
   }
 
   async getProducts(query: ProductQueryDto, user: AuthUser) {
@@ -330,6 +416,7 @@ export class ProductService {
   async createProduct(dto: CreateProductDto, user: AuthUser) {
     const result = await this.dataSource.transaction(async (manager) => {
       await this.ensureCategoryExists(dto.categoryId);
+      const unit = await this.ensureProductUnitExists(dto.unit);
 
       let sku = dto.sku;
       if (!sku) {
@@ -346,7 +433,7 @@ export class ProductService {
         categoryId: dto.categoryId ?? null,
         barcode: dto.barcode ?? null,
         spec: this.getString(extData, 'spec'),
-        unit: this.getString(extData, 'unit') ?? '斤',
+        unit,
         costPrice: dto.costPrice ?? 0,
         sellPrice: dto.sellPrice ?? 0,
         stockQty: openingStockQty,
@@ -406,6 +493,10 @@ export class ProductService {
       await this.ensureCategoryExists(dto.categoryId);
     }
 
+    if (dto.unit !== undefined) {
+      product.unit = await this.ensureProductUnitExists(dto.unit);
+    }
+
     if (dto.sku !== undefined && dto.sku !== product.sku) {
       await this.ensureSkuAvailable(dto.sku, id);
     }
@@ -428,7 +519,6 @@ export class ProductService {
     if (dto.extData !== undefined) {
       product.extData = this.stringifyExtData(extData);
       product.spec = this.getString(extData, 'spec');
-      product.unit = this.getString(extData, 'unit') ?? product.unit;
       product.safeStock = roundQuantity(this.getNumber(extData, 'safeStock') ?? product.safeStock);
       product.teaType = this.getString(extData, 'teaType');
       product.origin = this.getString(extData, 'origin');
@@ -489,6 +579,76 @@ export class ProductService {
     }
   }
 
+  private normalizeUnitName(name?: string) {
+    const normalized = name?.trim();
+    if (!normalized) {
+      throw new BadRequestException('商品单位不能为空');
+    }
+    if (normalized.length > 20) {
+      throw new BadRequestException('商品单位不能超过 20 个字符');
+    }
+    return normalized;
+  }
+
+  private async ensureProductUnitNameAvailable(name: string, ignoreId?: number) {
+    const existing = await this.productUnitRepository.findOne({ where: { name } });
+    if (existing && existing.id !== ignoreId) {
+      throw new BadRequestException('单位名称已存在');
+    }
+  }
+
+  private async ensureProductUnitExists(name?: string) {
+    await this.ensureProductUnitsSeeded();
+    const normalizedName = this.normalizeUnitName(name);
+    const existing = await this.productUnitRepository.findOne({ where: { name: normalizedName } });
+    if (!existing) {
+      throw new BadRequestException('商品单位不存在，请先在单位管理中新增');
+    }
+    return normalizedName;
+  }
+
+  private async ensureProductUnitsSeeded() {
+    const rows = await this.productUnitRepository.find();
+    const existingNames = new Set(rows.map((unit) => unit.name));
+    const productUnits = await this.productRepository
+      .createQueryBuilder('product')
+      .select('DISTINCT product.unit', 'unit')
+      .where('product.deleted_at IS NULL')
+      .andWhere('product.unit IS NOT NULL')
+      .getRawMany<{ unit: string }>();
+    const seedNames = [...DEFAULT_PRODUCT_UNITS, ...productUnits.map((item) => item.unit)]
+      .map((name) => name?.trim())
+      .filter((name): name is string => Boolean(name));
+    const uniqueSeedNames = Array.from(new Set(seedNames));
+    const missingUnits = uniqueSeedNames
+      .filter((name) => !existingNames.has(name))
+      .map((name, index) => this.productUnitRepository.create({
+        name,
+        sortOrder: DEFAULT_PRODUCT_UNITS.includes(name) ? DEFAULT_PRODUCT_UNITS.indexOf(name) : DEFAULT_PRODUCT_UNITS.length + index,
+      }));
+
+    if (missingUnits.length > 0) {
+      await this.productUnitRepository.save(missingUnits);
+    }
+  }
+
+  private async getUnitUsageCounts(names: string[]) {
+    if (names.length === 0) {
+      return new Map<string, number>();
+    }
+
+    const rows = await this.productRepository
+      .createQueryBuilder('product')
+      .select('product.unit', 'unit')
+      .addSelect('COUNT(product.id)', 'count')
+      .where('product.deleted_at IS NULL')
+      .andWhere('product.unit IN (:...names)', { names })
+      .groupBy('product.unit')
+      .getRawMany<{ unit: string; count: string }>();
+
+    return new Map(rows.map((row) => [row.unit, Number(row.count)]));
+  }
+
   async generateSku(categoryId?: number, manager?: any): Promise<string> {
     const repo = manager?.getRepository(ProductEntity) ?? this.productRepository;
     const teaTypeMap: Record<string, string> = {
@@ -533,6 +693,7 @@ export class ProductService {
 
   private serializeProduct(product: ProductEntity, user: AuthUser) {
     const extData = this.mergeExtData(product)
+    const parsedExtData = this.parseExtData(product.extData)
     const serialized = {
       ...product,
       productionDate: product.productionDate ?? product.producedAt,
@@ -540,7 +701,7 @@ export class ProductService {
       extData,
       barcode: this.getString(extData, 'barcode') ?? product.barcode,
       spec: this.getString(extData, 'spec') ?? product.spec,
-      unit: this.getString(extData, 'unit') ?? product.unit,
+      unit: product.unit || this.getString(parsedExtData, 'unit') || '',
       packageUnit: this.getString(extData, 'packageUnit'),
       packageSize: this.getNumber(extData, 'packageSize'),
       safeStock: this.getNumber(extData, 'safeStock') ?? product.safeStock,
@@ -579,6 +740,9 @@ export class ProductService {
 
   private normalizeExtData(extData?: Record<string, unknown>) {
     return Object.entries(extData ?? {}).reduce<ProductExtData>((result, [key, value]) => {
+      if (key === 'unit') {
+        return result;
+      }
       if (value !== undefined && value !== null && value !== '') {
         result[key] = value;
       }
@@ -596,7 +760,6 @@ export class ProductService {
       ...this.parseExtData(product.extData),
       ...(product.barcode ? { barcode: product.barcode } : {}),
       ...(product.spec ? { spec: product.spec } : {}),
-      ...(product.unit ? { unit: product.unit } : {}),
       ...(this.getString(this.parseExtData(product.extData), 'packageUnit') ? { packageUnit: this.getString(this.parseExtData(product.extData), 'packageUnit') } : {}),
       ...(this.getNumber(this.parseExtData(product.extData), 'packageSize') ? { packageSize: this.getNumber(this.parseExtData(product.extData), 'packageSize') } : {}),
       ...(product.safeStock !== undefined ? { safeStock: product.safeStock } : {}),

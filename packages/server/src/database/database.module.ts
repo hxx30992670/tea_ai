@@ -13,6 +13,7 @@ import { FollowUpEntity } from '../entities/follow-up.entity';
 import { OperationLogEntity } from '../entities/operation-log.entity';
 import { PaymentRecordEntity } from '../entities/payment-record.entity';
 import { ProductEntity } from '../entities/product.entity';
+import { ProductUnitEntity } from '../entities/product-unit.entity';
 import { PurchaseOrderEntity } from '../entities/purchase-order.entity';
 import { PurchaseOrderItemEntity } from '../entities/purchase-order-item.entity';
 import { PurchaseReturnEntity } from '../entities/purchase-return.entity';
@@ -34,6 +35,7 @@ export const ENTITIES = [
   SysUserEntity,
   CategoryEntity,
   ProductEntity,
+  ProductUnitEntity,
   StockRecordEntity,
   CustomerEntity,
   SupplierEntity,

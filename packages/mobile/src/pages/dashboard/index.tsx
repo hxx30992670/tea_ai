@@ -4,6 +4,8 @@ import { formatDate } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { useDashboard } from './hooks/useDashboard'
+import { useAiSuggestions } from './hooks/useAiSuggestions'
+import { AiSuggestionPanel } from './components/AiSuggestionPanel'
 import { OverviewCards } from './components/OverviewCards'
 import { SalesTrendChart } from './components/SalesTrendChart'
 import { StockWarningList } from './components/StockWarningList'
@@ -11,6 +13,12 @@ import { StockWarningList } from './components/StockWarningList'
 export default function DashboardPage() {
   const { user } = useAuthStore()
   const { data, loading, refreshing, refresh } = useDashboard()
+  const {
+    enabled: aiSuggestionsEnabled,
+    suggestions: aiSuggestions,
+    loading: aiSuggestionsLoading,
+    refresh: refreshAiSuggestions,
+  } = useAiSuggestions()
 
   const greeting = (() => {
     const h = new Date().getHours()
@@ -18,6 +26,11 @@ export default function DashboardPage() {
     if (h < 18) return '下午好'
     return '晚上好'
   })()
+
+  const handleRefresh = () => {
+    refresh()
+    void refreshAiSuggestions()
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -36,7 +49,7 @@ export default function DashboardPage() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={refresh}
+            onClick={handleRefresh}
             disabled={refreshing}
             className="mt-1"
           >
@@ -47,6 +60,9 @@ export default function DashboardPage() {
 
       {/* 内容区 */}
       <div className="flex-1 overflow-y-auto space-y-4 p-4">
+        {aiSuggestionsEnabled && (
+          <AiSuggestionPanel suggestions={aiSuggestions} loading={aiSuggestionsLoading} />
+        )}
         <OverviewCards data={data.overview} loading={loading} />
         <SalesTrendChart data={data.trend} loading={loading} />
         <StockWarningList warnings={data.warnings} />

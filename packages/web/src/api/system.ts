@@ -52,8 +52,9 @@ export const systemApi = {
     return res.data
   },
 
-  updateSettings: async (data: Partial<SystemSettings> | UpdateAiSettingsPayload): Promise<void> => {
-    await request.put('/system/settings', data)
+  updateSettings: async (data: Partial<SystemSettings> | UpdateAiSettingsPayload): Promise<SystemSettings> => {
+    const res = await request.put<never, ApiResponse<SystemSettings>>('/system/settings', data)
+    return res.data
   },
 
   testAi: async (params: {
@@ -64,7 +65,7 @@ export const systemApi = {
     modelName: string
     modelBaseUrl: string
   }): Promise<{ ok: boolean; message: string; checks: Array<{ key: string; label: string; ok: boolean; message: string }> }> => {
-    const res = await request.post<never, { data: { ok: boolean; message: string; checks: Array<{ key: string; label: string; ok: boolean; message: string }> } }>('/ai/test', params)
+    const res = await request.post<never, ApiResponse<{ ok: boolean; message: string; checks: Array<{ key: string; label: string; ok: boolean; message: string }> }>>('/ai/test', params)
     return res.data
   },
 }

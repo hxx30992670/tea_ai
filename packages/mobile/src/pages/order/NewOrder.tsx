@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Bot, Loader2 } from 'lucide-react'
+import { Plus, Bot, CheckCircle2, Loader2 } from 'lucide-react'
 import { PageHeader } from '@/components/layout/PageHeader'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
@@ -32,6 +32,11 @@ export default function NewOrderPage() {
   const [autoStockOut, setAutoStockOut] = useState(true)
   const [autoPayment, setAutoPayment] = useState(true)
   const [adjustTotalPrice, setAdjustTotalPrice] = useState<number | undefined>(undefined)
+  const [addedMessage, setAddedMessage] = useState('')
+  const [highlightedProductId, setHighlightedProductId] = useState<number | null>(null)
+  const productSectionRef = useRef<HTMLElement | null>(null)
+  const addedMessageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const total = totalAmount()
 
@@ -40,6 +45,28 @@ export default function NewOrderPage() {
       setPaidAmount(total)
     }
   }, [total, autoPayment, setPaidAmount])
+
+  useEffect(() => {
+    return () => {
+      if (addedMessageTimerRef.current) clearTimeout(addedMessageTimerRef.current)
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+    }
+  }, [])
+
+  const handleProductAdded = (item: DraftItem) => {
+    if (addedMessageTimerRef.current) clearTimeout(addedMessageTimerRef.current)
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
+
+    setAddedMessage(`已加入：${item.productName}`)
+    setHighlightedProductId(item.productId)
+
+    window.setTimeout(() => {
+      productSectionRef.current?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }, 80)
+
+    addedMessageTimerRef.current = setTimeout(() => setAddedMessage(''), 2400)
+    highlightTimerRef.current = setTimeout(() => setHighlightedProductId(null), 2600)
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -82,7 +109,7 @@ export default function NewOrderPage() {
         </section>
 
         {/* 商品列表 */}
-        <section>
+        <section ref={productSectionRef}>
           <div className="mb-2 flex items-center justify-between">
             <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
               商品
@@ -101,6 +128,7 @@ export default function NewOrderPage() {
             </Button>
           </div>
           <DraftItemList
+            highlightedProductId={highlightedProductId}
             onEditItem={(item) => {
               setEditingItem(item)
               setShowProductSheet(true)
@@ -277,10 +305,19 @@ export default function NewOrderPage() {
         </div>
       )}
 
+      {/* 商品加入反馈 */}
+      {addedMessage && !recognizing && (
+        <div className="fixed top-16 left-4 right-4 z-50 flex items-center gap-2 rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-300 shadow-lg shadow-emerald-950/20 animate-in fade-in slide-in-from-top-2">
+          <CheckCircle2 size={17} className="shrink-0" />
+          <span className="min-w-0 flex-1 truncate">{addedMessage}</span>
+        </div>
+      )}
+
       {/* 商品搜索面板 */}
       <ProductSearchSheet
         open={showProductSheet}
         editingItem={editingItem}
+        onAdded={handleProductAdded}
         onClose={() => {
           setShowProductSheet(false)
           setEditingItem(null)
