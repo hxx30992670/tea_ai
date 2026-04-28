@@ -2,14 +2,14 @@ import React, { useEffect, useState } from 'react'
 import {
   Table, Button, Space, Tag, Card, Select, Row, Col, Statistic, Typography, Tabs, DatePicker,
 } from 'antd'
-import { PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, SearchOutlined } from '@ant-design/icons'
+import { PlusOutlined, ArrowUpOutlined, ArrowDownOutlined, SearchOutlined, DollarOutlined } from '@ant-design/icons'
 import { paymentApi, type PayableSummary, type ReceivableSummary } from '@/api/payments'
 import { PAYMENT_RECORD_TYPE } from '@/constants/order'
 import type { PaymentRecord } from '@/types'
 import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 import type { Dayjs } from 'dayjs'
 import PageHeader from '@/components/page/PageHeader'
-import { PaymentRecordModal } from './components/PaymentRecordModal'
+import { PaymentRecordModal, type PaymentRecordInitialValues } from './components/PaymentRecordModal'
 import { formatDateTime } from '@/utils/date'
 import '@/styles/page.less'
 
@@ -36,6 +36,7 @@ export default function PaymentsPage() {
   const [payables, setPayables] = useState<PayableSummary[]>([])
   const [loading, setLoading] = useState(false)
   const [modalOpen, setModalOpen] = useState(false)
+  const [paymentInitialValues, setPaymentInitialValues] = useState<PaymentRecordInitialValues | undefined>()
 
   const [filterType, setFilterType] = useState('')
   const [filterMethod, setFilterMethod] = useState('')
@@ -73,6 +74,33 @@ export default function PaymentsPage() {
   const handleReset = () => {
     setFilterType(''); setFilterMethod(''); setDateRange(null); setPage(1)
     loadData({ type: undefined, method: undefined, dateFrom: undefined, dateTo: undefined, page: 1 })
+  }
+
+  const handleOpenCreate = () => {
+    setPaymentInitialValues(undefined)
+    setModalOpen(true)
+  }
+
+  const handleQuickReceive = (record: ReceivableSummary) => {
+    setPaymentInitialValues({
+      type: PAYMENT_RECORD_TYPE.RECEIVE,
+      relatedType: 'sale_order',
+      relatedId: record.id,
+      amount: record.receivableAmount,
+      remark: `快捷收款：${record.orderNo}`,
+    })
+    setModalOpen(true)
+  }
+
+  const handleQuickPay = (record: PayableSummary) => {
+    setPaymentInitialValues({
+      type: PAYMENT_RECORD_TYPE.PAY,
+      relatedType: 'purchase_order',
+      relatedId: record.id,
+      amount: record.payableAmount,
+      remark: `快捷付款：${record.orderNo}`,
+    })
+    setModalOpen(true)
   }
 
   const totalReceive = list.filter((p) => p.type === PAYMENT_RECORD_TYPE.RECEIVE).reduce((sum, p) => sum + p.amount, 0)
@@ -119,7 +147,7 @@ export default function PaymentsPage() {
         description="主要用于查询流水、核对应收应付，以及补录漏记的收付款。"
         className="page-header"
         extra={(
-          <Button type="primary" icon={<PlusOutlined />} onClick={() => setModalOpen(true)} className="page-primary-button">
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleOpenCreate} className="page-primary-button">
             补录收付款
           </Button>
         )}
@@ -188,6 +216,21 @@ export default function PaymentsPage() {
                 { title: '总金额', dataIndex: 'totalAmount', render: (v: number) => `¥${v.toLocaleString()}` },
                 { title: '已收', dataIndex: 'receivedAmount', render: (v: number) => `¥${v.toLocaleString()}` },
                 { title: '待收', dataIndex: 'receivableAmount', render: (v: number) => <Text type="danger">¥{v.toLocaleString()}</Text> },
+                {
+                  title: '操作',
+                  width: 120,
+                  render: (_: unknown, record: ReceivableSummary) => (
+                    <Button
+                      type="link"
+                      size="small"
+                      icon={<DollarOutlined />}
+                      disabled={record.receivableAmount <= 0}
+                      onClick={() => handleQuickReceive(record)}
+                    >
+                      快捷收款
+                    </Button>
+                  ),
+                },
               ]} />,
             },
             {
@@ -199,6 +242,22 @@ export default function PaymentsPage() {
                 { title: '总金额', dataIndex: 'totalAmount', render: (v: number) => `¥${v.toLocaleString()}` },
                 { title: '已付', dataIndex: 'paidAmount', render: (v: number) => `¥${v.toLocaleString()}` },
                 { title: '待付', dataIndex: 'payableAmount', render: (v: number) => <Text type="danger">¥{v.toLocaleString()}</Text> },
+                {
+                  title: '操作',
+                  width: 120,
+                  render: (_: unknown, record: PayableSummary) => (
+                    <Button
+                      type="link"
+                      size="small"
+                      danger
+                      icon={<DollarOutlined />}
+                      disabled={record.payableAmount <= 0}
+                      onClick={() => handleQuickPay(record)}
+                    >
+                      快捷付款
+                    </Button>
+                  ),
+                },
               ]} />,
             },
           ]}
@@ -209,8 +268,9 @@ export default function PaymentsPage() {
         open={modalOpen}
         receivables={receivables}
         payables={payables}
-        onCancel={() => setModalOpen(false)}
-        onSuccess={() => { setModalOpen(false); loadData() }}
+        initialValues={paymentInitialValues}
+        onCancel={() => { setModalOpen(false); setPaymentInitialValues(undefined) }}
+        onSuccess={() => { setModalOpen(false); setPaymentInitialValues(undefined); loadData() }}
       />
     </div>
   )

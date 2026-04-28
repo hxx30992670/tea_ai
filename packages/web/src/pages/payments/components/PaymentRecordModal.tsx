@@ -5,15 +5,24 @@ import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
 
 const METHOD_OPTIONS = PAYMENT_METHOD_OPTIONS
 
+export type PaymentRecordInitialValues = {
+  type: 'receive' | 'pay'
+  relatedType: 'sale_order' | 'purchase_order'
+  relatedId: number
+  amount: number
+  remark?: string
+}
+
 interface PaymentRecordModalProps {
   open: boolean
   receivables: ReceivableSummary[]
   payables: PayableSummary[]
+  initialValues?: PaymentRecordInitialValues
   onCancel: () => void
   onSuccess: () => void
 }
 
-export function PaymentRecordModal({ open, receivables, payables, onCancel, onSuccess }: PaymentRecordModalProps) {
+export function PaymentRecordModal({ open, receivables, payables, initialValues, onCancel, onSuccess }: PaymentRecordModalProps) {
   const [form] = Form.useForm()
   const paymentType = Form.useWatch('type', form)
   const relatedType = Form.useWatch('relatedType', form)
@@ -21,8 +30,11 @@ export function PaymentRecordModal({ open, receivables, payables, onCancel, onSu
   useEffect(() => {
     if (open) {
       form.resetFields()
+      if (initialValues) {
+        form.setFieldsValue(initialValues)
+      }
     }
-  }, [open, form])
+  }, [open, form, initialValues])
 
   const relatedOptions = relatedType === 'sale_order'
     ? receivables.map((item) => ({
@@ -47,7 +59,7 @@ export function PaymentRecordModal({ open, receivables, payables, onCancel, onSu
 
   return (
     <Modal
-      title="补录收/付款"
+      title={initialValues?.type === 'receive' ? '快捷收款' : initialValues?.type === 'pay' ? '快捷付款' : '补录收/付款'}
       open={open}
       onOk={handleSubmit}
       onCancel={handleCancel}
