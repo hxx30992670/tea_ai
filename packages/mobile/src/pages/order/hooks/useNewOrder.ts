@@ -30,10 +30,21 @@ export function useNewOrder() {
       setSubmitting(true)
       setError('')
       try {
+        const missingManualBatchItem = autoStockOut
+          ? draft.items.find((item) => item.batchAutoPickStrategy === 'manual_only' && !item.batchId)
+          : undefined
+        if (missingManualBatchItem) {
+          setError(`${missingManualBatchItem.productName} 必须先选择出库批次`)
+          return
+        }
+
         const basePayload = {
           customerId: draft.customerId,
           items: draft.items.map((i) => ({
             productId: i.productId,
+            batchId: i.batchId,
+            warehouseId: i.warehouseId,
+            locationId: i.locationId,
             quantity: i.quantity,
             packageQty: i.packageQty,
             looseQty: i.looseQty,

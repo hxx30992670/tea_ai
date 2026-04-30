@@ -9,6 +9,32 @@ export class StockInDto {
   @Min(1)
   productId!: number;
 
+  @ApiPropertyOptional({ description: '并入已有批次 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  batchId?: number;
+
+  @ApiPropertyOptional({ description: '新批次号', example: '20260430-LJ-01' })
+  @IsOptional()
+  @IsString()
+  batchNo?: string;
+
+  @ApiPropertyOptional({ description: '仓库 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  warehouseId?: number;
+
+  @ApiPropertyOptional({ description: '仓位 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  locationId?: number;
+
   @ApiPropertyOptional({ description: '入库数量（基准单位）', example: 10 })
   @Type(() => Number)
   @IsOptional()

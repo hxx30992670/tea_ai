@@ -10,6 +10,7 @@ import {
   PURCHASE_ORDER_STATUS,
   SALE_ORDER_STATUS,
 } from '../../common/constants/order-status';
+import { ROLE_STAFF } from '../../common/constants/roles';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { CustomerEntity } from '../../entities/customer.entity';
 import { PaymentRecordEntity } from '../../entities/payment-record.entity';
@@ -79,6 +80,16 @@ export class PaymentService {
   async createPayment(dto: CreatePaymentDto, user: AuthUser) {
     return this.dataSource.transaction(async (manager) => {
       const amount = roundAmount(dto.amount);
+
+      if (user.role === ROLE_STAFF) {
+        if (dto.type !== PAYMENT_RECORD_TYPE.RECEIVE || dto.relatedType !== 'sale_order') {
+          throw new BadRequestException('店员只能为销售单收款');
+        }
+        const staffOrder = await manager.findOne(SaleOrderEntity, { where: { id: dto.relatedId } });
+        if (!staffOrder || staffOrder.operatorId !== user.sub) {
+          throw new NotFoundException('销售订单不存在');
+        }
+      }
 
       if (dto.type === PAYMENT_RECORD_TYPE.RECEIVE && dto.relatedType !== 'sale_order') {
         throw new BadRequestException('收款只能关联销售订单');

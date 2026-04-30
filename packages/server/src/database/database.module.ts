@@ -10,6 +10,8 @@ import { AiConversationEntity } from '../entities/ai-conversation.entity';
 import { CategoryEntity } from '../entities/category.entity';
 import { CustomerEntity } from '../entities/customer.entity';
 import { FollowUpEntity } from '../entities/follow-up.entity';
+import { InventoryCountEntity } from '../entities/inventory-count.entity';
+import { InventoryCountItemEntity } from '../entities/inventory-count-item.entity';
 import { OperationLogEntity } from '../entities/operation-log.entity';
 import { PaymentRecordEntity } from '../entities/payment-record.entity';
 import { ProductEntity } from '../entities/product.entity';
@@ -26,9 +28,14 @@ import { SaleRefundEntity } from '../entities/sale-refund.entity';
 import { SaleReturnEntity } from '../entities/sale-return.entity';
 import { SaleReturnItemEntity } from '../entities/sale-return-item.entity';
 import { StockRecordEntity } from '../entities/stock-record.entity';
+import { StockBatchEntity } from '../entities/stock-batch.entity';
+import { StockLocationEntity } from '../entities/stock-location.entity';
+import { StockTransferEntity } from '../entities/stock-transfer.entity';
+import { StockTransferItemEntity } from '../entities/stock-transfer-item.entity';
 import { SupplierEntity } from '../entities/supplier.entity';
 import { SysUserEntity } from '../entities/sys-user.entity';
 import { SystemSettingEntity } from '../entities/system-setting.entity';
+import { WarehouseEntity } from '../entities/warehouse.entity';
 import { DatabaseSeedService } from './seeds/database-seed.service';
 
 export const ENTITIES = [
@@ -37,6 +44,13 @@ export const ENTITIES = [
   ProductEntity,
   ProductUnitEntity,
   StockRecordEntity,
+  WarehouseEntity,
+  StockLocationEntity,
+  StockBatchEntity,
+  InventoryCountEntity,
+  InventoryCountItemEntity,
+  StockTransferEntity,
+  StockTransferItemEntity,
   CustomerEntity,
   SupplierEntity,
   PurchaseOrderEntity,

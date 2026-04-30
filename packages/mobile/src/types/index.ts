@@ -82,14 +82,17 @@ export interface Product {
   costPrice: number
   sellPrice: number
   stockQty: number
+  availableStockQty?: number
   safeStock?: number
   teaType?: string
   origin?: string
   year?: number
   batchNo?: string
+  batchAutoPickStrategy?: string
   season?: string
   shelfLife?: number
   productionDate?: string
+  producedAt?: string
   storageCond?: string
   imageUrl?: string
   status: number
@@ -140,6 +143,10 @@ export interface StockOperationPayload {
   quantity?: number
   packageQty?: number
   looseQty?: number
+  warehouseId?: number
+  locationId?: number
+  batchId?: number
+  batchNo?: string
   reason: string
   relatedOrderId?: number
   remark?: string
@@ -150,6 +157,12 @@ export interface StockRecord {
   productId: number
   productName?: string
   type: 'in' | 'out'
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
   quantity: number
   packageQty?: number
   looseQty?: number
@@ -162,6 +175,49 @@ export interface StockRecord {
   createdAt: string
 }
 
+export interface StockLocation {
+  id: number
+  warehouseId: number
+  code: string
+  name: string
+  status: number
+  remark?: string | null
+}
+
+export interface Warehouse {
+  id: number
+  code: string
+  name: string
+  type: string
+  address?: string | null
+  isDefault: number
+  status: number
+  remark?: string | null
+  locations?: StockLocation[]
+}
+
+export interface StockBatch {
+  id: number
+  productId: number
+  productName: string
+  batchNo: string
+  warehouseId: number
+  warehouseName: string
+  locationId?: number | null
+  locationName?: string | null
+  quantity: number
+  lockedQty?: number
+  availableQty?: number
+  costPrice?: number
+  productionDate?: string | null
+  expireAt?: string | null
+  unit?: string | null
+  packageUnit?: string | null
+  packageSize?: number | null
+  status: number
+  remark?: string | null
+}
+
 // ===== Sale Order =====
 /** 销售订单状态：draft→shipped→done / returned */
 export type SaleOrderStatus = 'draft' | 'shipped' | 'done' | 'returned'
@@ -171,6 +227,12 @@ export interface SaleOrderItem {
   productId: number
   productName?: string
   spec?: string
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
   unit?: string
   quantity?: number
   packageQty?: number
@@ -307,6 +369,7 @@ export interface StockWarning {
   productName: string
   type: 'low_stock' | 'expiring'
   stockQty: number
+  availableStockQty?: number
   safeStock: number
   shelfDaysLeft?: number
   urgency: 'high' | 'medium' | 'low'

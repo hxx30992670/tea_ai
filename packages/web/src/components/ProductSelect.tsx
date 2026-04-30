@@ -209,7 +209,7 @@ export default function ProductSelect({
         const px = p[priceField]
         const categoryLabel = getCategoryLabel(p)
         const categoryPathText = getCategoryPathText(p)
-        const stock = p.stockQty ?? 0
+        const stock = p.availableStockQty ?? p.stockQty ?? 0
         const isLowStock = p.safeStock != null && stock <= p.safeStock
 
         const metaParts = [

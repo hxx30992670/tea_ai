@@ -12,13 +12,22 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { PAYMENT_METHOD_VALUES, type PaymentMethod } from '../../../common/constants/order-status';
+import { STOCK_BATCH_STATUS_VALUES } from '../../../common/constants/stock-batch-status';
 
 export class SaleExchangeReturnItemDto {
-  @ApiProperty({ description: '原销售明细 ID', example: 1 })
+  @ApiPropertyOptional({ description: '原销售明细 ID', example: 1 })
   @Type(() => Number)
+  @IsOptional()
   @IsInt()
   @Min(1)
-  saleOrderItemId!: number;
+  saleOrderItemId?: number;
+
+  @ApiPropertyOptional({ description: '历史换出明细 ID（再次换货时使用）', example: 12 })
+  @Type(() => Number)
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  sourceExchangeItemId?: number;
 
   @ApiPropertyOptional({ description: '换回数量（基准单位）', example: 1 })
   @Type(() => Number)
@@ -40,6 +49,27 @@ export class SaleExchangeReturnItemDto {
   @IsNumber()
   @Min(0)
   looseQty?: number;
+
+  @ApiPropertyOptional({ description: '换回入库仓库 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  warehouseId?: number;
+
+  @ApiPropertyOptional({ description: '换回入库仓位 ID', example: 2 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  locationId?: number;
+
+  @ApiPropertyOptional({ description: '换回库存状态：1 可售 / 2 待检 / 3 不可售', enum: STOCK_BATCH_STATUS_VALUES, example: 2 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @IsIn([...STOCK_BATCH_STATUS_VALUES])
+  stockStatus?: number;
 }
 
 export class SaleExchangeOutItemDto {
@@ -75,6 +105,27 @@ export class SaleExchangeOutItemDto {
   @IsNumber()
   @Min(0)
   unitPrice!: number;
+
+  @ApiPropertyOptional({ description: '换出批次 ID（指定批次出库）', example: 3 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  batchId?: number;
+
+  @ApiPropertyOptional({ description: '换出仓库 ID（按仓库筛选批次）', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  warehouseId?: number;
+
+  @ApiPropertyOptional({ description: '换出仓位 ID（按仓位筛选批次）', example: 2 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  locationId?: number;
 }
 
 export class CreateSaleExchangeDto {

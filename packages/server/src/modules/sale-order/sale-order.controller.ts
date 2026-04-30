@@ -23,7 +23,7 @@ import { SaleOrderService } from './sale-order.service';
 export class SaleOrderController {
   constructor(private readonly saleOrderService: SaleOrderService) {}
 
-  @Roles(ROLE_ADMIN, ROLE_MANAGER)
+  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
   @ApiOperation({ summary: '销售订单列表' })
   @ApiOkResponse({ description: '分页销售订单列表' })
   @Get()
@@ -49,7 +49,7 @@ export class SaleOrderController {
     return this.saleOrderService.quickCompleteSaleOrder(dto, user);
   }
 
-  @Roles(ROLE_ADMIN, ROLE_MANAGER)
+  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
   @ApiOperation({ summary: '获取销售订单详情（含明细）' })
   @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
   @Get(':id')
@@ -84,7 +84,7 @@ export class SaleOrderController {
     return this.saleOrderService.stockOutSaleOrder(id, dto.remark, user);
   }
 
-  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
   @ApiOperation({ summary: '销售订单退货' })
   @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
   @ApiBody({ type: CreateSaleReturnDto })
@@ -98,7 +98,7 @@ export class SaleOrderController {
     return this.saleOrderService.createSaleReturn(id, dto, user);
   }
 
-  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
   @ApiOperation({ summary: '销售订单仅退款' })
   @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
   @ApiBody({ type: CreateSaleRefundDto })
@@ -112,7 +112,7 @@ export class SaleOrderController {
     return this.saleOrderService.createSaleRefund(id, dto, user);
   }
 
-  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
+  @Roles(ROLE_ADMIN, ROLE_MANAGER)
   @ApiOperation({ summary: '销售订单换货' })
   @ApiParam({ name: 'id', description: '销售订单 ID', example: 1 })
   @ApiBody({ type: CreateSaleExchangeDto })

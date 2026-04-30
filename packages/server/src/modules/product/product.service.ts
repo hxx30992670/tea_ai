@@ -13,6 +13,7 @@ import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, IsNull, Repository } from 'typeorm';
 import { ROLE_STAFF } from '../../common/constants/roles';
 import { AuthUser } from '../../common/types/auth-user.type';
+import { DEFAULT_BATCH_AUTO_PICK_STRATEGY } from '../../common/utils/batch-auto-pick.util';
 import { roundQuantity, compareQuantity } from '../../common/utils/precision.util';
 import { CategoryEntity } from '../../entities/category.entity';
 import { ProductEntity } from '../../entities/product.entity';
@@ -124,6 +125,12 @@ export class ProductService {
     return {
       units: units.map((unit) => unit.name),
       seasons: ['春茶', '夏茶', '秋茶', '冬茶'],
+      batchStrategies: [
+        { value: 'expiry_first', label: '按临期优先' },
+        { value: 'manual_only', label: '必须手选批次' },
+        { value: 'production_date_oldest', label: '按生产日期较早优先' },
+        { value: 'production_date_newest', label: '按生产日期较新优先' },
+      ],
       shelfLifePresets: {
         绿茶: 18,
         普洱: 0,
@@ -133,6 +140,7 @@ export class ProductService {
         { key: 'year', label: '年份', type: 'number' },
         { key: 'season', label: '采摘季', type: 'select', source: 'seasons' },
         { key: 'shelfLife', label: '保质期(月)', type: 'number' },
+        { key: 'batchAutoPickStrategy', label: '批次自动选择规则', type: 'select', source: 'batchStrategies' },
         { key: 'packageUnit', label: '包装单位', type: 'select', source: 'units' },
         { key: 'packageSize', label: '每包装数量', type: 'number' },
         { key: 'safeStock', label: '安全库存', type: 'number' },
@@ -141,8 +149,8 @@ export class ProductService {
         { key: 'storageCond', label: '存储条件', type: 'input' },
       ],
       categoryFieldPresets: {
-        绿茶: ['origin', 'year', 'season', 'shelfLife', 'safeStock', 'batchNo'],
-        普洱: ['origin', 'year', 'season', 'shelfLife', 'safeStock', 'batchNo', 'storageCond'],
+        绿茶: ['origin', 'year', 'season', 'shelfLife', 'batchAutoPickStrategy', 'safeStock', 'batchNo'],
+        普洱: ['origin', 'year', 'season', 'shelfLife', 'batchAutoPickStrategy', 'safeStock', 'batchNo', 'storageCond'],
       },
     };
   }
@@ -437,6 +445,7 @@ export class ProductService {
         costPrice: dto.costPrice ?? 0,
         sellPrice: dto.sellPrice ?? 0,
         stockQty: openingStockQty,
+        availableStockQty: openingStockQty,
         safeStock: roundQuantity(this.getNumber(extData, 'safeStock') ?? 10),
         imageUrl: dto.imageUrl ?? null,
         status: dto.status ?? 1,
@@ -710,6 +719,7 @@ export class ProductService {
       origin: this.getString(extData, 'origin') ?? product.origin,
       year: this.getNumber(extData, 'year') ?? product.year,
       batchNo: this.getString(extData, 'batchNo') ?? product.batchNo,
+      batchAutoPickStrategy: this.getString(extData, 'batchAutoPickStrategy') ?? DEFAULT_BATCH_AUTO_PICK_STRATEGY,
       season: this.getString(extData, 'season') ?? product.season,
       shelfLife: this.getNumber(extData, 'shelfLife') ?? product.shelfLife,
       storageCond: this.getString(extData, 'storageCond') ?? product.storageCond,
@@ -768,6 +778,7 @@ export class ProductService {
       ...(product.origin ? { origin: product.origin } : {}),
       ...(product.year !== null ? { year: product.year } : {}),
       ...(product.batchNo ? { batchNo: product.batchNo } : {}),
+      batchAutoPickStrategy: this.getString(this.parseExtData(product.extData), 'batchAutoPickStrategy') ?? DEFAULT_BATCH_AUTO_PICK_STRATEGY,
       ...(product.season ? { season: product.season } : {}),
       ...(product.shelfLife !== undefined ? { shelfLife: product.shelfLife } : {}),
       ...(product.storageCond ? { storageCond: product.storageCond } : {}),

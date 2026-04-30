@@ -5,6 +5,18 @@
 import request from './index'
 import type { ApiResponse, PageResult, PurchaseOrder } from '@/types'
 
+export interface CreatePurchaseOrderPayload {
+  supplierId?: number
+  remark?: string
+  items: Array<{
+    productId: number
+    quantity?: number
+    packageQty?: number
+    looseQty?: number
+    unitPrice: number
+  }>
+}
+
 export interface CreatePurchaseReturnPayload {
   items: Array<{
     purchaseOrderItemId: number
@@ -20,12 +32,18 @@ export interface CreatePurchaseReturnPayload {
 export interface QuickCompletePurchasePayload {
   supplierId?: number
   remark?: string
+  warehouseId?: number
+  locationId?: number
   items: Array<{
     productId: number
     quantity?: number
     packageQty?: number
     looseQty?: number
     unitPrice: number
+    batchId?: number
+    batchNo?: string
+    warehouseId?: number
+    locationId?: number
   }>
   paidAmount: number
   method?: string
@@ -37,7 +55,7 @@ export const purchaseOrderApi = {
     return res.data
   },
 
-  create: async (data: Partial<PurchaseOrder>): Promise<PurchaseOrder> => {
+  create: async (data: CreatePurchaseOrderPayload | Partial<PurchaseOrder>): Promise<PurchaseOrder> => {
     const res = await request.post<never, ApiResponse<PurchaseOrder>>('/purchase-orders', data)
     return res.data
   },
@@ -47,7 +65,7 @@ export const purchaseOrderApi = {
     return res.data
   },
 
-  update: async (id: number, data: Partial<PurchaseOrder>): Promise<PurchaseOrder> => {
+  update: async (id: number, data: CreatePurchaseOrderPayload | Partial<PurchaseOrder>): Promise<PurchaseOrder> => {
     const res = await request.put<never, ApiResponse<PurchaseOrder>>(`/purchase-orders/${id}`, data)
     return res.data
   },

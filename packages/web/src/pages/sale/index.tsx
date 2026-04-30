@@ -143,6 +143,7 @@ function mapRecognizedItems(
 export default function SalePage() {
   const role = useAuthStore((state) => state.user?.role)
   const allowAiRecognize = canUseAiRecognize(role)
+  const canManageSaleAfterSale = role === 'admin' || role === 'manager'
   const [list, setList] = useState<SaleOrder[]>([])
   const [total, setTotal] = useState(0)
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -647,12 +648,12 @@ export default function SalePage() {
             {debt > 0 && (r.status === SALE_ORDER_STATUS.SHIPPED || r.status === SALE_ORDER_STATUS.DONE) && (
               <Button type="link" size="small" icon={<DollarOutlined />} style={{ color: '#1677ff' }} onClick={() => handleOpenCollect(r)}>收款</Button>
             )}
-            {(r.status === SALE_ORDER_STATUS.SHIPPED || r.status === SALE_ORDER_STATUS.DONE) && (
+            {canManageSaleAfterSale && (r.status === SALE_ORDER_STATUS.SHIPPED || r.status === SALE_ORDER_STATUS.DONE) && (
               <Dropdown menu={afterSaleMenu} trigger={['click']}>
                 <Button type="link" size="small">售后 <DownOutlined /></Button>
               </Dropdown>
             )}
-            {r.status === SALE_ORDER_STATUS.DRAFT && (
+            {canManageSaleAfterSale && r.status === SALE_ORDER_STATUS.DRAFT && (
               <Dropdown menu={draftMoreMenu} trigger={['click']}>
                 <Button type="link" size="small">更多 <DownOutlined /></Button>
               </Dropdown>
@@ -705,7 +706,7 @@ export default function SalePage() {
 
       <PageHeader
         title="销售订单"
-        description={'先建单、再出库、再收款。售后统一从"售后"入口处理，适合散客和常规客户。'}
+        description={canManageSaleAfterSale ? '先建单、再出库、再收款。售后统一从"售后"入口处理，适合散客和常规客户。' : '创建销售单、出库并登记收款。售后请交由店长处理。'}
         className="page-header"
         extra={
           <Space>

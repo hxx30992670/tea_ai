@@ -9,13 +9,14 @@ export interface ProductMetaField {
   key: string
   label: string
   type: 'input' | 'number' | 'select'
-  source?: 'units' | 'seasons'
+  source?: 'units' | 'seasons' | 'batchStrategies'
   options?: { value: string; label: string }[]
 }
 
 export interface ProductMeta {
   units: string[]
   seasons: string[]
+  batchStrategies: Array<{ value: string; label: string }>
   shelfLifePresets: Record<string, number>
   defaultExtFields: ProductMetaField[]
   categoryFieldPresets: Record<string, string[]>

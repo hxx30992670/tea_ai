@@ -29,10 +29,14 @@ export interface CreateSaleRefundPayload {
 
 export interface CreateSaleExchangePayload {
   returnItems: Array<{
-    saleOrderItemId: number
+    saleOrderItemId?: number
+    sourceExchangeItemId?: number
     quantity?: number
     packageQty?: number
     looseQty?: number
+    warehouseId?: number
+    locationId?: number
+    stockStatus?: number
   }>
   exchangeItems: Array<{
     productId: number
@@ -40,6 +44,9 @@ export interface CreateSaleExchangePayload {
     packageQty?: number
     looseQty?: number
     unitPrice: number
+    batchId?: number
+    warehouseId?: number
+    locationId?: number
   }>
   refundAmount?: number
   receiveAmount?: number

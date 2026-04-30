@@ -94,6 +94,7 @@ export interface Product {
   costPrice: number
   sellPrice: number
   stockQty: number
+  availableStockQty?: number
   safeStock?: number
   imageUrl?: string
   status: number
@@ -102,6 +103,7 @@ export interface Product {
   origin?: string
   year?: number
   batchNo?: string
+  batchAutoPickStrategy?: string
   season?: string
   shelfLife?: number
   productionDate?: string
@@ -131,6 +133,12 @@ export interface StockRecord {
   productName: string
   type: 'in' | 'out'
   reason: string
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
   quantity: number
   packageQty?: number | null
   looseQty?: number | null
@@ -143,6 +151,91 @@ export interface StockRecord {
   createdAt: string
 }
 
+export interface StockLocation {
+  id: number
+  warehouseId: number
+  code: string
+  name: string
+  status: number
+  remark?: string | null
+  createdAt?: string
+}
+
+export interface Warehouse {
+  id: number
+  code: string
+  name: string
+  type: string
+  address?: string | null
+  isDefault: number
+  status: number
+  remark?: string | null
+  createdAt?: string
+  locations?: StockLocation[]
+}
+
+export interface StockBatch {
+  id: number
+  productId: number
+  productName: string
+  productSku?: string | null
+  productSpec?: string | null
+  teaType?: string | null
+  origin?: string | null
+  year?: number | null
+  season?: string | null
+  productBatchNo?: string | null
+  batchNo: string
+  warehouseId: number
+  warehouseName: string
+  locationId?: number | null
+  locationName?: string | null
+  quantity: number
+  lockedQty?: number
+  availableQty?: number
+  costPrice?: number
+  productionDate?: string | null
+  expireAt?: string | null
+  unit?: string | null
+  packageUnit?: string | null
+  packageSize?: number | null
+  status: number
+  remark?: string | null
+  createdAt?: string
+}
+
+export type StockBatchStatus = 1 | 2 | 3
+
+export interface InventoryCountRecord {
+  id: number
+  countNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
+  status?: string
+  totalDiffQty: number
+  remark?: string | null
+  createdAt: string
+}
+
+export interface StockTransferRecord {
+  id: number
+  transferNo?: string | null
+  fromWarehouseId: number
+  fromWarehouseName?: string | null
+  fromLocationId?: number | null
+  fromLocationName?: string | null
+  toWarehouseId: number
+  toWarehouseName?: string | null
+  toLocationId?: number | null
+  toLocationName?: string | null
+  status?: string
+  totalQty: number
+  remark?: string | null
+  createdAt: string
+}
+
 export interface StockWarning {
   /** 同一商品可能有多条预警（如库存+临期），需与 warningType 组合保证唯一 */
   id: string
@@ -150,6 +243,7 @@ export interface StockWarning {
   productName: string
   type: 'low_stock' | 'expiring'
   stockQty: number
+  availableStockQty?: number
   safeStock: number
   shelfDaysLeft?: number
   urgency: 'high' | 'medium' | 'low'
@@ -211,6 +305,12 @@ export interface PurchaseOrderItem {
   orderId?: number
   productId: number
   productName: string
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
   quantity: number
   packageQty?: number | null
   looseQty?: number | null
@@ -267,6 +367,7 @@ export interface SaleOrder {
   remark?: string
   createdAt: string
   items?: SaleOrderItem[]
+  exchangeableItems?: SaleExchangeableItem[]
   returns?: SaleReturn[]
   refunds?: SaleRefund[]
   exchanges?: SaleExchange[]
@@ -277,6 +378,12 @@ export interface SaleOrderItem {
   orderId?: number
   productId: number
   productName: string
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
   quantity: number
   packageQty?: number | null
   looseQty?: number | null
@@ -287,6 +394,33 @@ export interface SaleOrderItem {
   subtotal: number
   returnedQuantity?: number
   remainingQuantity?: number
+}
+
+export interface SaleExchangeableItem {
+  id: number
+  sourceType: 'sale_order_item' | 'exchange_out_item'
+  sourceKey: string
+  productId: number
+  productName: string
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
+  quantity: number
+  packageQty?: number | null
+  looseQty?: number | null
+  packageUnit?: string | null
+  packageSize?: number | null
+  unit?: string
+  unitPrice: number
+  returnedQuantity?: number
+  remainingQuantity?: number
+  saleOrderItemId?: number | null
+  sourceExchangeItemId?: number | null
+  exchangeId?: number | null
+  exchangeNo?: string | null
 }
 
 export interface SaleReturn {
@@ -339,8 +473,15 @@ export interface SaleExchangeItem {
   exchangeId: number
   direction: 'return' | 'out'
   saleOrderItemId?: number | null
+  sourceExchangeItemId?: number | null
   productId: number
   productName?: string
+  batchId?: number | null
+  batchNo?: string | null
+  warehouseId?: number | null
+  warehouseName?: string | null
+  locationId?: number | null
+  locationName?: string | null
   quantity: number
   packageQty?: number | null
   looseQty?: number | null

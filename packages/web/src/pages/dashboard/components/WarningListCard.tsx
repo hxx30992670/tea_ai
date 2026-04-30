@@ -24,7 +24,7 @@ export default function WarningListCard({ warnings, urgencyMap, onViewAll }: War
               <div className="dashboard-warning-name">{warning.productName}</div>
               <Text type="secondary" className="dashboard-warning-desc">
                 {warning.type === 'low_stock'
-                  ? `库存 ${warning.stockQty}，低于安全库存 ${warning.safeStock}`
+                  ? `库存 ${warning.availableStockQty ?? warning.stockQty}，低于安全库存 ${warning.safeStock}`
                   : `距过期仅剩 ${warning.shelfDaysLeft} 天`}
               </Text>
             </div>

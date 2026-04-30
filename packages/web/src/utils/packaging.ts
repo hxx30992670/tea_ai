@@ -42,3 +42,16 @@ export function getProductPackageConfig(product?: Product | null) {
     baseUnit: product?.unit || String(product?.extData?.unit || ''),
   }
 }
+
+/** 按当前输入单位展示库存/可用数量 */
+export function formatQuantityByUnitMode(
+  quantity: number | null | undefined,
+  packageConfig: { unit?: string | null; size?: number | null; baseUnit?: string | null },
+  unitMode?: 'base' | 'package',
+) {
+  const baseQty = Number(quantity ?? 0)
+  if (unitMode === 'package' && packageConfig.unit && Number(packageConfig.size ?? 0) > 0) {
+    return `${formatQuantityNumber(baseQty / Number(packageConfig.size))}${packageConfig.unit}`
+  }
+  return `${formatQuantityNumber(baseQty)}${packageConfig.baseUnit ?? ''}`
+}

@@ -50,6 +50,7 @@ interface ServerStockWarning {
   teaType: string
   warningType: 'safe_stock' | 'expiry'   // 前端叫 type: 'low_stock'/'expiring'
   stockQty: number
+  availableStockQty?: number
   safeStock: number
   level: 'critical' | 'high' | 'medium'  // 前端叫 urgency，且 critical → high
   remainingDays?: number  // 前端叫 shelfDaysLeft
@@ -110,6 +111,7 @@ export const dashboardApi = {
       productName: w.productName,
       type: mapWarningType(w.warningType),
       stockQty: w.stockQty ?? 0,
+      availableStockQty: w.availableStockQty ?? 0,
       safeStock: w.safeStock ?? 0,
       shelfDaysLeft: w.remainingDays,
       urgency: mapLevel(w.level),

@@ -37,6 +37,9 @@ export class ProductEntity {
   @Column({ name: 'stock_qty', type: 'real', default: 0 })
   stockQty!: number;
 
+  @Column({ name: 'available_stock_qty', type: 'real', default: 0 })
+  availableStockQty!: number;
+
   @Column({ name: 'safe_stock', type: 'real', default: 10 })
   safeStock!: number;
 

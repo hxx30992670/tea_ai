@@ -19,6 +19,7 @@ interface ServerStockWarning {
   warningType: 'safe_stock' | 'expiry'
   level: 'critical' | 'high' | 'medium'
   stockQty: number
+  availableStockQty?: number
   safeStock: number
   remainingDays?: number
 }
@@ -87,6 +88,7 @@ export const dashboardApi = {
       productName: w.productName,
       type: w.warningType === 'safe_stock' ? 'low_stock' : 'expiring',
       stockQty: w.stockQty ?? 0,
+      availableStockQty: w.availableStockQty ?? 0,
       safeStock: w.safeStock ?? 0,
       shelfDaysLeft: w.remainingDays,
       urgency: w.level === 'critical' ? 'high' : w.level === 'high' ? 'medium' : 'low',

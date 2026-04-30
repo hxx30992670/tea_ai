@@ -205,12 +205,13 @@ export default function ProductsPage() {
       render: (v: number) => <Text strong style={{ color: '#2D6A4F' }}>¥{v}</Text>,
     },
     {
-      title: '库存', dataIndex: 'stockQty', width: 80, align: 'right' as const,
-      render: (v: number, r: Product) => (
-        <Text style={{ color: v <= (r.safeStock ?? 0) ? '#ff4d4f' : 'inherit' }}>
-          {v} {r.unit || String(r.extData?.unit || '')}
-        </Text>
-      ),
+      title: '可售库存', dataIndex: 'availableStockQty', width: 90, align: 'right' as const,
+      render: (v: number, r: Product) => {
+        const displayQty = v ?? r.stockQty ?? 0;
+        return <Text style={{ color: displayQty <= (r.safeStock ?? 0) ? '#ff4d4f' : 'inherit' }}>
+          {displayQty} {r.unit || String(r.extData?.unit || '')}
+        </Text>;
+      },
     },
     {
       title: '生产日期', dataIndex: 'productionDate', width: 120,

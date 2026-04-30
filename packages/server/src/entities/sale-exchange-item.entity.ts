@@ -14,8 +14,20 @@ export class SaleExchangeItemEntity {
   @Column({ name: 'sale_order_item_id', type: 'integer', nullable: true })
   saleOrderItemId!: number | null;
 
+  @Column({ name: 'source_exchange_item_id', type: 'integer', nullable: true })
+  sourceExchangeItemId!: number | null;
+
   @Column({ name: 'product_id', type: 'integer' })
   productId!: number;
+
+  @Column({ name: 'batch_id', type: 'integer', nullable: true })
+  batchId!: number | null;
+
+  @Column({ name: 'warehouse_id', type: 'integer', nullable: true })
+  warehouseId!: number | null;
+
+  @Column({ name: 'location_id', type: 'integer', nullable: true })
+  locationId!: number | null;
 
   @Column({ type: 'real' })
   quantity!: number;

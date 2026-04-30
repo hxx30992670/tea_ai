@@ -35,7 +35,7 @@ export function StockWarningList({ warnings }: StockWarningListProps) {
                 <p className="text-sm font-medium truncate">{w.productName}</p>
                 <p className="text-xs text-muted-foreground mt-0.5">
                   {w.type === 'low_stock'
-                    ? `库存 ${w.stockQty} / 安全库存 ${w.safeStock}`
+                    ? `库存 ${w.availableStockQty ?? w.stockQty} / 安全库存 ${w.safeStock}`
                     : `剩余 ${w.shelfDaysLeft ?? '?'} 天到期`}
                 </p>
               </div>

@@ -18,6 +18,27 @@ class SaleOrderItemDto {
   @Min(1)
   productId!: number;
 
+  @ApiPropertyOptional({ description: '出库批次 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  batchId?: number;
+
+  @ApiPropertyOptional({ description: '出库仓库 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  warehouseId?: number;
+
+  @ApiPropertyOptional({ description: '出库仓位 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  locationId?: number;
+
   @ApiPropertyOptional({ description: '销售数量（基准单位）', example: 3 })
   @Type(() => Number)
   @IsOptional()

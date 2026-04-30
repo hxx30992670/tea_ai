@@ -1,10 +1,24 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsNumber, IsOptional, IsString, Min } from 'class-validator';
+import { IsIn, IsInt, IsNumber, IsOptional, IsString, Min } from 'class-validator';
 import { PAYMENT_METHOD_VALUES, type PaymentMethod } from '../../../common/constants/order-status';
 import { CreatePurchaseOrderDto } from './create-purchase-order.dto';
 
 export class QuickCompletePurchaseOrderDto extends CreatePurchaseOrderDto {
+  @ApiPropertyOptional({ description: '本次入库默认仓库 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  warehouseId?: number;
+
+  @ApiPropertyOptional({ description: '本次入库默认仓位 ID', example: 1 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  locationId?: number;
+
   @ApiProperty({ description: '实付金额', example: 200 })
   @Type(() => Number)
   @IsNumber()

@@ -11,11 +11,21 @@ import { persist, subscribeWithSelector } from 'zustand/middleware'
 const roundQuantity = (value: number) => Math.round(value * 10000) / 10000
 const roundAmount = (value: number) => Math.round(value * 100) / 100
 const calcItemQuantity = (item: Pick<DraftItem, 'quantity' | 'packageQty' | 'looseQty' | 'packageSize'>) => roundQuantity(item.quantity ?? ((item.packageQty ?? 0) * (item.packageSize ?? 1) + (item.looseQty ?? 0)))
+const sameDraftLine = (item: DraftItem, productId: number, batchId?: number | null) => (
+  item.productId === productId && (batchId === undefined || (item.batchId ?? null) === (batchId ?? null))
+)
 
 export interface DraftItem {
   productId: number
   productName: string
   spec?: string
+  batchId?: number
+  batchNo?: string
+  batchAutoPickStrategy?: string
+  warehouseId?: number
+  warehouseName?: string
+  locationId?: number
+  locationName?: string
   unit?: string
   packageUnit?: string
   packageSize?: number
@@ -47,8 +57,8 @@ interface OrderDraftState {
 
   setCustomer: (customer: { id?: number; name: string; phone?: string }) => void
   addItem: (item: DraftItem) => void
-  updateItem: (productId: number, patch: Partial<DraftItem>) => void
-  removeItem: (productId: number) => void
+  updateItem: (productId: number, patch: Partial<DraftItem>, batchId?: number | null) => void
+  removeItem: (productId: number, batchId?: number | null) => void
   setMethod: (method: string) => void
   setRemark: (remark: string) => void
   setPaidAmount: (amount: number | undefined) => void
@@ -78,10 +88,11 @@ export const useOrderDraftStore = create<OrderDraftState>()(
 
       addItem: (item) =>
         set((s) => {
-          const existing = s.draft.items.find((i) => i.productId === item.productId)
+          const targetBatchId = item.batchId ?? null
+          const existing = s.draft.items.find((i) => sameDraftLine(i, item.productId, targetBatchId))
           const items = existing
             ? s.draft.items.map((i) =>
-                i.productId === item.productId
+                sameDraftLine(i, item.productId, targetBatchId)
                   ? {
                       ...i,
                       packageQty: roundQuantity((i.packageQty ?? 0) + (item.packageQty ?? 0)),
@@ -94,20 +105,20 @@ export const useOrderDraftStore = create<OrderDraftState>()(
           return { draft: { ...s.draft, items }, isDirty: true }
         }),
 
-      updateItem: (productId, patch) =>
+      updateItem: (productId, patch, batchId) =>
         set((s) => ({
           draft: {
             ...s.draft,
-            items: s.draft.items.map((i) => (i.productId === productId ? { ...i, ...patch } : i)),
+            items: s.draft.items.map((i) => (sameDraftLine(i, productId, batchId) ? { ...i, ...patch } : i)),
           },
           isDirty: true,
         })),
 
-      removeItem: (productId) =>
+      removeItem: (productId, batchId) =>
         set((s) => ({
           draft: {
             ...s.draft,
-            items: s.draft.items.filter((i) => i.productId !== productId),
+            items: s.draft.items.filter((i) => !sameDraftLine(i, productId, batchId)),
           },
           isDirty: true,
         })),

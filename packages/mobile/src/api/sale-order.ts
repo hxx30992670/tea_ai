@@ -6,6 +6,9 @@ export interface CreateSaleOrderPayload {
   customerId?: number
   items: Array<{
     productId: number
+    batchId?: number
+    warehouseId?: number
+    locationId?: number
     quantity?: number
     packageQty?: number
     looseQty?: number

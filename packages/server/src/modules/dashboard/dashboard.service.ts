@@ -167,7 +167,7 @@ export class DashboardService {
     return products.flatMap((product) => {
       const warnings: Array<Record<string, unknown>> = [];
 
-      if (product.stockQty <= product.safeStock) {
+      if (product.availableStockQty <= product.safeStock) {
         warnings.push({
           productId: product.id,
           productName: product.name,
@@ -175,8 +175,9 @@ export class DashboardService {
           teaType: product.teaType,
           warningType: 'safe_stock',
           stockQty: product.stockQty,
+          availableStockQty: product.availableStockQty,
           safeStock: product.safeStock,
-          level: product.stockQty === 0 ? 'critical' : 'high',
+          level: product.availableStockQty === 0 ? 'critical' : 'high',
         });
       }
 

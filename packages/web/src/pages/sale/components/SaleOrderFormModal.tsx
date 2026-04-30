@@ -6,6 +6,7 @@ import {
   Input,
   InputNumber,
   Modal,
+  Radio,
   Select,
   Space,
   Spin,
@@ -13,15 +14,23 @@ import {
   message,
 } from 'antd'
 import { saleOrderApi } from '@/api/sale'
-import type { Customer, Product, SaleOrder } from '@/types'
-import { getProductPackageConfig } from '@/utils/packaging'
+import { stockApi } from '@/api/stock'
+import type { Customer, Product, SaleOrder, StockBatch } from '@/types'
+import { getBatchAutoPickPlaceholder, getBatchAutoPickStrategy } from '@/utils/batch-strategy'
+import { formatQuantityByUnitMode, getProductPackageConfig } from '@/utils/packaging'
 import { PAYMENT_METHOD_OPTIONS } from '@shared/constants/payment'
+import { filterBatchSelectOption, makeBatchSelectOption, renderBatchSelectOption } from '@/components/BatchSelectOption'
 import ProductSelect from '@/components/ProductSelect'
 import CustomerSelect from '@/components/CustomerSelect'
 
 const { Text } = Typography
 const QUANTITY_STEP = 0.0001
 const QUANTITY_PRECISION = 4
+type UnitMode = 'base' | 'package'
+
+function roundAmount(value: number) {
+  return Math.round(value * 100) / 100
+}
 
 interface SaleOrderFormModalProps {
   open: boolean
@@ -36,6 +45,9 @@ interface SaleOrderFormModalProps {
     customerId?: number
     items?: Array<{
       productId?: number
+      batchId?: number
+      warehouseId?: number
+      locationId?: number
       quantity?: number
       packageQty?: number
       looseQty?: number
@@ -61,30 +73,74 @@ export function SaleOrderFormModal({
   const [form] = Form.useForm()
   const saleItems = Form.useWatch('items', form) as Array<{
     productId?: number
+    batchId?: number
+    warehouseId?: number
+    locationId?: number
     quantity?: number
     packageQty?: number
     looseQty?: number
     unitPrice?: number
+    _unitMode?: UnitMode
     _product?: Product
   }> | undefined
   const autoPaidAmountRef = useRef<number | undefined>(undefined)
   const syncingPaidAmountRef = useRef(false)
   const [paidAmountTouched, setPaidAmountTouched] = useState(false)
   const [adjustTotalPrice, setAdjustTotalPrice] = useState<number | undefined>(undefined)
+  const [batchOptionsMap, setBatchOptionsMap] = useState<Record<number, StockBatch[]>>({})
+  const [currentTotal, setCurrentTotal] = useState(0)
+
+  const loadProductBatches = async (productId: number) => {
+    if (batchOptionsMap[productId]) {
+      return batchOptionsMap[productId]
+    }
+    const res = await stockApi.batches({ productId, availableOnly: '1', status: 1, pageSize: 50 })
+    const list = res.list ?? []
+    setBatchOptionsMap((prev) => ({ ...prev, [productId]: list }))
+    return list
+  }
+
+  const setRowBatch = (rowIndex: number, batch?: StockBatch) => {
+    form.setFieldValue(['items', rowIndex, 'batchId'], batch?.id)
+    form.setFieldValue(['items', rowIndex, 'warehouseId'], batch?.warehouseId)
+    form.setFieldValue(['items', rowIndex, 'locationId'], batch?.locationId ?? undefined)
+  }
 
   const getSaleItemQuantity = (item: {
     productId?: number
     quantity?: number
     packageQty?: number
     looseQty?: number
+    _unitMode?: UnitMode
     _product?: Product
   }) => {
     const product = item._product ?? (item.productId ? productMap.get(item.productId) : undefined)
     const packageConfig = getProductPackageConfig(product)
     if (packageConfig.unit && packageConfig.size > 0) {
+      if (item._unitMode === 'package') {
+        return Number(item.packageQty ?? 0) * packageConfig.size
+      }
+      if (item._unitMode === 'base') {
+        return Number(item.quantity ?? 0)
+      }
       return Number(item.packageQty ?? 0) * packageConfig.size + Number(item.looseQty ?? 0)
     }
     return Number(item.quantity ?? 0)
+  }
+
+  const getSaleItemBaseUnitPrice = (item: {
+    productId?: number
+    unitPrice?: number
+    _unitMode?: UnitMode
+    _product?: Product
+  }) => {
+    const product = item._product ?? (item.productId ? productMap.get(item.productId) : undefined)
+    const packageConfig = getProductPackageConfig(product)
+    const price = Number(item.unitPrice ?? 0)
+    if (packageConfig.unit && packageConfig.size > 0 && item._unitMode === 'package') {
+      return roundAmount(price / packageConfig.size)
+    }
+    return price
   }
 
   const calculateSaleItemsTotal = (items?: Array<{
@@ -93,19 +149,111 @@ export function SaleOrderFormModal({
     packageQty?: number
     looseQty?: number
     unitPrice?: number
+    _unitMode?: UnitMode
     _product?: Product
   }>) => {
     const total = (items ?? []).reduce(
-      (sum, item) => sum + getSaleItemQuantity(item) * Number(item.unitPrice ?? 0),
+      (sum, item) => sum + getSaleItemQuantity(item) * getSaleItemBaseUnitPrice(item),
       0,
     )
     return total > 0 ? Number(total.toFixed(2)) : undefined
   }
 
+  const syncComputedAmounts = (items?: Array<Record<string, unknown>>) => {
+    const nextTotal = calculateSaleItemsTotal(items as typeof saleItems) ?? 0
+    setCurrentTotal(nextTotal)
+
+    if (!open || editId || paidAmountTouched) return
+    const nextPaidAmount = nextTotal > 0 ? nextTotal : undefined
+    if (nextPaidAmount === autoPaidAmountRef.current) return
+
+    syncingPaidAmountRef.current = true
+    autoPaidAmountRef.current = nextPaidAmount
+    form.setFieldValue('paidAmount', nextPaidAmount)
+    queueMicrotask(() => {
+      syncingPaidAmountRef.current = false
+    })
+  }
+
+  const handleSaleUnitModeChange = (rowIndex: number, nextMode: UnitMode) => {
+    const items = ([...(form.getFieldValue('items') ?? [])]) as Array<Record<string, unknown>>
+    const currentItem = { ...(items[rowIndex] ?? {}) }
+    const product = (currentItem._product as Product | undefined) ?? productMap.get(Number(currentItem.productId))
+    const packageConfig = getProductPackageConfig(product)
+    if (!packageConfig.unit || packageConfig.size <= 0) return
+
+    const currentMode: UnitMode = nextMode === 'package' ? 'base' : 'package'
+
+    const currentPrice = Number(currentItem.unitPrice ?? 0)
+    const currentBaseQty = currentMode === 'package'
+      ? Number(currentItem.packageQty ?? 0) * packageConfig.size
+      : Number(currentItem.quantity ?? 0)
+
+    if (nextMode === 'package') {
+      items[rowIndex] = {
+        ...currentItem,
+        _unitMode: nextMode,
+        unitPrice: roundAmount(currentPrice * packageConfig.size),
+        packageQty: currentBaseQty > 0 ? Number((currentBaseQty / packageConfig.size).toFixed(4)) : undefined,
+        quantity: undefined,
+        looseQty: undefined,
+      }
+      form.setFieldsValue({ items })
+      syncComputedAmounts(items)
+      return
+    }
+
+    items[rowIndex] = {
+      ...currentItem,
+      _unitMode: nextMode,
+      unitPrice: roundAmount(currentPrice / packageConfig.size),
+      quantity: currentBaseQty > 0 ? Number(currentBaseQty.toFixed(4)) : undefined,
+      packageQty: undefined,
+      looseQty: undefined,
+    }
+    form.setFieldsValue({ items })
+    syncComputedAmounts(items)
+  }
+
+  const normalizeSaleItemForSubmit = (item: Record<string, unknown>) => {
+    const productId = Number(item.productId)
+    const product = (item._product as Product | undefined) ?? productMap.get(productId)
+    const packageConfig = getProductPackageConfig(product)
+    const unitMode = item._unitMode as UnitMode | undefined
+    const baseUnitPrice = getSaleItemBaseUnitPrice({
+      productId,
+      unitPrice: Number(item.unitPrice ?? 0),
+      _unitMode: unitMode,
+      _product: product,
+    })
+    const { _product, _unitMode, ...rest } = item
+    void _product
+    void _unitMode
+
+    if (packageConfig.unit && packageConfig.size > 0 && unitMode === 'package') {
+      return {
+        ...rest,
+        quantity: undefined,
+        packageQty: rest.packageQty,
+        looseQty: undefined,
+        unitPrice: baseUnitPrice,
+      }
+    }
+
+    return {
+      ...rest,
+      packageQty: undefined,
+      looseQty: undefined,
+      unitPrice: baseUnitPrice,
+    }
+  }
+
   useEffect(() => {
     if (!open || editId || paidAmountTouched) return
 
-    const nextPaidAmount = calculateSaleItemsTotal(saleItems)
+    const nextTotal = calculateSaleItemsTotal(saleItems) ?? 0
+    setCurrentTotal(nextTotal)
+    const nextPaidAmount = nextTotal > 0 ? nextTotal : undefined
     if (nextPaidAmount === autoPaidAmountRef.current) return
 
     syncingPaidAmountRef.current = true
@@ -122,6 +270,7 @@ export function SaleOrderFormModal({
     form.resetFields()
     const itemsWithProduct = (initialValues.items ?? []).map((item) => ({
       ...item,
+      _unitMode: 'base',
       _product: item.productId ? productMap.get(item.productId) : undefined,
     }))
     form.setFieldsValue({
@@ -147,13 +296,18 @@ export function SaleOrderFormModal({
       items:
         order.items?.map((item) => ({
           productId: item.productId,
+          batchId: item.batchId ?? undefined,
+          warehouseId: item.warehouseId ?? undefined,
+          locationId: item.locationId ?? undefined,
           quantity: item.quantity,
           packageQty: item.packageQty,
           looseQty: item.looseQty,
           unitPrice: item.unitPrice,
+          _unitMode: 'base',
           _product: productMap.get(item.productId),
         })) ?? [{}],
     })
+    await Promise.all((order.items ?? []).map((item) => loadProductBatches(item.productId)))
   }
 
   const handleClose = () => {
@@ -167,10 +321,7 @@ export function SaleOrderFormModal({
   const handleSaveDraft = async () => {
     const values = await form.validateFields(['customerId', 'items'])
     const remark = form.getFieldValue('remark')
-    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => {
-      const { _product, ...rest } = item
-      return rest
-    })
+    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => normalizeSaleItemForSubmit(item))
     const payload = { customerId: values.customerId, remark, items: cleanedItems }
     if (editId) {
       await saleOrderApi.update(editId, payload)
@@ -183,11 +334,8 @@ export function SaleOrderFormModal({
 
   const handleQuickComplete = async () => {
     const values = await form.validateFields()
-    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => {
-      const { _product, ...rest } = item
-      return rest
-    })
-    const total = calculateSaleItemsTotal(cleanedItems) ?? 0
+    const total = calculateSaleItemsTotal(values.items) ?? 0
+    const cleanedItems = (values.items ?? []).map((item: Record<string, unknown>) => normalizeSaleItemForSubmit(item))
     const paidAmount = values.paidAmount != null ? values.paidAmount : total
     await saleOrderApi.quickComplete({
       customerId: values.customerId,
@@ -207,11 +355,8 @@ export function SaleOrderFormModal({
 
     const originalTotal = items.reduce((sum: number, item: any) => {
       const product = form.getFieldValue(['items', items.indexOf(item), '_product'])
-      const pkgSize = product?.packageSize ?? 1
-      const qty = item.packageQty != null || item.looseQty != null
-        ? (item.packageQty ?? 0) * pkgSize + (item.looseQty ?? 0)
-        : (item.quantity ?? 0)
-      return sum + qty * (item.unitPrice ?? 0)
+      const row = { ...item, _product: product }
+      return sum + getSaleItemQuantity(row) * getSaleItemBaseUnitPrice(row)
     }, 0)
 
     if (originalTotal <= 0) return
@@ -219,27 +364,30 @@ export function SaleOrderFormModal({
     const ratio = adjustTotalPrice / originalTotal
     const adjustedItems = items.map((item: any, index: number) => {
       const product = form.getFieldValue(['items', index, '_product'])
-      const pkgSize = product?.packageSize ?? 1
-      const qty = item.packageQty != null || item.looseQty != null
-        ? (item.packageQty ?? 0) * pkgSize + (item.looseQty ?? 0)
-        : (item.quantity ?? 0)
-      let adjustedPrice = Math.round((item.unitPrice ?? 0) * ratio * 100) / 100
+      const packageConfig = getProductPackageConfig(product)
+      const row = { ...item, _product: product }
+      const qty = getSaleItemQuantity(row)
+      const basePrice = getSaleItemBaseUnitPrice(row)
+      let adjustedBasePrice = roundAmount(basePrice * ratio)
 
       if (index === items.length - 1) {
         const prevTotal = items.slice(0, index).reduce((sum: number, i: any) => {
           const p = form.getFieldValue(['items', items.indexOf(i), '_product'])
-          const ps = p?.packageSize ?? 1
-          const q = i.packageQty != null || i.looseQty != null
-            ? (i.packageQty ?? 0) * ps + (i.looseQty ?? 0)
-            : (i.quantity ?? 0)
-          const adjP = Math.round((i.unitPrice ?? 0) * ratio * 100) / 100
-          return sum + Math.round(q * adjP * 100) / 100
+          const iRow = { ...i, _product: p }
+          const q = getSaleItemQuantity(iRow)
+          const adjP = roundAmount(getSaleItemBaseUnitPrice(iRow) * ratio)
+          return sum + roundAmount(q * adjP)
         }, 0)
-        const lastTotal = Math.round((adjustTotalPrice - prevTotal) * 100) / 100
-        adjustedPrice = qty > 0 ? Math.round((lastTotal / qty) * 100) / 100 : 0
+        const lastTotal = roundAmount(adjustTotalPrice - prevTotal)
+        adjustedBasePrice = qty > 0 ? roundAmount(lastTotal / qty) : 0
       }
 
-      return { ...item, unitPrice: adjustedPrice }
+      return {
+        ...item,
+        unitPrice: packageConfig.unit && packageConfig.size > 0 && item._unitMode === 'package'
+          ? roundAmount(adjustedBasePrice * packageConfig.size)
+          : adjustedBasePrice,
+      }
     })
 
     form.setFieldValue('items', adjustedItems)
@@ -252,7 +400,7 @@ export function SaleOrderFormModal({
       title={editId ? '编辑销售订单' : '新建销售订单'}
       open={open}
       onCancel={handleClose}
-      width={620}
+      width={900}
       destroyOnHidden
       footer={
         editId ? undefined : (
@@ -280,7 +428,8 @@ export function SaleOrderFormModal({
           form={form}
           layout="vertical"
           style={{ marginTop: 16 }}
-          onValuesChange={(changedValues) => {
+          onValuesChange={(changedValues, values) => {
+            syncComputedAmounts(values.items)
             if (
               Object.prototype.hasOwnProperty.call(changedValues, 'paidAmount') &&
               !syncingPaidAmountRef.current
@@ -320,16 +469,71 @@ export function SaleOrderFormModal({
                                 ['items', fieldProps.name, 'unitPrice'],
                                 p.sellPrice,
                               )
+                              form.setFieldValue(['items', fieldProps.name, '_unitMode'], 'base')
+                              form.setFieldValue(['items', fieldProps.name, 'quantity'], undefined)
+                              form.setFieldValue(['items', fieldProps.name, 'packageQty'], undefined)
+                              form.setFieldValue(['items', fieldProps.name, 'looseQty'], undefined)
                               form.setFieldValue(['items', fieldProps.name, '_product'], p)
+                              setRowBatch(fieldProps.name, undefined)
+                              void loadProductBatches(p.id)
                             }
                           }}
                         />
+                      </Form.Item>
+                      {(() => {
+                        const row = saleItems?.[fieldProps.name]
+                        const productId = row?.productId
+                        const selectedProduct = row?._product ?? (productId ? productMap.get(Number(productId)) : undefined)
+                        const options = productId ? batchOptionsMap[productId] ?? [] : []
+                        return (
+                          <Form.Item
+                            {...fieldProps}
+                            name={[fieldProps.name, 'batchId']}
+                            label=""
+                            style={{ marginBottom: 0 }}
+                            rules={[
+                              {
+                                validator: (_, value) => {
+                                  if (getBatchAutoPickStrategy(selectedProduct) === 'manual_only' && !value) {
+                                    return Promise.reject(new Error('该商品必须手选批次'))
+                                  }
+                                  return Promise.resolve()
+                                },
+                              },
+                            ]}
+                          >
+                            <Select
+                              allowClear
+                              showSearch
+                              filterOption={filterBatchSelectOption}
+                              optionLabelProp="label"
+                              optionRender={renderBatchSelectOption}
+                              placeholder={getBatchAutoPickPlaceholder(selectedProduct)}
+                              style={{ width: 185 }}
+                              options={options.map((batch) => makeBatchSelectOption(batch))}
+                              onChange={(value) => {
+                                const batch = options.find((item) => item.id === value)
+                                setRowBatch(fieldProps.name, batch)
+                              }}
+                            />
+                          </Form.Item>
+                        )
+                      })()}
+                      <Form.Item {...fieldProps} name={[fieldProps.name, 'warehouseId']} hidden>
+                        <Input type="hidden" />
+                      </Form.Item>
+                      <Form.Item {...fieldProps} name={[fieldProps.name, 'locationId']} hidden>
+                        <Input type="hidden" />
                       </Form.Item>
                       <Form.Item
                         noStyle
                         shouldUpdate={(prev, cur) =>
                           prev?.items?.[fieldProps.name]?.productId !==
-                          cur?.items?.[fieldProps.name]?.productId
+                          cur?.items?.[fieldProps.name]?.productId ||
+                          prev?.items?.[fieldProps.name]?.batchId !==
+                          cur?.items?.[fieldProps.name]?.batchId ||
+                          prev?.items?.[fieldProps.name]?._unitMode !==
+                          cur?.items?.[fieldProps.name]?._unitMode
                         }
                       >
                         {({ getFieldValue }) => {
@@ -338,39 +542,67 @@ export function SaleOrderFormModal({
                             fieldProps.name,
                             '_product',
                           ])
-                          const stockQty = Number(selectedProduct?.stockQty ?? 0)
+                          const stockQty = Number(selectedProduct?.availableStockQty ?? selectedProduct?.stockQty ?? 0)
+                          const selectedBatchId = getFieldValue(['items', fieldProps.name, 'batchId'])
+                          const selectedBatch = selectedProduct?.id
+                            ? batchOptionsMap[selectedProduct.id]?.find((batch) => batch.id === selectedBatchId)
+                            : undefined
+                          const availableQty = Number(selectedBatch?.quantity ?? stockQty)
                           const packageConfig = getProductPackageConfig(selectedProduct)
+                          const unitMode = (getFieldValue(['items', fieldProps.name, '_unitMode']) ?? 'base') as UnitMode
+                          const availableText = formatQuantityByUnitMode(availableQty, packageConfig, unitMode)
                           return (
                             <>
                               {packageConfig.unit && packageConfig.size > 0 ? (
-                                <>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: 0, width: 174 }}>
                                   <Form.Item
                                     {...fieldProps}
-                                    name={[fieldProps.name, 'packageQty']}
+                                    name={[fieldProps.name, '_unitMode']}
+                                    style={{ marginBottom: 0 }}
+                                  >
+                                    <Radio.Group
+                                      size="small"
+                                      value={unitMode}
+                                      onChange={(event) => handleSaleUnitModeChange(fieldProps.name, event.target.value)}
+                                    >
+                                      <Radio.Button value="base">{packageConfig.baseUnit || '散'}</Radio.Button>
+                                      <Radio.Button value="package">{packageConfig.unit}</Radio.Button>
+                                    </Radio.Group>
+                                  </Form.Item>
+                                  <Form.Item
+                                    key={`${key}-${unitMode}`}
+                                    {...fieldProps}
+                                    name={[fieldProps.name, unitMode === 'package' ? 'packageQty' : 'quantity']}
+                                    rules={[
+                                      { required: true, message: '数量必填' },
+                                      {
+                                        validator: (_, value) => {
+                                          const num = Number(value)
+                                          if (!Number.isFinite(num) || num <= 0) {
+                                            return Promise.reject(new Error('数量需大于 0'))
+                                          }
+                                          const baseQty = unitMode === 'package' ? num * packageConfig.size : num
+                                          if (selectedProduct?.id && baseQty > availableQty) {
+                                            return Promise.reject(
+                                              new Error(`数量不能超过所选批次库存（${availableText}）`),
+                                            )
+                                          }
+                                          return Promise.resolve()
+                                        },
+                                      },
+                                    ]}
                                     style={{ marginBottom: 0 }}
                                   >
                                     <InputNumber
-                                      placeholder={packageConfig.unit}
+                                      placeholder={unitMode === 'package' ? packageConfig.unit : packageConfig.baseUnit || '数量'}
                                       min={0}
+                                      max={unitMode === 'package' ? availableQty / packageConfig.size : availableQty}
                                       step={QUANTITY_STEP}
                                       precision={QUANTITY_PRECISION}
                                       style={{ width: 82 }}
                                     />
                                   </Form.Item>
-                                  <Form.Item
-                                    {...fieldProps}
-                                    name={[fieldProps.name, 'looseQty']}
-                                    style={{ marginBottom: 0 }}
-                                  >
-                                    <InputNumber
-                                      placeholder={packageConfig.baseUnit || '散'}
-                                      min={0}
-                                      step={QUANTITY_STEP}
-                                      precision={QUANTITY_PRECISION}
-                                      style={{ width: 82 }}
-                                    />
-                                  </Form.Item>
-                                </>
+                                </div>
                               ) : (
                                 <Form.Item
                                   {...fieldProps}
@@ -383,9 +615,9 @@ export function SaleOrderFormModal({
                                         if (!Number.isFinite(num) || num <= 0) {
                                           return Promise.reject(new Error('数量需大于 0'))
                                         }
-                                        if (selectedProduct?.id && num > stockQty) {
+                                        if (selectedProduct?.id && num > availableQty) {
                                           return Promise.reject(
-                                            new Error(`数量不能超过库存（${stockQty}）`),
+                                            new Error(`数量不能超过所选批次库存（${availableText}）`),
                                           )
                                         }
                                         return Promise.resolve()
@@ -397,7 +629,7 @@ export function SaleOrderFormModal({
                                   <InputNumber
                                     placeholder="数量"
                                     min={QUANTITY_STEP}
-                                    max={stockQty}
+                                    max={availableQty}
                                     step={QUANTITY_STEP}
                                     precision={QUANTITY_PRECISION}
                                     style={{ width: 90 }}
@@ -407,29 +639,48 @@ export function SaleOrderFormModal({
                               <Text
                                 type="secondary"
                                 style={{
-                                  width: 90,
+                                  width: 80,
                                   lineHeight: '32px',
                                   textAlign: 'center',
                                 }}
                               >
-                                库存 {stockQty}
+                                库存 {availableText}
                               </Text>
                             </>
                           )
                         }}
                       </Form.Item>
                       <Form.Item
-                        {...fieldProps}
-                        name={[fieldProps.name, 'unitPrice']}
-                        rules={[{ required: true, message: '售价必填' }]}
-                        style={{ marginBottom: 0 }}
+                        noStyle
+                        shouldUpdate={(prev, cur) =>
+                          prev?.items?.[fieldProps.name]?._product !== cur?.items?.[fieldProps.name]?._product ||
+                          prev?.items?.[fieldProps.name]?._unitMode !== cur?.items?.[fieldProps.name]?._unitMode
+                        }
                       >
-                        <InputNumber
-                          placeholder="实际售价"
-                          prefix="¥"
-                          min={0}
-                          style={{ width: 120 }}
-                        />
+                        {({ getFieldValue }) => {
+                          const selectedProduct = getFieldValue(['items', fieldProps.name, '_product'])
+                          const packageConfig = getProductPackageConfig(selectedProduct)
+                          const unitMode = (getFieldValue(['items', fieldProps.name, '_unitMode']) ?? 'base') as UnitMode
+                          const priceUnit = packageConfig.unit && packageConfig.size > 0 && unitMode === 'package'
+                            ? packageConfig.unit
+                            : packageConfig.baseUnit || selectedProduct?.unit || '单位'
+                          return (
+                            <Form.Item
+                              {...fieldProps}
+                              name={[fieldProps.name, 'unitPrice']}
+                              rules={[{ required: true, message: '售价必填' }]}
+                              style={{ marginBottom: 0 }}
+                            >
+                              <InputNumber
+                                placeholder={`售价/${priceUnit}`}
+                                prefix="¥"
+                                addonAfter={`/${priceUnit}`}
+                                min={0}
+                                style={{ width: 130 }}
+                              />
+                            </Form.Item>
+                          )
+                        }}
                       </Form.Item>
                       {fields.length > 1 && (
                         <Button danger type="link" onClick={() => remove(fieldProps.name)}>
@@ -451,66 +702,50 @@ export function SaleOrderFormModal({
               )}
             </Form.List>
           </div>
-          <Form.Item noStyle shouldUpdate={(prev, cur) => prev?.items !== cur?.items}>
-            {({ getFieldValue }) => {
-              const items = getFieldValue('items') || []
-              const currentTotal = items.reduce((sum: number, item: any) => {
-                const product = getFieldValue(['items', items.indexOf(item), '_product'])
-                const pkgSize = product?.packageSize ?? 1
-                const qty =
-                  item.packageQty != null || item.looseQty != null
-                    ? (item.packageQty ?? 0) * pkgSize + (item.looseQty ?? 0)
-                    : (item.quantity ?? 0)
-                return sum + qty * (item.unitPrice ?? 0)
-              }, 0)
-              return (
-                <div
-                  style={{
-                    background: '#f0f5ff',
-                    border: '1px solid #adc6ff',
-                    borderRadius: 10,
-                    padding: 12,
-                    marginBottom: 16,
-                  }}
-                >
-                  <Space align="center">
-                    <Text type="secondary">当前总价：</Text>
-                    <Text strong style={{ fontSize: 16 }}>
-                      ¥{currentTotal.toFixed(2)}
-                    </Text>
-                    <Divider type="vertical" />
-                    <Text type="secondary">调整总价：</Text>
-                    <InputNumber
-                      prefix="¥"
-                      min={0}
-                      precision={2}
-                      style={{ width: 140 }}
-                      placeholder="输入总价"
-                      value={adjustTotalPrice}
-                      onChange={(v) => setAdjustTotalPrice(v ?? undefined)}
-                    />
-                    <Button
-                      type="primary"
-                      size="small"
-                      disabled={
-                        adjustTotalPrice == null ||
-                        items.length === 0 ||
-                        adjustTotalPrice === currentTotal
-                      }
-                      onClick={handleAdjustPrices}
-                    >
-                      按总价调整单价
-                    </Button>
-                    {adjustTotalPrice != null && adjustTotalPrice !== currentTotal && (
-                      <Text type="warning" style={{ fontSize: 12 }}>
-                        差额：¥{(adjustTotalPrice - currentTotal).toFixed(2)}
-                      </Text>
-                    )}
-                  </Space>
-                </div>
-              )
+          <div
+            style={{
+              background: '#f0f5ff',
+              border: '1px solid #adc6ff',
+              borderRadius: 10,
+              padding: 12,
+              marginBottom: 16,
             }}
-          </Form.Item>
+          >
+            <Space align="center" wrap>
+              <Text type="secondary">当前总价：</Text>
+              <Text strong style={{ fontSize: 16 }}>
+                ¥{currentTotal.toFixed(2)}
+              </Text>
+              <Divider type="vertical" />
+              <Text type="secondary">调整总价：</Text>
+              <InputNumber
+                prefix="¥"
+                min={0}
+                precision={2}
+                style={{ width: 140 }}
+                placeholder="输入总价"
+                value={adjustTotalPrice}
+                onChange={(v) => setAdjustTotalPrice(v ?? undefined)}
+              />
+              <Button
+                type="primary"
+                size="small"
+                disabled={
+                  adjustTotalPrice == null ||
+                  (saleItems?.length ?? 0) === 0 ||
+                  adjustTotalPrice === currentTotal
+                }
+                onClick={handleAdjustPrices}
+              >
+                按总价调整单价
+              </Button>
+              {adjustTotalPrice != null && adjustTotalPrice !== currentTotal && (
+                <Text type="warning" style={{ fontSize: 12 }}>
+                  差额：¥{(adjustTotalPrice - currentTotal).toFixed(2)}
+                </Text>
+              )}
+            </Space>
+          </div>
           <Form.Item name="remark" label="备注">
             <Input.TextArea rows={2} placeholder="备注信息" />
           </Form.Item>

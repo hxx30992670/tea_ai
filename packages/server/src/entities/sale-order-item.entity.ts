@@ -11,6 +11,15 @@ export class SaleOrderItemEntity {
   @Column({ name: 'product_id', type: 'integer' })
   productId!: number;
 
+  @Column({ name: 'batch_id', type: 'integer', nullable: true })
+  batchId!: number | null;
+
+  @Column({ name: 'warehouse_id', type: 'integer', nullable: true })
+  warehouseId!: number | null;
+
+  @Column({ name: 'location_id', type: 'integer', nullable: true })
+  locationId!: number | null;
+
   @Column({ type: 'real' })
   quantity!: number;
 

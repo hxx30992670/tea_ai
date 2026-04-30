@@ -8,12 +8,20 @@ import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetBody } f
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { stockApi } from '@/api/stock'
 import { useOrderDraftStore } from '@/store/order-draft'
 import { calcTotalQuantity, formatMoney, formatNumber, parseDecimal, roundQuantity } from '@/lib/utils'
+import { getBatchAutoPickPlaceholder, getBatchAutoPickStrategy } from '@/utils/batch-strategy'
 import { useVisualViewportInset } from '@/hooks/useVisualViewportInset'
 import { useProductList } from '../hooks/useProductList'
-import type { Product } from '@/types'
+import type { Product, StockBatch } from '@/types'
 import type { DraftItem } from '@/store/order-draft'
+
+type UnitMode = 'base' | 'package'
+
+function roundAmount(value: number) {
+  return Math.round(value * 100) / 100
+}
 
 interface ProductSearchSheetProps {
   open: boolean
@@ -31,6 +39,7 @@ function buildEditingProductSnapshot(editingItem: DraftItem): Product {
     unit: editingItem.unit,
     packageUnit: editingItem.packageUnit,
     packageSize: editingItem.packageSize,
+    batchAutoPickStrategy: editingItem.batchAutoPickStrategy,
     costPrice: 0,
     sellPrice: editingItem.sellPrice ?? editingItem.unitPrice,
     stockQty: editingItem.quantity ?? 0,
@@ -71,6 +80,10 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
   const [packageQty, setPackageQty] = useState('0')
   const [looseQty, setLooseQty] = useState('1')
   const [price, setPrice] = useState('')
+  const [unitMode, setUnitMode] = useState<UnitMode>('base')
+  const [batches, setBatches] = useState<StockBatch[]>([])
+  const [batchId, setBatchId] = useState<number | ''>('')
+  const [errorMessage, setErrorMessage] = useState('')
   const keyboardInset = useVisualViewportInset(open)
 
   const { products, loading, loadingMore, hasMore, loadMore } = useProductList(query, open)
@@ -80,6 +93,13 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
   const sentinelRef = useRef<HTMLDivElement>(null)
 
   const hasPackage = selected?.packageUnit && selected?.packageSize
+  const selectedBatch = batches.find((item) => item.id === batchId)
+  const availableQty = selectedBatch ? Number(selectedBatch.quantity ?? 0) : Number(selected?.availableStockQty ?? selected?.stockQty ?? 0)
+  const availableText = selected
+    ? hasPackage && unitMode === 'package'
+      ? `${formatNumber(availableQty / Number(selected.packageSize ?? 1))}${selected.packageUnit}`
+      : `${formatNumber(availableQty)}${selected.unit || ''}`
+    : ''
 
   const getCategoryPathText = (product: Product) => {
     if (Array.isArray(product.categoryPath) && product.categoryPath.length > 0) {
@@ -96,6 +116,10 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
       setPackageQty('0')
       setLooseQty('1')
       setPrice('')
+      setUnitMode('base')
+      setBatches([])
+      setBatchId('')
+      setErrorMessage('')
     }
   }, [open])
 
@@ -106,11 +130,47 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
 
     const currentProduct = buildEditingProductSnapshot(editingItem)
     const packageValues = getEditingPackageValues(editingItem)
+    const usePackageMode = Boolean(
+      currentProduct.packageUnit &&
+      currentProduct.packageSize &&
+      packageValues.packageQty > 0 &&
+      packageValues.looseQty === 0,
+    )
     setSelected(currentProduct)
-    setPrice(String(editingItem.unitPrice))
+    setPrice(String(usePackageMode ? roundAmount(editingItem.unitPrice * (currentProduct.packageSize ?? 1)) : editingItem.unitPrice))
+    setUnitMode(usePackageMode ? 'package' : 'base')
     setPackageQty(String(packageValues.packageQty))
-    setLooseQty(String(currentProduct.packageUnit ? packageValues.looseQty : (editingItem.looseQty ?? editingItem.quantity ?? 1)))
+    setLooseQty(String(usePackageMode ? 0 : (currentProduct.packageUnit ? (editingItem.quantity ?? packageValues.looseQty) : (editingItem.looseQty ?? editingItem.quantity ?? 1))))
+    setBatchId(editingItem.batchId ?? '')
   }, [open, editingItem])
+
+  useEffect(() => {
+    if (!open || !selected?.id) {
+      setBatches([])
+      setBatchId('')
+      return
+    }
+
+    let alive = true
+    void stockApi.batches({ productId: selected.id, availableOnly: '1', status: 1, pageSize: 50 }).then((res) => {
+      if (!alive) return
+      const list = res.list ?? []
+      setBatches(list)
+      if (editingItem?.productId === selected.id && editingItem.batchId && list.some((item) => item.id === editingItem.batchId)) {
+        setBatchId(editingItem.batchId)
+      } else {
+        setBatchId('')
+      }
+    }).catch(() => {
+      if (!alive) return
+      setBatches([])
+      setBatchId('')
+    })
+
+    return () => {
+      alive = false
+    }
+  }, [open, selected?.id, editingItem?.productId, editingItem?.batchId])
 
   // Intersection observer: load more when sentinel comes into view inside the scroll container
   useEffect(() => {
@@ -134,40 +194,87 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
       : 1
 
     setSelected(p)
-    setPrice(String(editingItem?.unitPrice ?? p.sellPrice))
+    setErrorMessage('')
     if (editingItem && p.id === editingItem.productId) {
       const packageValues = getEditingPackageValues(editingItem)
+      const usePackageMode = Boolean(
+        p.packageUnit &&
+        p.packageSize &&
+        packageValues.packageQty > 0 &&
+        packageValues.looseQty === 0,
+      )
+      setPrice(String(usePackageMode ? roundAmount(editingItem.unitPrice * (p.packageSize ?? 1)) : editingItem.unitPrice))
+      setUnitMode(usePackageMode ? 'package' : 'base')
       setPackageQty(String(packageValues.packageQty))
-      setLooseQty(String(p.packageUnit ? packageValues.looseQty : (editingItem.looseQty ?? editingItem.quantity ?? 1)))
+      setLooseQty(String(usePackageMode ? 0 : (p.packageUnit ? (editingItem.quantity ?? packageValues.looseQty) : (editingItem.looseQty ?? editingItem.quantity ?? 1))))
       return
     }
+    setPrice(String(p.sellPrice))
+    setUnitMode('base')
     setPackageQty('0')
     setLooseQty(p.packageUnit ? '0' : String(Math.max(1, editTotalQty)))
+    setBatchId('')
+  }
+
+  const switchUnitMode = (nextMode: UnitMode) => {
+    if (!selected?.packageUnit || !selected.packageSize || nextMode === unitMode) return
+    const currentPrice = parseDecimal(price, selected.sellPrice)
+    const currentBaseQty = unitMode === 'package'
+      ? parseDecimal(packageQty) * selected.packageSize
+      : parseDecimal(looseQty)
+
+    if (nextMode === 'package') {
+      setPackageQty(currentBaseQty > 0 ? String(roundQuantity(currentBaseQty / selected.packageSize)) : '0')
+      setLooseQty('0')
+      setPrice(String(roundAmount(currentPrice * selected.packageSize)))
+    } else {
+      setLooseQty(currentBaseQty > 0 ? String(roundQuantity(currentBaseQty)) : '0')
+      setPackageQty('0')
+      setPrice(String(roundAmount(currentPrice / selected.packageSize)))
+    }
+    setUnitMode(nextMode)
   }
 
   const handleAdd = () => {
     if (!selected) return
+    if (getBatchAutoPickStrategy(selected) === 'manual_only' && !selectedBatch) {
+      setErrorMessage('该商品必须先选择出库批次')
+      return
+    }
     const pkg = roundQuantity(parseDecimal(packageQty))
     const loose = roundQuantity(parseDecimal(looseQty))
     const totalQty = hasPackage
-      ? calcTotalQuantity(pkg, loose, selected.packageSize)
+      ? unitMode === 'package'
+        ? roundQuantity(pkg * (selected.packageSize ?? 1))
+        : loose
       : loose
+    const displayPrice = parseFloat(price) || selected.sellPrice
+    const baseUnitPrice = hasPackage && unitMode === 'package'
+      ? roundAmount(displayPrice / (selected.packageSize ?? 1))
+      : displayPrice
 
     if (editingItem) {
-      removeItem(editingItem.productId)
+      removeItem(editingItem.productId, editingItem.batchId ?? null)
     }
 
     const nextItem: DraftItem = {
       productId: selected.id,
       productName: selected.name,
       spec: selected.spec,
+      batchId: selectedBatch?.id,
+      batchNo: selectedBatch?.batchNo,
+      batchAutoPickStrategy: selected.batchAutoPickStrategy,
+      warehouseId: selectedBatch?.warehouseId,
+      warehouseName: selectedBatch?.warehouseName,
+      locationId: selectedBatch?.locationId ?? undefined,
+      locationName: selectedBatch?.locationName ?? undefined,
       unit: selected.unit,
       packageUnit: selected.packageUnit,
       packageSize: selected.packageSize,
-      packageQty: hasPackage ? pkg : undefined,
-      looseQty: hasPackage ? loose : loose,
+      packageQty: hasPackage && unitMode === 'package' ? pkg : hasPackage ? 0 : undefined,
+      looseQty: hasPackage && unitMode === 'package' ? 0 : loose,
       quantity: totalQty,
-      unitPrice: parseFloat(price) || selected.sellPrice,
+      unitPrice: baseUnitPrice,
       sellPrice: selected.sellPrice,
     }
 
@@ -181,9 +288,14 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
     onClose()
   }
 
-  const currentUnitPrice = parseFloat(price) || (selected?.sellPrice ?? 0)
+  const currentDisplayPrice = parseFloat(price) || (selected?.sellPrice ?? 0)
+  const currentUnitPrice = hasPackage && unitMode === 'package'
+    ? roundAmount(currentDisplayPrice / (selected?.packageSize ?? 1))
+    : currentDisplayPrice
   const currentTotalQty = hasPackage
-    ? calcTotalQuantity(parseDecimal(packageQty), parseDecimal(looseQty), selected?.packageSize)
+    ? unitMode === 'package'
+      ? roundQuantity(parseDecimal(packageQty) * (selected?.packageSize ?? 1))
+      : roundQuantity(parseDecimal(looseQty))
     : roundQuantity(parseDecimal(looseQty, 1))
   const subtotal = currentTotalQty * currentUnitPrice
 
@@ -219,7 +331,7 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
               <div className="relative z-10 shrink-0 bg-card pt-0.5">
                 <Search size={16} className="pointer-events-none absolute left-3 top-1/2 z-[1] -translate-y-1/2 text-muted-foreground" />
                 <Input
-                  placeholder="搜索商品名称 / SKU"
+                  placeholder="搜索商品名称 / SKU / 批次"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                   className="scroll-mt-14 pl-9 ring-inset"
@@ -255,7 +367,8 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
                             <p className="text-[11px] text-muted-foreground mt-0.5 truncate">分类：{getCategoryPathText(p)}</p>
                           )}
                           <p className="text-xs text-muted-foreground mt-0.5">
-                            {p.spec} · 库存 {p.stockQty}{p.unit}
+                            {p.spec ? `${p.spec} · ` : ''}
+                            库存 {p.availableStockQty ?? p.stockQty}{p.unit}
                             {p.packageUnit && ` · ${p.packageSize}${p.unit}/${p.packageUnit}`}
                           </p>
                         </div>
@@ -292,16 +405,54 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
                 )}
               </div>
 
+              <div>
+                <label className="mb-1.5 block text-xs text-muted-foreground">出库批次</label>
+                <select
+                  value={batchId}
+                  onChange={(event) => {
+                    setBatchId(Number(event.target.value) || '')
+                    setErrorMessage('')
+                  }}
+                  className="h-10 w-full rounded-lg border border-border bg-card px-3 text-sm"
+                >
+                  <option value="">{getBatchAutoPickPlaceholder(selected)}</option>
+                  {batches.map((batch) => (
+                    <option key={batch.id} value={batch.id}>
+                      {batch.batchNo}｜{batch.warehouseName}/{batch.locationName ?? '-'}｜{formatNumber(batch.quantity)}{batch.unit ?? ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               {/* 数量输入 */}
               {hasPackage ? (
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="mb-1.5 block text-xs text-muted-foreground">{selected.packageUnit}数</label>
-                    <NumberInput value={packageQty} onChange={setPackageQty} min={0} />
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-2 rounded-lg bg-secondary/40 p-1">
+                    <button
+                      type="button"
+                      onClick={() => switchUnitMode('base')}
+                      className={`rounded-md px-3 py-2 text-sm ${unitMode === 'base' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                    >
+                      按{selected.unit || '普通单位'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => switchUnitMode('package')}
+                      className={`rounded-md px-3 py-2 text-sm ${unitMode === 'package' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground'}`}
+                    >
+                      按{selected.packageUnit}
+                    </button>
                   </div>
                   <div>
-                    <label className="mb-1.5 block text-xs text-muted-foreground">{selected.unit ? `基本单位(${selected.unit})` : '散装'}</label>
-                    <NumberInput value={looseQty} onChange={setLooseQty} min={0} />
+                    <label className="mb-1.5 block text-xs text-muted-foreground">
+                      数量（{unitMode === 'package' ? selected.packageUnit : selected.unit || '普通单位'}）
+                    </label>
+                    <NumberInput
+                      value={unitMode === 'package' ? packageQty : looseQty}
+                      onChange={unitMode === 'package' ? setPackageQty : setLooseQty}
+                      min={0}
+                    />
+                    <p className="mt-1.5 text-xs text-muted-foreground">库存 {availableText}</p>
                   </div>
                 </div>
               ) : (
@@ -310,19 +461,22 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
                     数量{selected.unit ? `(${selected.unit})` : ''}
                   </label>
                   <NumberInput value={looseQty} onChange={setLooseQty} min={1} />
+                  <p className="mt-1.5 text-xs text-muted-foreground">库存 {availableText}</p>
                 </div>
               )}
 
               {/* 单价 */}
               <div>
-                <label className="mb-1.5 block text-xs text-muted-foreground">单价（元/{selected.unit || '单位'}）</label>
+                <label className="mb-1.5 block text-xs text-muted-foreground">
+                  单价（元/{hasPackage && unitMode === 'package' ? selected.packageUnit : selected.unit || '单位'}）
+                </label>
                 <Input
                   type="number"
                   inputMode="decimal"
                   pattern="[0-9.]*"
                   value={price}
                   onChange={(e) => setPrice(e.target.value)}
-                  placeholder={String(selected.sellPrice)}
+                  placeholder={String(hasPackage && unitMode === 'package' ? roundAmount(selected.sellPrice * (selected.packageSize ?? 1)) : selected.sellPrice)}
                   className="scroll-mt-14 ring-inset"
                 />
               </div>
@@ -334,10 +488,14 @@ export function ProductSearchSheet({ open, onClose, editingItem, onAdded }: Prod
                 </span>
                 {hasPackage && (
                   <span className="ml-2 text-xs text-muted-foreground">
-                    (共 {currentTotalQty}{selected.unit})
+                    (折合 {currentTotalQty}{selected.unit}，按{selected.unit} ¥{formatMoney(currentUnitPrice)})
                   </span>
                 )}
               </div>
+
+              {errorMessage && (
+                <p className="text-sm text-red-500">{errorMessage}</p>
+              )}
 
               <Button variant="gold" size="lg" className="w-full" onClick={handleAdd}>
                 <Plus size={18} />

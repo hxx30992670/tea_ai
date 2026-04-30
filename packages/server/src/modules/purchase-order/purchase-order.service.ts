@@ -5,9 +5,11 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull } from 'typeorm';
+import { applyBatchAutoPickOrder } from '../../common/utils/batch-auto-pick.util';
 import { PURCHASE_ORDER_STATUS, PAYMENT_RECORD_TYPE } from '../../common/constants/order-status';
 import { getProductPackageConfig, resolveCompositeQuantity } from '../../common/utils/packaging.util';
 import { addAmount, addQuantity, compareAmount, compareQuantity, multiplyAmount, roundAmount, roundQuantity, subtractAmount, subtractQuantity } from '../../common/utils/precision.util';
+import { ensureLegacyStockBatchConsistency, resolveInboundStockBatch, syncProductAvailableStockQty } from '../../common/utils/stock-batch.util';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { PaymentRecordEntity } from '../../entities/payment-record.entity';
 import { ProductEntity } from '../../entities/product.entity';
@@ -16,6 +18,9 @@ import { PurchaseOrderItemEntity } from '../../entities/purchase-order-item.enti
 import { PurchaseReturnItemEntity } from '../../entities/purchase-return-item.entity';
 import { PurchaseReturnEntity } from '../../entities/purchase-return.entity';
 import { StockRecordEntity } from '../../entities/stock-record.entity';
+import { StockBatchEntity } from '../../entities/stock-batch.entity';
+import { WarehouseEntity } from '../../entities/warehouse.entity';
+import { StockLocationEntity } from '../../entities/stock-location.entity';
 import { SupplierEntity } from '../../entities/supplier.entity';
 import { OperationLogService } from '../system/operation-log.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
@@ -74,6 +79,43 @@ export class PurchaseOrderService {
     return resolved;
   }
 
+  private async deductProductBatches(
+    manager: EntityManager,
+    product: ProductEntity,
+    item: { quantity: number; batchId?: number | null; warehouseId?: number | null; locationId?: number | null },
+  ) {
+    await ensureLegacyStockBatchConsistency(manager, product);
+    const batchRepository = manager.getRepository(StockBatchEntity);
+    const batchQb = batchRepository
+      .createQueryBuilder('batch')
+      .where('batch.product_id = :productId', { productId: product.id })
+      .andWhere('batch.status = 1')
+      .andWhere('batch.quantity > 0');
+
+    if (item.batchId) batchQb.andWhere('batch.id = :batchId', { batchId: item.batchId });
+    if (item.warehouseId) batchQb.andWhere('batch.warehouse_id = :warehouseId', { warehouseId: item.warehouseId });
+    if (item.locationId) batchQb.andWhere('batch.location_id = :locationId', { locationId: item.locationId });
+
+    const batches = await applyBatchAutoPickOrder(batchQb, 'batch', product).getMany();
+    let remaining = item.quantity;
+    const deductions: Array<{ batch: StockBatchEntity; quantity: number }> = [];
+    for (const batch of batches) {
+      if (compareQuantity(remaining, 0) <= 0) break;
+      const deductQty = Math.min(roundQuantity(batch.quantity), remaining);
+      if (compareQuantity(deductQty, 0) <= 0) continue;
+      batch.quantity = subtractQuantity(batch.quantity, deductQty);
+      await batchRepository.save(batch);
+      deductions.push({ batch, quantity: deductQty });
+      remaining = subtractQuantity(remaining, deductQty);
+    }
+
+    if (compareQuantity(remaining, 0) > 0) {
+      throw new BadRequestException(item.batchId ? '所选批次库存不足，无法退货' : `商品 ${product.name} 批次库存不足，无法退货`);
+    }
+
+    return deductions;
+  }
+
   private async getReturnedQuantityMap(orderId: number, manager: EntityManager) {
     const rows = await manager
       .createQueryBuilder(PurchaseReturnItemEntity, 'purchaseReturnItem')
@@ -91,10 +133,19 @@ export class PurchaseOrderService {
     const items = await manager
       .createQueryBuilder(PurchaseOrderItemEntity, 'item')
       .leftJoin(ProductEntity, 'product', 'product.id = item.product_id')
+      .leftJoin(StockBatchEntity, 'batch', 'batch.id = item.batch_id')
+      .leftJoin(WarehouseEntity, 'warehouse', 'warehouse.id = item.warehouse_id')
+      .leftJoin(StockLocationEntity, 'location', 'location.id = item.location_id')
       .select([
         'item.id AS id',
         'item.order_id AS orderId',
         'item.product_id AS productId',
+        'item.batch_id AS batchId',
+        'COALESCE(item.batch_no, batch.batch_no) AS batchNo',
+        'item.warehouse_id AS warehouseId',
+        'warehouse.name AS warehouseName',
+        'item.location_id AS locationId',
+        'location.name AS locationName',
         'product.name AS productName',
         'item.quantity AS quantity',
         'item.package_qty AS packageQty',
@@ -274,6 +325,10 @@ export class PurchaseOrderService {
         return manager.create(PurchaseOrderItemEntity, {
           orderId: purchaseOrder.id,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          batchNo: item.batchNo?.trim() || null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -323,15 +378,35 @@ export class PurchaseOrderService {
           throw new BadRequestException(`商品 ${item.productId} 不存在、已删除或已停售`);
         }
 
+        let batch = await resolveInboundStockBatch(manager, product, {
+          batchId: item.batchId,
+          batchNo: item.batchNo,
+          warehouseId: item.warehouseId,
+          locationId: item.locationId,
+          costPrice: item.unitPrice,
+          remark: dto.remark ?? purchaseOrder.remark ?? null,
+        });
+        batch.quantity = addQuantity(batch.quantity ?? 0, item.quantity);
+        batch = await manager.save(StockBatchEntity, batch);
+
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = addQuantity(beforeQty, item.quantity);
+        product.availableStockQty = addQuantity(roundQuantity(product.availableStockQty), item.quantity);
         await manager.save(ProductEntity, product);
-
         const record = manager.create(StockRecordEntity, {
           productId: product.id,
+          batchId: batch.id,
+          batchNo: batch.batchNo,
+          warehouseId: batch.warehouseId,
+          locationId: batch.locationId,
           type: 'in',
           reason: 'purchase',
           quantity: item.quantity,
+          packageQty: item.packageQty,
+          looseQty: item.looseQty,
+          packageUnit: item.packageUnit,
+          packageSize: item.packageSize,
+          unit: product.unit ?? null,
           beforeQty,
           afterQty: product.stockQty,
           relatedOrderId: purchaseOrder.id,
@@ -412,6 +487,10 @@ export class PurchaseOrderService {
         return manager.create(PurchaseOrderItemEntity, {
           orderId: id,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          batchNo: item.batchNo?.trim() || null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -517,9 +596,17 @@ export class PurchaseOrderService {
         if (!product) {
           throw new BadRequestException('退货商品不存在或已删除，无法回退库存');
         }
-        if (compareQuantity(product.stockQty, quantity) < 0) {
-          throw new BadRequestException(`商品 ${product.name} 当前库存不足，无法退回供应商`);
+        await syncProductAvailableStockQty(manager, product);
+        if (compareQuantity(product.availableStockQty, quantity) < 0) {
+          throw new BadRequestException(`商品 ${product.name} 当前可售库存不足，无法退回供应商`);
         }
+
+        const deductions = await this.deductProductBatches(manager, product, {
+          quantity,
+          batchId: orderItem.batchId,
+          warehouseId: orderItem.warehouseId,
+          locationId: orderItem.locationId,
+        });
 
         const returnItem = manager.create(PurchaseReturnItemEntity, {
           returnId: purchaseReturn.id,
@@ -537,20 +624,36 @@ export class PurchaseOrderService {
 
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = subtractQuantity(beforeQty, quantity);
+        product.availableStockQty = subtractQuantity(roundQuantity(product.availableStockQty), quantity);
         await manager.save(ProductEntity, product);
 
-        const stockRecord = manager.create(StockRecordEntity, {
-          productId: product.id,
-          type: 'out',
-          reason: 'purchase_return',
-          quantity,
-          beforeQty,
-          afterQty: product.stockQty,
-          relatedOrderId: order.id,
-          operatorId: user.sub,
-          remark: dto.remark ?? `采购退货 ${purchaseReturn.returnNo ?? purchaseReturn.id}`,
-        });
-        await manager.save(StockRecordEntity, stockRecord);
+        let runningBeforeQty = beforeQty;
+        const stockRecords: StockRecordEntity[] = [];
+        for (const deduction of deductions) {
+          const runningAfterQty = subtractQuantity(runningBeforeQty, deduction.quantity);
+          stockRecords.push(manager.create(StockRecordEntity, {
+            productId: product.id,
+            batchId: deduction.batch.id,
+            batchNo: deduction.batch.batchNo,
+            warehouseId: deduction.batch.warehouseId,
+            locationId: deduction.batch.locationId,
+            type: 'out',
+            reason: 'purchase_return',
+            quantity: deduction.quantity,
+            packageQty: deductions.length === 1 ? returnItem.packageQty : null,
+            looseQty: deductions.length === 1 ? returnItem.looseQty : null,
+            packageUnit: deductions.length === 1 ? returnItem.packageUnit : null,
+            packageSize: deductions.length === 1 ? returnItem.packageSize : null,
+            unit: product.unit ?? null,
+            beforeQty: runningBeforeQty,
+            afterQty: runningAfterQty,
+            relatedOrderId: order.id,
+            operatorId: user.sub,
+            remark: dto.remark ?? `采购退货 ${purchaseReturn.returnNo ?? purchaseReturn.id}`,
+          }));
+          runningBeforeQty = runningAfterQty;
+        }
+        await manager.save(StockRecordEntity, stockRecords);
       }
 
       await manager.save(PurchaseReturnItemEntity, returnItems);
@@ -667,6 +770,10 @@ export class PurchaseOrderService {
         orderItems.push(manager.create(PurchaseOrderItemEntity, {
           orderId: purchaseOrder.id,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          batchNo: item.batchNo?.trim() || null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -676,15 +783,36 @@ export class PurchaseOrderService {
            subtotal: multiplyAmount(normalized.quantity, item.unitPrice),
          }));
 
+        let batch = await resolveInboundStockBatch(manager, product, {
+          batchId: item.batchId,
+          batchNo: item.batchNo,
+          warehouseId: item.warehouseId,
+          locationId: item.locationId,
+          costPrice: item.unitPrice,
+          remark: dto.remark ?? null,
+        });
+        batch.quantity = addQuantity(batch.quantity ?? 0, normalized.quantity);
+        batch = await manager.save(StockBatchEntity, batch);
+
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = addQuantity(beforeQty, normalized.quantity);
+        product.availableStockQty = addQuantity(roundQuantity(product.availableStockQty), normalized.quantity);
         await manager.save(ProductEntity, product);
 
         await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
           productId: product.id,
+          batchId: batch.id,
+          batchNo: batch.batchNo,
+          warehouseId: batch.warehouseId,
+          locationId: batch.locationId,
           type: 'in',
           reason: 'purchase',
           quantity: normalized.quantity,
+          packageQty: normalized.packageQty,
+          looseQty: normalized.looseQty,
+          packageUnit: normalized.packageUnit,
+          packageSize: normalized.packageSize,
+          unit: product.unit ?? null,
           beforeQty,
           afterQty: product.stockQty,
           relatedOrderId: purchaseOrder.id,

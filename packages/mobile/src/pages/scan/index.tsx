@@ -1,6 +1,9 @@
 import { useState, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/layout/PageHeader';
 import { productApi } from '@/api/product';
+import { useAuthStore } from '@/store/auth';
+import { useOrderDraftStore } from '@/store/order-draft';
 import type { Product } from '@/types';
 import { useScanner } from './hooks/useScanner';
 import { useStockAction } from './hooks/useStockAction';
@@ -9,6 +12,9 @@ import { ProductActionSheet } from './components/ProductActionSheet';
 import { ManualInput } from './components/ManualInput';
 
 export default function ScanPage() {
+  const navigate = useNavigate();
+  const userRole = useAuthStore((s) => s.user?.role);
+  const addItem = useOrderDraftStore((s) => s.addItem);
   const [product, setProduct] = useState<Product | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [searching, setSearching] = useState(false);
@@ -98,9 +104,29 @@ export default function ScanPage() {
     scanner.resume();
   };
 
+  const handleAddToOrder = (p: Product) => {
+    addItem({
+      productId: p.id,
+      productName: p.name,
+      spec: p.spec,
+      unit: p.unit,
+      packageUnit: p.packageUnit,
+      packageSize: p.packageSize,
+      quantity: 1,
+      packageQty: 0,
+      looseQty: 1,
+      unitPrice: p.sellPrice,
+      sellPrice: p.sellPrice,
+      batchAutoPickStrategy: p.batchAutoPickStrategy,
+    });
+    showToast('已加入开单');
+    handleSheetClose();
+    navigate('/order/new');
+  };
+
   return (
     <div className='flex h-full flex-col overflow-hidden bg-background'>
-      <PageHeader title='扫码' subtitle='扫商品条码快速入库/出库' />
+      <PageHeader title='扫码' subtitle={userRole === 'staff' ? '扫商品条码快速加入开单' : '扫商品条码快速入库/出库'} />
 
       <div className='flex-1 overflow-y-auto space-y-4 p-4'>
         {/* 扫码区 */}
@@ -140,6 +166,8 @@ export default function ScanPage() {
         onClose={handleSheetClose}
         onAction={submit}
         loading={actionLoading}
+        userRole={userRole}
+        onAddToOrder={handleAddToOrder}
       />
 
       {/* Toast 消息 */}

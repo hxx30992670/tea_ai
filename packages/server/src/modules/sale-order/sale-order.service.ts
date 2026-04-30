@@ -5,10 +5,13 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource, EntityManager, IsNull } from 'typeorm';
+import { applyBatchAutoPickOrder, computeProductBatchExpireAt, requiresManualBatchSelection } from '../../common/utils/batch-auto-pick.util';
+import { STOCK_BATCH_STATUS } from '../../common/constants/stock-batch-status';
 import { PAYMENT_RECORD_TYPE, SALE_EXCHANGE_STATUS, SALE_ORDER_STATUS } from '../../common/constants/order-status';
-import { ROLE_ADMIN } from '../../common/constants/roles';
+import { ROLE_ADMIN, ROLE_STAFF } from '../../common/constants/roles';
 import { getProductPackageConfig, resolveCompositeQuantity } from '../../common/utils/packaging.util';
 import { addAmount, addQuantity, compareAmount, compareQuantity, multiplyAmount, roundAmount, roundQuantity, subtractAmount, subtractQuantity } from '../../common/utils/precision.util';
+import { ensureLegacyStockBatchConsistency, resolveInboundStockBatch, resolveWarehouseLocation, syncProductAvailableStockQty } from '../../common/utils/stock-batch.util';
 import { AuthUser } from '../../common/types/auth-user.type';
 import { CustomerEntity } from '../../entities/customer.entity';
 import { PaymentRecordEntity } from '../../entities/payment-record.entity';
@@ -20,7 +23,10 @@ import { SaleOrderItemEntity } from '../../entities/sale-order-item.entity';
 import { SaleRefundEntity } from '../../entities/sale-refund.entity';
 import { SaleReturnItemEntity } from '../../entities/sale-return-item.entity';
 import { SaleReturnEntity } from '../../entities/sale-return.entity';
+import { StockBatchEntity } from '../../entities/stock-batch.entity';
 import { StockRecordEntity } from '../../entities/stock-record.entity';
+import { WarehouseEntity } from '../../entities/warehouse.entity';
+import { StockLocationEntity } from '../../entities/stock-location.entity';
 import { OperationLogService } from '../system/operation-log.service';
 import { CreateSaleExchangeDto } from './dto/create-sale-exchange.dto';
 import { UpdateSaleExchangeDraftDto } from './dto/update-sale-exchange.dto';
@@ -29,6 +35,44 @@ import { QuickCompleteSaleOrderDto } from './dto/quick-complete-sale-order.dto';
 import { CreateSaleRefundDto } from './dto/create-sale-refund.dto';
 import { CreateSaleReturnDto } from './dto/create-sale-return.dto';
 import { SaleOrderQueryDto } from './dto/sale-order-query.dto';
+
+type SaleExchangeReturnRequest = {
+  saleOrderItemId?: number;
+  sourceExchangeItemId?: number;
+  quantity?: number;
+  packageQty?: number;
+  looseQty?: number;
+  warehouseId?: number;
+  locationId?: number;
+  stockStatus?: number;
+};
+
+type SaleExchangeReturnSource = {
+  id: number;
+  sourceType: 'sale_order_item' | 'exchange_out_item';
+  sourceKey: string;
+  saleOrderItemId: number | null;
+  sourceExchangeItemId: number | null;
+  exchangeId?: number | null;
+  exchangeNo?: string | null;
+  productId: number;
+  productName?: string | null;
+  batchId?: number | null;
+  batchNo?: string | null;
+  warehouseId?: number | null;
+  warehouseName?: string | null;
+  locationId?: number | null;
+  locationName?: string | null;
+  quantity: number;
+  packageQty?: number | null;
+  looseQty?: number | null;
+  packageUnit?: string | null;
+  packageSize?: number | null;
+  unit?: string | null;
+  unitPrice: number;
+  returnedQuantity: number;
+  remainingQuantity: number;
+};
 
 @Injectable()
 export class SaleOrderService {
@@ -111,6 +155,82 @@ export class SaleOrderService {
     return resolved;
   }
 
+  private async deductProductBatches(
+    manager: EntityManager,
+    product: ProductEntity,
+    item: { quantity: number; batchId?: number | null; warehouseId?: number | null; locationId?: number | null },
+    messages?: {
+      manualRequired?: string;
+      selectedBatchInsufficient?: string;
+      autoPickInsufficient?: string;
+    },
+  ) {
+    if (requiresManualBatchSelection(product) && !item.batchId) {
+      throw new BadRequestException(messages?.manualRequired ?? `商品 ${product.name} 必须手选批次后才能出库`);
+    }
+
+    const batchRepository = manager.getRepository(StockBatchEntity);
+    await ensureLegacyStockBatchConsistency(manager, product);
+    const batchQb = batchRepository
+      .createQueryBuilder('batch')
+      .where('batch.product_id = :productId', { productId: product.id })
+      .andWhere('batch.status = 1')
+      .andWhere('batch.quantity > 0');
+
+    if (item.batchId) {
+      batchQb.andWhere('batch.id = :batchId', { batchId: item.batchId });
+    }
+    if (item.warehouseId) {
+      batchQb.andWhere('batch.warehouse_id = :warehouseId', { warehouseId: item.warehouseId });
+    }
+    if (item.locationId) {
+      batchQb.andWhere('batch.location_id = :locationId', { locationId: item.locationId });
+    }
+
+    const batches = await applyBatchAutoPickOrder(batchQb, 'batch', product).getMany();
+
+    let remaining = item.quantity;
+    const deductions: Array<{ batch: StockBatchEntity; quantity: number }> = [];
+    for (const batch of batches) {
+      if (compareQuantity(remaining, 0) <= 0) {
+        break;
+      }
+
+      const deductQty = Math.min(roundQuantity(batch.quantity), remaining);
+      if (compareQuantity(deductQty, 0) <= 0) {
+        continue;
+      }
+
+      batch.quantity = subtractQuantity(batch.quantity, deductQty);
+      await batchRepository.save(batch);
+      deductions.push({ batch, quantity: deductQty });
+      remaining = subtractQuantity(remaining, deductQty);
+    }
+
+    if (compareQuantity(remaining, 0) > 0) {
+      throw new BadRequestException(
+        item.batchId
+          ? (messages?.selectedBatchInsufficient ?? '所选批次库存不足，无法出库')
+          : (messages?.autoPickInsufficient ?? `商品 ${product.name} 批次库存不足`),
+      );
+    }
+
+    return deductions;
+  }
+
+  private async inferLegacyReturnSourceBatch(manager: EntityManager, product: ProductEntity) {
+    await ensureLegacyStockBatchConsistency(manager, product);
+    const qb = manager
+      .getRepository(StockBatchEntity)
+      .createQueryBuilder('batch')
+      .where('batch.product_id = :productId', { productId: product.id })
+      .andWhere('batch.status = :status', { status: STOCK_BATCH_STATUS.SELLABLE })
+      .andWhere('batch.quantity > 0')
+      .andWhere("batch.batch_no NOT LIKE 'RETURN-%'");
+
+    return applyBatchAutoPickOrder(qb, 'batch', product).getOne();
+  }
+
   private async getReturnedQuantityMap(orderId: number, manager: EntityManager, excludeExchangeId?: number) {
     const rows = await manager
       .createQueryBuilder(SaleReturnItemEntity, 'saleReturnItem')
@@ -128,6 +248,7 @@ export class SaleOrderService {
       .addSelect('SUM(saleExchangeItem.quantity)', 'returnedQuantity')
       .where('saleExchange.sale_order_id = :orderId', { orderId })
       .andWhere("saleExchangeItem.direction = 'return'")
+      .andWhere('saleExchangeItem.sale_order_item_id IS NOT NULL')
       .groupBy('saleExchangeItem.sale_order_item_id');
 
     if (excludeExchangeId) {
@@ -145,14 +266,292 @@ export class SaleOrderService {
     return quantityMap;
   }
 
-  private async buildSaleOrderDetail(order: SaleOrderEntity, user: AuthUser, manager: EntityManager) {
-    const items = await manager
+  private async getReturnedExchangeItemQuantityMap(orderId: number, manager: EntityManager, excludeExchangeId?: number) {
+    const qb = manager
+      .createQueryBuilder(SaleExchangeItemEntity, 'saleExchangeItem')
+      .innerJoin(SaleExchangeEntity, 'saleExchange', 'saleExchange.id = saleExchangeItem.exchange_id')
+      .select('saleExchangeItem.source_exchange_item_id', 'sourceExchangeItemId')
+      .addSelect('SUM(saleExchangeItem.quantity)', 'returnedQuantity')
+      .where('saleExchange.sale_order_id = :orderId', { orderId })
+      .andWhere("saleExchangeItem.direction = 'return'")
+      .andWhere('saleExchangeItem.source_exchange_item_id IS NOT NULL')
+      .groupBy('saleExchangeItem.source_exchange_item_id');
+
+    if (excludeExchangeId) {
+      qb.andWhere('saleExchange.id != :excludeExchangeId', { excludeExchangeId });
+    }
+
+    const rows = await qb.getRawMany<{ sourceExchangeItemId: string; returnedQuantity: string }>();
+    const quantityMap = new Map<number, number>();
+    for (const row of rows) {
+      quantityMap.set(Number(row.sourceExchangeItemId), roundQuantity(row.returnedQuantity));
+    }
+    return quantityMap;
+  }
+
+  private async buildSaleExchangeableItems(orderId: number, manager: EntityManager, excludeExchangeId?: number) {
+    const buildSingleBatchSourceMap = async (reason: string) => {
+      const rows = await manager
+        .createQueryBuilder(StockRecordEntity, 'record')
+        .leftJoin(WarehouseEntity, 'warehouse', 'warehouse.id = record.warehouse_id')
+        .leftJoin(StockLocationEntity, 'location', 'location.id = record.location_id')
+        .select([
+          'record.product_id AS productId',
+          'record.batch_id AS batchId',
+          'record.batch_no AS batchNo',
+          'record.warehouse_id AS warehouseId',
+          'warehouse.name AS warehouseName',
+          'record.location_id AS locationId',
+          'location.name AS locationName',
+        ])
+        .where('record.related_order_id = :orderId', { orderId })
+        .andWhere('record.reason = :reason', { reason })
+        .andWhere('record.batch_id IS NOT NULL')
+        .getRawMany<Record<string, unknown>>();
+
+      const grouped = new Map<number, Record<string, unknown>[]>();
+      for (const row of rows) {
+        const productId = Number(row.productId);
+        grouped.set(productId, [...(grouped.get(productId) ?? []), row]);
+      }
+
+      const result = new Map<number, Record<string, unknown>>();
+      for (const [productId, productRows] of grouped) {
+        const scopes = new Set(productRows.map((row) => [
+          row.batchId ?? '',
+          row.warehouseId ?? '',
+          row.locationId ?? '',
+        ].join('|')));
+        if (scopes.size === 1) {
+          result.set(productId, productRows[0]);
+        }
+      }
+      return result;
+    };
+
+    const saleStockSourceMap = await buildSingleBatchSourceMap('sale');
+    const exchangeOutStockSourceMap = await buildSingleBatchSourceMap('sale_exchange_out');
+
+    const originalRows = await manager
       .createQueryBuilder(SaleOrderItemEntity, 'item')
       .leftJoin(ProductEntity, 'product', 'product.id = item.product_id')
+      .leftJoin(StockBatchEntity, 'batch', 'batch.id = item.batch_id')
+      .leftJoin(WarehouseEntity, 'warehouse', 'warehouse.id = item.warehouse_id')
+      .leftJoin(StockLocationEntity, 'location', 'location.id = item.location_id')
       .select([
         'item.id AS id',
         'item.order_id AS orderId',
         'item.product_id AS productId',
+        'item.batch_id AS batchId',
+        'batch.batch_no AS batchNo',
+        'item.warehouse_id AS warehouseId',
+        'warehouse.name AS warehouseName',
+        'item.location_id AS locationId',
+        'location.name AS locationName',
+        'product.name AS productName',
+        'item.quantity AS quantity',
+        'item.package_qty AS packageQty',
+        'item.loose_qty AS looseQty',
+        'item.package_unit AS packageUnit',
+        'item.package_size AS packageSize',
+        'product.unit AS unit',
+        'item.unit_price AS unitPrice',
+        'item.cost_price AS costPrice',
+        'item.subtotal AS subtotal',
+      ])
+      .where('item.order_id = :orderId', { orderId })
+      .getRawMany<Record<string, unknown>>();
+
+    const returnedQuantityMap = await this.getReturnedQuantityMap(orderId, manager, excludeExchangeId);
+    const originalSources: SaleExchangeReturnSource[] = originalRows.map((item) => {
+      const id = Number(item.id);
+      const quantity = roundQuantity(item.quantity as number);
+      const returnedQuantity = returnedQuantityMap.get(id) ?? 0;
+      const stockSource = saleStockSourceMap.get(Number(item.productId));
+      return {
+        id,
+        sourceType: 'sale_order_item',
+        sourceKey: `sale-order-item-${id}`,
+        saleOrderItemId: id,
+        sourceExchangeItemId: null,
+        productId: Number(item.productId),
+        productName: String(item.productName ?? ''),
+        batchId: item.batchId == null ? (stockSource?.batchId == null ? null : Number(stockSource.batchId)) : Number(item.batchId),
+        batchNo: item.batchNo == null ? (stockSource?.batchNo == null ? null : String(stockSource.batchNo)) : String(item.batchNo),
+        warehouseId: item.warehouseId == null ? (stockSource?.warehouseId == null ? null : Number(stockSource.warehouseId)) : Number(item.warehouseId),
+        warehouseName: item.warehouseName == null ? (stockSource?.warehouseName == null ? null : String(stockSource.warehouseName)) : String(item.warehouseName),
+        locationId: item.locationId == null ? (stockSource?.locationId == null ? null : Number(stockSource.locationId)) : Number(item.locationId),
+        locationName: item.locationName == null ? (stockSource?.locationName == null ? null : String(stockSource.locationName)) : String(item.locationName),
+        quantity,
+        packageQty: item.packageQty == null ? null : Number(item.packageQty),
+        looseQty: item.looseQty == null ? null : Number(item.looseQty),
+        packageUnit: item.packageUnit == null ? null : String(item.packageUnit),
+        packageSize: item.packageSize == null ? null : Number(item.packageSize),
+        unit: item.unit == null ? null : String(item.unit),
+        unitPrice: Number(item.unitPrice),
+        returnedQuantity,
+        remainingQuantity: subtractQuantity(quantity, returnedQuantity),
+      };
+    });
+
+    const exchangeOutQb = manager
+      .createQueryBuilder(SaleExchangeItemEntity, 'saleExchangeItem')
+      .innerJoin(SaleExchangeEntity, 'saleExchange', 'saleExchange.id = saleExchangeItem.exchange_id')
+      .leftJoin(ProductEntity, 'product', 'product.id = saleExchangeItem.product_id')
+      .leftJoin(StockBatchEntity, 'batch', 'batch.id = saleExchangeItem.batch_id')
+      .leftJoin(WarehouseEntity, 'warehouse', 'warehouse.id = saleExchangeItem.warehouse_id')
+      .leftJoin(StockLocationEntity, 'location', 'location.id = saleExchangeItem.location_id')
+      .select([
+        'saleExchangeItem.id AS id',
+        'saleExchangeItem.exchange_id AS exchangeId',
+        'saleExchange.exchange_no AS exchangeNo',
+        'saleExchangeItem.product_id AS productId',
+        'saleExchangeItem.batch_id AS batchId',
+        'batch.batch_no AS batchNo',
+        'saleExchangeItem.warehouse_id AS warehouseId',
+        'warehouse.name AS warehouseName',
+        'saleExchangeItem.location_id AS locationId',
+        'location.name AS locationName',
+        'product.name AS productName',
+        'saleExchangeItem.quantity AS quantity',
+        'saleExchangeItem.package_qty AS packageQty',
+        'saleExchangeItem.loose_qty AS looseQty',
+        'saleExchangeItem.package_unit AS packageUnit',
+        'saleExchangeItem.package_size AS packageSize',
+        'product.unit AS unit',
+        'saleExchangeItem.unit_price AS unitPrice',
+      ])
+      .where('saleExchange.sale_order_id = :orderId', { orderId })
+      .andWhere("saleExchangeItem.direction = 'out'")
+      .andWhere('saleExchange.exchange_stock_done = 1')
+      .andWhere('saleExchange.status != :cancelledStatus', { cancelledStatus: SALE_EXCHANGE_STATUS.CANCELLED });
+
+    if (excludeExchangeId) {
+      exchangeOutQb.andWhere('saleExchange.id != :excludeExchangeId', { excludeExchangeId });
+    }
+
+    const exchangeOutRows = await exchangeOutQb
+      .orderBy('saleExchangeItem.id', 'ASC')
+      .getRawMany<Record<string, unknown>>();
+
+    const returnedExchangeItemQuantityMap = await this.getReturnedExchangeItemQuantityMap(orderId, manager, excludeExchangeId);
+    const exchangeOutSources: SaleExchangeReturnSource[] = exchangeOutRows.map((item) => {
+      const id = Number(item.id);
+      const quantity = roundQuantity(item.quantity as number);
+      const returnedQuantity = returnedExchangeItemQuantityMap.get(id) ?? 0;
+      const stockSource = exchangeOutStockSourceMap.get(Number(item.productId));
+      return {
+        id,
+        sourceType: 'exchange_out_item',
+        sourceKey: `exchange-out-item-${id}`,
+        saleOrderItemId: null,
+        sourceExchangeItemId: id,
+        exchangeId: item.exchangeId == null ? null : Number(item.exchangeId),
+        exchangeNo: item.exchangeNo == null ? null : String(item.exchangeNo),
+        productId: Number(item.productId),
+        productName: String(item.productName ?? ''),
+        batchId: item.batchId == null ? (stockSource?.batchId == null ? null : Number(stockSource.batchId)) : Number(item.batchId),
+        batchNo: item.batchNo == null ? (stockSource?.batchNo == null ? null : String(stockSource.batchNo)) : String(item.batchNo),
+        warehouseId: item.warehouseId == null ? (stockSource?.warehouseId == null ? null : Number(stockSource.warehouseId)) : Number(item.warehouseId),
+        warehouseName: item.warehouseName == null ? (stockSource?.warehouseName == null ? null : String(stockSource.warehouseName)) : String(item.warehouseName),
+        locationId: item.locationId == null ? (stockSource?.locationId == null ? null : Number(stockSource.locationId)) : Number(item.locationId),
+        locationName: item.locationName == null ? (stockSource?.locationName == null ? null : String(stockSource.locationName)) : String(item.locationName),
+        quantity,
+        packageQty: item.packageQty == null ? null : Number(item.packageQty),
+        looseQty: item.looseQty == null ? null : Number(item.looseQty),
+        packageUnit: item.packageUnit == null ? null : String(item.packageUnit),
+        packageSize: item.packageSize == null ? null : Number(item.packageSize),
+        unit: item.unit == null ? null : String(item.unit),
+        unitPrice: Number(item.unitPrice),
+        returnedQuantity,
+        remainingQuantity: subtractQuantity(quantity, returnedQuantity),
+      };
+    });
+
+    return [...originalSources, ...exchangeOutSources];
+  }
+
+  private async resolveSaleExchangeReturnSource(
+    item: SaleExchangeReturnRequest,
+    saleOrderItemSourceMap: Map<number, SaleExchangeReturnSource>,
+    exchangeSourceMap: Map<number, SaleExchangeReturnSource>,
+    ensureProductLoaded: (productId: number) => Promise<ProductEntity>,
+  ) {
+    if (!item.saleOrderItemId && !item.sourceExchangeItemId) {
+      throw new BadRequestException('换货换回明细缺少来源商品');
+    }
+
+    const source = item.sourceExchangeItemId
+      ? exchangeSourceMap.get(item.sourceExchangeItemId)
+      : saleOrderItemSourceMap.get(item.saleOrderItemId as number);
+
+    if (!source) {
+      throw new BadRequestException(
+        item.sourceExchangeItemId
+          ? '换货换回明细中存在无效的历史换出商品'
+          : '换货换回明细中存在无效的原销售商品',
+      );
+    }
+
+    const product = await ensureProductLoaded(source.productId);
+    const normalized = this.normalizeLineItemQuantity(product, item);
+    if (compareQuantity(normalized.quantity, source.remainingQuantity) > 0) {
+      throw new BadRequestException('换货换回数量不能超过当前可换回数量');
+    }
+
+    return { source, product, normalized };
+  }
+
+  private async resolveSaleExchangeReturnPlacement(
+    manager: EntityManager,
+    source: SaleExchangeReturnSource,
+    item: SaleExchangeReturnRequest,
+  ) {
+    let sourceBatchNo = source.batchNo?.trim() || null;
+    let sourceWarehouseId = source.warehouseId ?? undefined;
+    let sourceLocationId = source.locationId ?? null;
+
+    if (!sourceBatchNo) {
+      const product = await manager.findOne(ProductEntity, { where: { id: source.productId, deletedAt: IsNull() } });
+      if (product) {
+        const inferredBatch = await this.inferLegacyReturnSourceBatch(manager, product);
+        sourceBatchNo = inferredBatch?.batchNo ?? null;
+        sourceWarehouseId = inferredBatch?.warehouseId ?? sourceWarehouseId;
+        sourceLocationId = inferredBatch?.locationId ?? sourceLocationId;
+      }
+    }
+
+    const resolvedScope = await resolveWarehouseLocation(
+      manager,
+      item.warehouseId ?? sourceWarehouseId,
+      item.locationId ?? sourceLocationId,
+    );
+
+    return {
+      warehouseId: resolvedScope.warehouse.id,
+      locationId: resolvedScope.location?.id ?? null,
+      batchNo: sourceBatchNo,
+      stockStatus: item.stockStatus ?? STOCK_BATCH_STATUS.PENDING_INSPECTION,
+    };
+  }
+
+  private async buildSaleOrderDetail(order: SaleOrderEntity, user: AuthUser, manager: EntityManager) {
+    const items = await manager
+      .createQueryBuilder(SaleOrderItemEntity, 'item')
+      .leftJoin(ProductEntity, 'product', 'product.id = item.product_id')
+      .leftJoin(StockBatchEntity, 'batch', 'batch.id = item.batch_id')
+      .leftJoin(WarehouseEntity, 'warehouse', 'warehouse.id = item.warehouse_id')
+      .leftJoin(StockLocationEntity, 'location', 'location.id = item.location_id')
+      .select([
+        'item.id AS id',
+        'item.order_id AS orderId',
+        'item.product_id AS productId',
+        'item.batch_id AS batchId',
+        'batch.batch_no AS batchNo',
+        'item.warehouse_id AS warehouseId',
+        'warehouse.name AS warehouseName',
+        'item.location_id AS locationId',
+        'location.name AS locationName',
         'product.name AS productName',
         'item.quantity AS quantity',
         'item.package_qty AS packageQty',
@@ -178,6 +577,9 @@ export class SaleOrderService {
         remainingQuantity: subtractQuantity(quantity, returnedQuantity),
       };
     });
+
+    const exchangeableItems = (await this.buildSaleExchangeableItems(order.id, manager))
+      .filter((item) => compareQuantity(item.remainingQuantity, 0) > 0);
 
     const saleReturns = await manager.find(SaleReturnEntity, {
       where: { saleOrderId: order.id },
@@ -230,12 +632,22 @@ export class SaleOrderService {
       ? await manager
           .createQueryBuilder(SaleExchangeItemEntity, 'saleExchangeItem')
           .leftJoin(ProductEntity, 'product', 'product.id = saleExchangeItem.product_id')
+          .leftJoin(StockBatchEntity, 'batch', 'batch.id = saleExchangeItem.batch_id')
+          .leftJoin(WarehouseEntity, 'warehouse', 'warehouse.id = saleExchangeItem.warehouse_id')
+          .leftJoin(StockLocationEntity, 'location', 'location.id = saleExchangeItem.location_id')
           .select([
             'saleExchangeItem.id AS id',
             'saleExchangeItem.exchange_id AS exchangeId',
             'saleExchangeItem.direction AS direction',
             'saleExchangeItem.sale_order_item_id AS saleOrderItemId',
+            'saleExchangeItem.source_exchange_item_id AS sourceExchangeItemId',
             'saleExchangeItem.product_id AS productId',
+            'saleExchangeItem.batch_id AS batchId',
+            'batch.batch_no AS batchNo',
+            'saleExchangeItem.warehouse_id AS warehouseId',
+            'warehouse.name AS warehouseName',
+            'saleExchangeItem.location_id AS locationId',
+            'location.name AS locationName',
             'product.name AS productName',
             'saleExchangeItem.quantity AS quantity',
             'saleExchangeItem.package_qty AS packageQty',
@@ -262,6 +674,7 @@ export class SaleOrderService {
         ...order,
         displayStatus: this.getDisplayStatus(order, saleExchanges),
         items: detailItems,
+        exchangeableItems,
         returns: saleReturns.map((item) => ({
           ...item,
           items: returnItemsMap.get(item.id) ?? [],
@@ -347,6 +760,10 @@ export class SaleOrderService {
 
     if (query.dateTo) {
       qb.andWhere('DATE(saleOrder.created_at) <= :dateTo', { dateTo: query.dateTo });
+    }
+
+    if (user.role === ROLE_STAFF) {
+      qb.andWhere('saleOrder.operator_id = :operatorId', { operatorId: user.sub });
     }
 
     qb.orderBy('saleOrder.created_at', 'DESC');
@@ -443,6 +860,9 @@ export class SaleOrderService {
         return manager.create(SaleOrderItemEntity, {
           orderId: saleOrder.id,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -470,6 +890,9 @@ export class SaleOrderService {
   async getSaleOrderById(id: number, user: AuthUser) {
     const order = await this.dataSource.getRepository(SaleOrderEntity).findOne({ where: { id } });
     if (!order) throw new NotFoundException('销售订单不存在');
+    if (user.role === ROLE_STAFF && order.operatorId !== user.sub) {
+      throw new NotFoundException('销售订单不存在');
+    }
     return this.buildSaleOrderDetail(order, user, this.dataSource.manager);
   }
 
@@ -521,6 +944,9 @@ export class SaleOrderService {
         return manager.create(SaleOrderItemEntity, {
           orderId: id,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -548,6 +974,9 @@ export class SaleOrderService {
     return this.dataSource.transaction(async (manager) => {
       const order = await manager.findOne(SaleOrderEntity, { where: { id } });
       if (!order) throw new NotFoundException('销售订单不存在');
+      if (user.role === ROLE_STAFF && order.operatorId !== user.sub) {
+        throw new NotFoundException('销售订单不存在');
+      }
       if (order.status !== SALE_ORDER_STATUS.DRAFT) {
         throw new BadRequestException('只有草稿状态的销售订单可以出库');
       }
@@ -564,27 +993,67 @@ export class SaleOrderService {
         if (!product || product.status !== 1) {
           throw new BadRequestException(`商品 ${item.productId} 不存在、已删除或已停售`);
         }
-        if (compareQuantity(product.stockQty, item.quantity) < 0) {
-          throw new BadRequestException(`商品 ${product.name} 库存不足`);
+        await syncProductAvailableStockQty(manager, product);
+        if (compareQuantity(product.availableStockQty, item.quantity) < 0) {
+          throw new BadRequestException(`商品 ${product.name} 可售库存不足`);
         }
+
+        const deductions = await this.deductProductBatches(
+          manager,
+          product,
+          {
+            quantity: item.quantity,
+            batchId: item.batchId,
+            warehouseId: item.warehouseId,
+            locationId: item.locationId,
+          },
+          {
+            manualRequired: `商品 ${product.name} 必须手选批次后才能出库`,
+            selectedBatchInsufficient: '所选批次库存不足，无法出库',
+            autoPickInsufficient: `商品 ${product.name} 批次库存不足`,
+          },
+        );
 
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = subtractQuantity(beforeQty, item.quantity);
+        product.availableStockQty = subtractQuantity(roundQuantity(product.availableStockQty), item.quantity);
         await manager.save(ProductEntity, product);
 
-        const stockRecord = manager.create(StockRecordEntity, {
-          productId: product.id,
-          type: 'out',
-          reason: 'sale',
-          quantity: item.quantity,
-          beforeQty,
-          afterQty: product.stockQty,
-          relatedOrderId: order.id,
-          operatorId: user.sub,
-          remark: remark ?? order.remark ?? null,
-        });
+        if (deductions.length === 1) {
+          item.batchId = deductions[0].batch.id;
+          item.warehouseId = deductions[0].batch.warehouseId;
+          item.locationId = deductions[0].batch.locationId;
+          await manager.save(SaleOrderItemEntity, item);
+        }
 
-        await manager.save(StockRecordEntity, stockRecord);
+        let runningBeforeQty = beforeQty;
+        const stockRecords: StockRecordEntity[] = [];
+        for (const deduction of deductions) {
+          const runningAfterQty = subtractQuantity(runningBeforeQty, deduction.quantity);
+          stockRecords.push(manager.create(StockRecordEntity, {
+            productId: product.id,
+            batchId: deduction.batch.id,
+            batchNo: deduction.batch.batchNo,
+            warehouseId: deduction.batch.warehouseId,
+            locationId: deduction.batch.locationId,
+            type: 'out',
+            reason: 'sale',
+            quantity: deduction.quantity,
+            packageQty: deductions.length === 1 ? item.packageQty : null,
+            looseQty: deductions.length === 1 ? item.looseQty : null,
+            packageUnit: deductions.length === 1 ? item.packageUnit : null,
+            packageSize: deductions.length === 1 ? item.packageSize : null,
+            beforeQty: runningBeforeQty,
+            afterQty: runningAfterQty,
+            unit: product.unit ?? null,
+            relatedOrderId: order.id,
+            operatorId: user.sub,
+            remark: remark ?? order.remark ?? null,
+          }));
+          runningBeforeQty = runningAfterQty;
+        }
+
+        await manager.save(StockRecordEntity, stockRecords);
       }
 
       order.status = this.recalculateStatus({
@@ -631,7 +1100,8 @@ export class SaleOrderService {
         const product = productMap.get(item.productId);
         if (!product || product.status !== 1) throw new BadRequestException(`商品 ${item.productId} 不存在、已删除或已停售`);
         const normalized = this.normalizeLineItemQuantity(product, item);
-        if (compareQuantity(product.stockQty, normalized.quantity) < 0) throw new BadRequestException(`商品 ${product.name} 库存不足`);
+        await syncProductAvailableStockQty(manager, product);
+        if (compareQuantity(product.availableStockQty, normalized.quantity) < 0) throw new BadRequestException(`商品 ${product.name} 可售库存不足`);
         totalAmount = addAmount(totalAmount, multiplyAmount(normalized.quantity, item.unitPrice));
         costAmount = addAmount(costAmount, multiplyAmount(normalized.quantity, product.costPrice));
       }
@@ -661,9 +1131,12 @@ export class SaleOrderService {
       for (const item of dto.items) {
         const product = productMap.get(item.productId)!;
         const normalized = this.normalizeLineItemQuantity(product, item);
-        orderItems.push(manager.create(SaleOrderItemEntity, {
+        const orderItem = manager.create(SaleOrderItemEntity, {
           orderId: saleOrder.id,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -672,23 +1145,64 @@ export class SaleOrderService {
           unitPrice: item.unitPrice,
           costPrice: product.costPrice,
            subtotal: multiplyAmount(normalized.quantity, item.unitPrice),
-         }));
+         });
+        orderItems.push(orderItem);
+
+        const deductions = await this.deductProductBatches(
+          manager,
+          product,
+          {
+            quantity: normalized.quantity,
+            batchId: item.batchId,
+            warehouseId: item.warehouseId,
+            locationId: item.locationId,
+          },
+          {
+            manualRequired: `商品 ${product.name} 必须手选批次后才能出库`,
+            selectedBatchInsufficient: '所选批次库存不足，无法出库',
+            autoPickInsufficient: `商品 ${product.name} 批次库存不足`,
+          },
+        );
 
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = subtractQuantity(beforeQty, normalized.quantity);
+        product.availableStockQty = subtractQuantity(roundQuantity(product.availableStockQty), normalized.quantity);
         await manager.save(ProductEntity, product);
 
-        await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
-          productId: product.id,
-          type: 'out',
-          reason: 'sale',
-          quantity: normalized.quantity,
-          beforeQty,
-          afterQty: product.stockQty,
-          relatedOrderId: saleOrder.id,
-          operatorId: user.sub,
-          remark: dto.remark ?? null,
-        }));
+        if (deductions.length === 1) {
+          orderItem.batchId = deductions[0].batch.id;
+          orderItem.warehouseId = deductions[0].batch.warehouseId;
+          orderItem.locationId = deductions[0].batch.locationId;
+        }
+
+        let runningBeforeQty = beforeQty;
+        const stockRecords: StockRecordEntity[] = [];
+        for (const deduction of deductions) {
+          const runningAfterQty = subtractQuantity(runningBeforeQty, deduction.quantity);
+          stockRecords.push(manager.create(StockRecordEntity, {
+            productId: product.id,
+            batchId: deduction.batch.id,
+            batchNo: deduction.batch.batchNo,
+            warehouseId: deduction.batch.warehouseId,
+            locationId: deduction.batch.locationId,
+            type: 'out',
+            reason: 'sale',
+            quantity: deduction.quantity,
+            packageQty: deductions.length === 1 ? normalized.packageQty : null,
+            looseQty: deductions.length === 1 ? normalized.looseQty : null,
+            packageUnit: deductions.length === 1 ? normalized.packageUnit : null,
+            packageSize: deductions.length === 1 ? normalized.packageSize : null,
+            beforeQty: runningBeforeQty,
+            afterQty: runningAfterQty,
+            unit: product.unit ?? null,
+            relatedOrderId: saleOrder.id,
+            operatorId: user.sub,
+            remark: dto.remark ?? null,
+          }));
+          runningBeforeQty = runningAfterQty;
+        }
+
+        await manager.save(StockRecordEntity, stockRecords);
       }
       await manager.save(SaleOrderItemEntity, orderItems);
 
@@ -810,6 +1324,50 @@ export class SaleOrderService {
         if (!product) {
           throw new BadRequestException('退货商品不存在或已删除，无法回库');
         }
+        const sourceBatch = orderItem.batchId
+          ? await manager.findOne(StockBatchEntity, { where: { id: orderItem.batchId } })
+          : null;
+        const fallbackRows = sourceBatch ? [] : await manager
+          .createQueryBuilder(StockRecordEntity, 'record')
+          .select([
+            'record.batch_id AS batchId',
+            'record.batch_no AS batchNo',
+            'record.warehouse_id AS warehouseId',
+            'record.location_id AS locationId',
+          ])
+          .where('record.related_order_id = :orderId', { orderId: id })
+          .andWhere('record.reason = :reason', { reason: 'sale' })
+          .andWhere('record.product_id = :productId', { productId: orderItem.productId })
+          .andWhere('record.batch_id IS NOT NULL')
+          .getRawMany<Record<string, unknown>>();
+        const fallbackScopes = new Set(fallbackRows.map((row) => [
+          row.batchId ?? '',
+          row.warehouseId ?? '',
+          row.locationId ?? '',
+        ].join('|')));
+        const fallbackSource = fallbackScopes.size === 1 ? fallbackRows[0] : null;
+        const inferredBatch = sourceBatch || fallbackSource ? null : await this.inferLegacyReturnSourceBatch(manager, product);
+        const sourceBatchNo = sourceBatch?.batchNo
+          ?? (fallbackSource?.batchNo == null ? null : String(fallbackSource.batchNo))
+          ?? inferredBatch?.batchNo
+          ?? null;
+        const sourceWarehouseId = sourceBatch?.warehouseId
+          ?? (fallbackSource?.warehouseId == null ? undefined : Number(fallbackSource.warehouseId))
+          ?? inferredBatch?.warehouseId;
+        const sourceLocationId = sourceBatch?.locationId
+          ?? (fallbackSource?.locationId == null ? null : Number(fallbackSource.locationId))
+          ?? inferredBatch?.locationId
+          ?? null;
+        const returnBatch = await resolveInboundStockBatch(manager, product, {
+          batchNo: sourceBatchNo || `RETURN-${saleReturn.returnNo ?? saleReturn.id}`,
+          warehouseId: sourceWarehouseId,
+          locationId: sourceLocationId,
+          status: STOCK_BATCH_STATUS.PENDING_INSPECTION,
+          costPrice: product.costPrice ?? 0,
+          remark: dto.remark ?? `销售退货 ${saleReturn.returnNo ?? saleReturn.id}`,
+        });
+        returnBatch.quantity = addQuantity(returnBatch.quantity ?? 0, quantity);
+        const savedReturnBatch = await manager.getRepository(StockBatchEntity).save(returnBatch);
 
         const returnItem = manager.create(SaleReturnItemEntity, {
           returnId: saleReturn.id,
@@ -831,6 +1389,10 @@ export class SaleOrderService {
 
         const stockRecord = manager.create(StockRecordEntity, {
           productId: product.id,
+          batchId: savedReturnBatch.id,
+          batchNo: savedReturnBatch.batchNo,
+          warehouseId: savedReturnBatch.warehouseId,
+          locationId: savedReturnBatch.locationId,
           type: 'in',
           reason: 'sale_return',
           quantity,
@@ -947,9 +1509,17 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
   private async createSaleExchangeDraft(id: number, dto: CreateSaleExchangeDto, user: AuthUser) {
     return this.dataSource.transaction(async (manager) => {
       const order = await this.validateSaleOrderForAfterSale(id, manager);
-      const orderItems = await manager.find(SaleOrderItemEntity, { where: { orderId: id } });
-      const orderItemMap = new Map(orderItems.map((item) => [item.id, item]));
-      const returnedQuantityMap = await this.getReturnedQuantityMap(id, manager);
+      const exchangeableSources = await this.buildSaleExchangeableItems(id, manager);
+      const saleOrderItemSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.saleOrderItemId != null)
+          .map((source) => [source.saleOrderItemId as number, source]),
+      );
+      const exchangeSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.sourceExchangeItemId != null)
+          .map((source) => [source.sourceExchangeItemId as number, source]),
+      );
       const productMap = new Map<number, ProductEntity>();
 
       const ensureProductLoaded = async (productId: number) => {
@@ -962,16 +1532,13 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
 
       let returnAmount = 0;
       for (const item of dto.returnItems) {
-        const orderItem = orderItemMap.get(item.saleOrderItemId);
-        if (!orderItem) throw new BadRequestException('换货换回明细中存在无效的原销售商品');
-        const product = await ensureProductLoaded(orderItem.productId);
-        const normalized = this.normalizeLineItemQuantity(product, item);
-        const returnedQty = returnedQuantityMap.get(item.saleOrderItemId) ?? 0;
-        const remainingQty = subtractQuantity(orderItem.quantity, returnedQty);
-        if (compareQuantity(normalized.quantity, remainingQty) > 0) {
-          throw new BadRequestException('换货换回数量不能超过原销售单剩余可退数量');
-        }
-        returnAmount = addAmount(returnAmount, multiplyAmount(normalized.quantity, orderItem.unitPrice));
+        const { source, normalized } = await this.resolveSaleExchangeReturnSource(
+          item,
+          saleOrderItemSourceMap,
+          exchangeSourceMap,
+          ensureProductLoaded,
+        );
+        returnAmount = addAmount(returnAmount, multiplyAmount(normalized.quantity, source.unitPrice));
       }
 
       let exchangeAmount = 0;
@@ -1006,21 +1573,25 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
 
       const exchangeItems: SaleExchangeItemEntity[] = [];
       for (const item of dto.returnItems) {
-        const orderItem = orderItemMap.get(item.saleOrderItemId)!;
-        const product = await ensureProductLoaded(orderItem.productId);
-        const normalized = this.normalizeLineItemQuantity(product, item);
+        const { source, normalized } = await this.resolveSaleExchangeReturnSource(
+          item,
+          saleOrderItemSourceMap,
+          exchangeSourceMap,
+          ensureProductLoaded,
+        );
         exchangeItems.push(manager.create(SaleExchangeItemEntity, {
           exchangeId: saleExchange.id,
           direction: 'return',
-          saleOrderItemId: orderItem.id,
-          productId: orderItem.productId,
+          saleOrderItemId: source.saleOrderItemId,
+          sourceExchangeItemId: source.sourceExchangeItemId,
+          productId: source.productId,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
           packageUnit: normalized.packageUnit,
           packageSize: normalized.packageSize,
-          unitPrice: orderItem.unitPrice,
-          subtotal: multiplyAmount(normalized.quantity, orderItem.unitPrice),
+          unitPrice: source.unitPrice,
+          subtotal: multiplyAmount(normalized.quantity, source.unitPrice),
         }));
       }
       for (const item of dto.exchangeItems) {
@@ -1030,7 +1601,11 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
           exchangeId: saleExchange.id,
           direction: 'out',
           saleOrderItemId: null,
+          sourceExchangeItemId: null,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -1056,9 +1631,17 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
   private async createSaleExchangeComplete(id: number, dto: CreateSaleExchangeDto, user: AuthUser) {
     return this.dataSource.transaction(async (manager) => {
       const order = await this.validateSaleOrderForAfterSale(id, manager);
-      const orderItems = await manager.find(SaleOrderItemEntity, { where: { orderId: id } });
-      const orderItemMap = new Map(orderItems.map((item) => [item.id, item]));
-      const returnedQuantityMap = await this.getReturnedQuantityMap(id, manager);
+      const exchangeableSources = await this.buildSaleExchangeableItems(id, manager);
+      const saleOrderItemSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.saleOrderItemId != null)
+          .map((source) => [source.saleOrderItemId as number, source]),
+      );
+      const exchangeSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.sourceExchangeItemId != null)
+          .map((source) => [source.sourceExchangeItemId as number, source]),
+      );
       const productMap = new Map<number, ProductEntity>();
 
       const ensureProductLoaded = async (productId: number) => {
@@ -1069,36 +1652,43 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
         return product;
       };
 
-      const normalizedReturnItemMap = new Map<number, ReturnType<SaleOrderService['normalizeLineItemQuantity']>>();
+      const normalizedReturnItemMap = new Map<
+        string,
+        {
+          source: SaleExchangeReturnSource;
+          normalized: ReturnType<SaleOrderService['normalizeLineItemQuantity']>;
+        }
+      >();
 
       let returnAmount = 0;
       for (const item of dto.returnItems) {
-        const orderItem = orderItemMap.get(item.saleOrderItemId);
-        if (!orderItem) throw new BadRequestException('换货换回明细中存在无效的原销售商品');
-        const product = await ensureProductLoaded(orderItem.productId);
-        const normalized = this.normalizeLineItemQuantity(product, item);
-        normalizedReturnItemMap.set(item.saleOrderItemId, normalized);
-        const returnedQty = returnedQuantityMap.get(item.saleOrderItemId) ?? 0;
-        const remainingQty = subtractQuantity(orderItem.quantity, returnedQty);
-        if (compareQuantity(normalized.quantity, remainingQty) > 0) {
-          throw new BadRequestException('换货换回数量不能超过原销售单剩余可退数量');
-        }
-        returnAmount = addAmount(returnAmount, multiplyAmount(normalized.quantity, orderItem.unitPrice));
+        const resolved = await this.resolveSaleExchangeReturnSource(
+          item,
+          saleOrderItemSourceMap,
+          exchangeSourceMap,
+          ensureProductLoaded,
+        );
+        const sourceKey = item.sourceExchangeItemId
+          ? `exchange-out-item-${item.sourceExchangeItemId}`
+          : `sale-order-item-${item.saleOrderItemId}`;
+        normalizedReturnItemMap.set(sourceKey, resolved);
+        returnAmount = addAmount(returnAmount, multiplyAmount(resolved.normalized.quantity, resolved.source.unitPrice));
       }
 
       let exchangeAmount = 0;
-      const normalizedExchangeOutItems: Array<ReturnType<SaleOrderService['normalizeLineItemQuantity']> & { productId: number; unitPrice: number }> = [];
+      const normalizedExchangeOutItems: Array<ReturnType<SaleOrderService['normalizeLineItemQuantity']> & { productId: number; unitPrice: number; batchId?: number; warehouseId?: number; locationId?: number }> = [];
       for (const item of dto.exchangeItems) {
         const product = await ensureProductLoaded(item.productId);
         if (!product || product.status !== 1) {
           throw new BadRequestException(`换出商品 ${item.productId} 不存在、已删除或已停售`);
         }
         const normalized = this.normalizeLineItemQuantity(product, item);
-        if (compareQuantity(product.stockQty, normalized.quantity) < 0) {
-          throw new BadRequestException(`换出商品 ${product.name} 库存不足`);
+        await syncProductAvailableStockQty(manager, product);
+        if (compareQuantity(product.availableStockQty, normalized.quantity) < 0) {
+          throw new BadRequestException(`换出商品 ${product.name} 可售库存不足`);
         }
         exchangeAmount = addAmount(exchangeAmount, multiplyAmount(normalized.quantity, item.unitPrice));
-        normalizedExchangeOutItems.push({ ...normalized, productId: item.productId, unitPrice: item.unitPrice });
+        normalizedExchangeOutItems.push({ ...normalized, productId: item.productId, unitPrice: item.unitPrice, batchId: item.batchId, warehouseId: item.warehouseId, locationId: item.locationId });
       }
 
       const differenceAmount = subtractAmount(exchangeAmount, returnAmount);
@@ -1138,30 +1728,59 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
       saleExchange = await manager.save(SaleExchangeEntity, saleExchange);
 
       const exchangeItems: SaleExchangeItemEntity[] = [];
+
+      // 换回商品：入库
       for (const item of dto.returnItems) {
-        const orderItem = orderItemMap.get(item.saleOrderItemId)!;
-        const product = await ensureProductLoaded(orderItem.productId);
+        const sourceKey = item.sourceExchangeItemId
+          ? `exchange-out-item-${item.sourceExchangeItemId}`
+          : `sale-order-item-${item.saleOrderItemId}`;
+        const resolved = normalizedReturnItemMap.get(sourceKey);
+        if (!resolved) throw new BadRequestException('换货换回明细数据异常，请重新提交');
+        const { source, normalized } = resolved;
+        const product = await ensureProductLoaded(source.productId);
         if (!product) throw new BadRequestException('换回商品不存在或已删除，无法回库');
-        const normalized = normalizedReturnItemMap.get(item.saleOrderItemId)!;
+
+        const placement = await this.resolveSaleExchangeReturnPlacement(manager, source, item);
+        const batch = await resolveInboundStockBatch(manager, product, {
+          batchNo: placement.batchNo || `RETURN-${saleExchange.exchangeNo ?? saleExchange.id}`,
+          warehouseId: placement.warehouseId,
+          locationId: placement.locationId,
+          status: placement.stockStatus,
+          costPrice: product.costPrice ?? 0,
+        });
+        batch.quantity = addQuantity(batch.quantity ?? 0, normalized.quantity);
+        const savedBatch = await manager.getRepository(StockBatchEntity).save(batch);
+
         exchangeItems.push(manager.create(SaleExchangeItemEntity, {
           exchangeId: saleExchange.id,
           direction: 'return',
-          saleOrderItemId: orderItem.id,
-          productId: orderItem.productId,
+          saleOrderItemId: source.saleOrderItemId,
+          sourceExchangeItemId: source.sourceExchangeItemId,
+          productId: source.productId,
+          batchId: savedBatch.id,
+          warehouseId: savedBatch.warehouseId,
+          locationId: savedBatch.locationId,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
           packageUnit: normalized.packageUnit,
           packageSize: normalized.packageSize,
-          unitPrice: orderItem.unitPrice,
-          subtotal: multiplyAmount(normalized.quantity, orderItem.unitPrice),
+          unitPrice: source.unitPrice,
+          subtotal: multiplyAmount(normalized.quantity, source.unitPrice),
         }));
 
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = addQuantity(beforeQty, normalized.quantity);
+        if (placement.stockStatus === STOCK_BATCH_STATUS.SELLABLE) {
+          product.availableStockQty = addQuantity(roundQuantity(product.availableStockQty), normalized.quantity);
+        }
         await manager.save(ProductEntity, product);
         await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
           productId: product.id,
+          batchId: savedBatch.id,
+          batchNo: savedBatch.batchNo,
+          warehouseId: savedBatch.warehouseId,
+          locationId: savedBatch.locationId,
           type: 'in',
           reason: 'sale_exchange_return',
           quantity: normalized.quantity,
@@ -1173,16 +1792,39 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
         }));
       }
 
+      // 换出商品：出库（按批次 FIFO 扣减）
       for (const item of normalizedExchangeOutItems) {
         const product = await ensureProductLoaded(item.productId);
         if (!product || product.status !== 1) {
           throw new BadRequestException(`换出商品 ${item.productId} 不存在、已删除或已停售`);
         }
+
+        const deductions = await this.deductProductBatches(
+          manager,
+          product,
+          {
+            quantity: item.quantity,
+            batchId: item.batchId,
+            warehouseId: item.warehouseId,
+            locationId: item.locationId,
+          },
+          {
+            manualRequired: `换出商品 ${product.name} 必须手选批次后才能出库`,
+            selectedBatchInsufficient: '所选批次库存不足，无法换出',
+            autoPickInsufficient: `换出商品 ${product.name} 批次库存不足`,
+          },
+        );
+        const actualOutBatch = deductions.length === 1 ? deductions[0].batch : null;
+
         exchangeItems.push(manager.create(SaleExchangeItemEntity, {
           exchangeId: saleExchange.id,
           direction: 'out',
           saleOrderItemId: null,
+          sourceExchangeItemId: null,
           productId: item.productId,
+          batchId: actualOutBatch?.id ?? item.batchId ?? null,
+          warehouseId: actualOutBatch?.warehouseId ?? item.warehouseId ?? null,
+          locationId: actualOutBatch?.locationId ?? item.locationId ?? null,
           quantity: item.quantity,
           packageQty: item.packageQty,
           looseQty: item.looseQty,
@@ -1194,18 +1836,50 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
 
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = subtractQuantity(beforeQty, item.quantity);
+        product.availableStockQty = subtractQuantity(roundQuantity(product.availableStockQty), item.quantity);
         await manager.save(ProductEntity, product);
-        await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
-          productId: product.id,
-          type: 'out',
-          reason: 'sale_exchange_out',
-          quantity: item.quantity,
-          beforeQty,
-          afterQty: product.stockQty,
-          relatedOrderId: order.id,
-          operatorId: user.sub,
-          remark: dto.remark ?? `销售换货换出 ${saleExchange.exchangeNo ?? saleExchange.id}`,
-        }));
+
+        let runningBefore = beforeQty;
+        const stockRecords: StockRecordEntity[] = [];
+        for (const d of deductions) {
+          const runningAfter = subtractQuantity(runningBefore, d.quantity);
+          stockRecords.push(manager.create(StockRecordEntity, {
+            productId: product.id,
+            batchId: d.batch.id,
+            batchNo: d.batch.batchNo,
+            warehouseId: d.batch.warehouseId,
+            locationId: d.batch.locationId,
+            type: 'out',
+            reason: 'sale_exchange_out',
+            quantity: d.quantity,
+            packageQty: deductions.length === 1 ? item.packageQty : null,
+            looseQty: deductions.length === 1 ? item.looseQty : null,
+            packageUnit: item.packageUnit,
+            packageSize: item.packageSize,
+            beforeQty: runningBefore,
+            afterQty: runningAfter,
+            unit: product.unit ?? null,
+            relatedOrderId: order.id,
+            operatorId: user.sub,
+            remark: dto.remark ?? `销售换货换出 ${saleExchange.exchangeNo ?? saleExchange.id}`,
+          }));
+          runningBefore = runningAfter;
+        }
+        // 无批次记录时保留原始兜底记录
+        if (stockRecords.length === 0) {
+          stockRecords.push(manager.create(StockRecordEntity, {
+            productId: product.id,
+            type: 'out',
+            reason: 'sale_exchange_out',
+            quantity: item.quantity,
+            beforeQty,
+            afterQty: product.stockQty,
+            relatedOrderId: order.id,
+            operatorId: user.sub,
+            remark: dto.remark ?? `销售换货换出 ${saleExchange.exchangeNo ?? saleExchange.id}`,
+          }));
+        }
+        await manager.save(StockRecordEntity, stockRecords);
       }
       await manager.save(SaleExchangeItemEntity, exchangeItems);
 
@@ -1290,9 +1964,17 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
 
       const order = await manager.findOne(SaleOrderEntity, { where: { id: exchange.saleOrderId } });
       if (!order) throw new NotFoundException('原销售订单不存在');
-      const orderItems = await manager.find(SaleOrderItemEntity, { where: { orderId: order.id } });
-      const orderItemMap = new Map(orderItems.map((item) => [item.id, item]));
-      const returnedQuantityMap = await this.getReturnedQuantityMap(order.id, manager, exchange.id);
+      const exchangeableSources = await this.buildSaleExchangeableItems(order.id, manager, exchange.id);
+      const saleOrderItemSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.saleOrderItemId != null)
+          .map((source) => [source.saleOrderItemId as number, source]),
+      );
+      const exchangeSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.sourceExchangeItemId != null)
+          .map((source) => [source.sourceExchangeItemId as number, source]),
+      );
       const productMap = new Map<number, ProductEntity>();
 
       const ensureProductLoaded = async (productId: number) => {
@@ -1308,16 +1990,13 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
 
       let returnAmount = 0;
       for (const item of returnItems) {
-        const orderItem = orderItemMap.get(item.saleOrderItemId);
-        if (!orderItem) throw new BadRequestException('换货换回明细中存在无效的原销售商品');
-        const product = await ensureProductLoaded(orderItem.productId);
-        const normalized = this.normalizeLineItemQuantity(product, item);
-        const returnedQty = returnedQuantityMap.get(item.saleOrderItemId) ?? 0;
-        const remainingQty = subtractQuantity(orderItem.quantity, returnedQty);
-        if (compareQuantity(normalized.quantity, remainingQty) > 0) {
-          throw new BadRequestException('换货换回数量不能超过原销售单剩余可退数量');
-        }
-        returnAmount = addAmount(returnAmount, multiplyAmount(normalized.quantity, orderItem.unitPrice));
+        const { source, normalized } = await this.resolveSaleExchangeReturnSource(
+          item,
+          saleOrderItemSourceMap,
+          exchangeSourceMap,
+          ensureProductLoaded,
+        );
+        returnAmount = addAmount(returnAmount, multiplyAmount(normalized.quantity, source.unitPrice));
       }
 
       let exchangeAmount = 0;
@@ -1344,21 +2023,25 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
 
       const newItems: SaleExchangeItemEntity[] = [];
       for (const item of returnItems) {
-        const orderItem = orderItemMap.get(item.saleOrderItemId)!;
-        const product = await ensureProductLoaded(orderItem.productId);
-        const normalized = this.normalizeLineItemQuantity(product, item);
+        const { source, normalized } = await this.resolveSaleExchangeReturnSource(
+          item,
+          saleOrderItemSourceMap,
+          exchangeSourceMap,
+          ensureProductLoaded,
+        );
         newItems.push(manager.create(SaleExchangeItemEntity, {
           exchangeId: exchange.id,
           direction: 'return',
-          saleOrderItemId: orderItem.id,
-          productId: orderItem.productId,
+          saleOrderItemId: source.saleOrderItemId,
+          sourceExchangeItemId: source.sourceExchangeItemId,
+          productId: source.productId,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
           packageUnit: normalized.packageUnit,
           packageSize: normalized.packageSize,
-          unitPrice: orderItem.unitPrice,
-          subtotal: multiplyAmount(normalized.quantity, orderItem.unitPrice),
+          unitPrice: source.unitPrice,
+          subtotal: multiplyAmount(normalized.quantity, source.unitPrice),
         }));
       }
       for (const item of exchangeItems) {
@@ -1368,7 +2051,11 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
           exchangeId: exchange.id,
           direction: 'out',
           saleOrderItemId: null,
+          sourceExchangeItemId: null,
           productId: item.productId,
+          batchId: item.batchId ?? null,
+          warehouseId: item.warehouseId ?? null,
+          locationId: item.locationId ?? null,
           quantity: normalized.quantity,
           packageQty: normalized.packageQty,
           looseQty: normalized.looseQty,
@@ -1408,9 +2095,17 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
         throw new BadRequestException('换货草稿明细为空，不能继续处理');
       }
 
-      const orderItems = await manager.find(SaleOrderItemEntity, { where: { orderId: order.id } });
-      const orderItemMap = new Map(orderItems.map((item) => [item.id, item]));
-      const returnedQuantityMap = await this.getReturnedQuantityMap(order.id, manager, exchange.id);
+      const exchangeableSources = await this.buildSaleExchangeableItems(order.id, manager, exchange.id);
+      const saleOrderItemSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.saleOrderItemId != null)
+          .map((source) => [source.saleOrderItemId as number, source]),
+      );
+      const exchangeSourceMap = new Map(
+        exchangeableSources
+          .filter((source) => source.sourceExchangeItemId != null)
+          .map((source) => [source.sourceExchangeItemId as number, source]),
+      );
       const productIds = [...new Set(exchangeItems.map((item) => item.productId))];
       const products = await manager.findBy(ProductEntity, productIds.map((id) => ({ id, deletedAt: IsNull() })));
       const productMap = new Map(products.map((item) => [item.id, item]));
@@ -1419,16 +2114,17 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
       const outItems = exchangeItems.filter((item) => item.direction === 'out');
 
       for (const item of returnItems) {
-        if (!item.saleOrderItemId) {
+        if (!item.saleOrderItemId && !item.sourceExchangeItemId) {
           throw new BadRequestException('换货草稿换回明细数据异常，请重新编辑后再处理');
         }
-        const orderItem = orderItemMap.get(item.saleOrderItemId);
-        if (!orderItem) {
-          throw new BadRequestException('换货草稿中存在无效原销售商品');
+        const source = item.sourceExchangeItemId
+          ? exchangeSourceMap.get(item.sourceExchangeItemId)
+          : saleOrderItemSourceMap.get(item.saleOrderItemId as number);
+        if (!source) {
+          throw new BadRequestException('换货草稿中存在无效换回来源商品');
         }
-        const remainingQty = subtractQuantity(orderItem.quantity, returnedQuantityMap.get(orderItem.id) ?? 0);
-        if (compareQuantity(item.quantity, remainingQty) > 0) {
-          throw new BadRequestException('换货换回数量不能超过原销售单剩余可退数量');
+        if (compareQuantity(item.quantity, source.remainingQuantity) > 0) {
+          throw new BadRequestException('换货换回数量不能超过当前可换回数量');
         }
       }
 
@@ -1437,8 +2133,9 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
         if (!product || product.status !== 1) {
           throw new BadRequestException('换货草稿中存在无效换出商品');
         }
-        if (compareQuantity(product.stockQty, item.quantity) < 0) {
-          throw new BadRequestException(`换出商品 ${product.name} 库存不足`);
+        await syncProductAvailableStockQty(manager, product);
+        if (compareQuantity(product.availableStockQty, item.quantity) < 0) {
+          throw new BadRequestException(`换出商品 ${product.name} 可售库存不足`);
         }
       }
 
@@ -1453,6 +2150,12 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
         }
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = addQuantity(beforeQty, item.quantity);
+        if (item.batchId) {
+          const returnBatch = await manager.findOne(StockBatchEntity, { where: { id: item.batchId } });
+          if (returnBatch?.status === STOCK_BATCH_STATUS.SELLABLE) {
+            product.availableStockQty = addQuantity(roundQuantity(product.availableStockQty), item.quantity);
+          }
+        }
         await manager.save(ProductEntity, product);
         await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
           productId: product.id,
@@ -1474,6 +2177,7 @@ async createSaleExchange(id: number, dto: CreateSaleExchangeDto, user: AuthUser)
         }
         const beforeQty = roundQuantity(product.stockQty);
         product.stockQty = subtractQuantity(beforeQty, item.quantity);
+        product.availableStockQty = subtractQuantity(roundQuantity(product.availableStockQty), item.quantity);
         await manager.save(ProductEntity, product);
         await manager.save(StockRecordEntity, manager.create(StockRecordEntity, {
           productId: product.id,

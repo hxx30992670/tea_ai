@@ -5,6 +5,7 @@ import dayjs from 'dayjs'
 import type { Product, Category } from '@/types'
 import { productApi, type ProductMeta, type ProductMetaField } from '@/api/products'
 import { toDateOnlyValue } from '@/utils/date'
+import { DEFAULT_BATCH_AUTO_PICK_STRATEGY } from '@/utils/batch-strategy'
 
 function buildTreeData(categories: Category[]): object[] {
   return categories.map((c) => ({
@@ -54,6 +55,8 @@ export default function ProductFormModal({ open, editRecord, categories, product
           ? productMeta.units.map((item) => ({ value: item, label: item }))
           : field?.source === 'seasons'
             ? productMeta.seasons.map((item) => ({ value: item, label: item }))
+            : field?.source === 'batchStrategies'
+              ? productMeta.batchStrategies
             : undefined,
       })) as ProductMetaField[]
   }, [productMeta, selectedCategoryName, extFieldMap])
@@ -73,12 +76,20 @@ export default function ProductFormModal({ open, editRecord, categories, product
           remark: editRecord.remark,
           imageUrl: editRecord.imageUrl,
           productionDate: editRecord.productionDate ? dayjs(editRecord.productionDate) : editRecord.producedAt ? dayjs(editRecord.producedAt) : undefined,
-          extData: editRecord.extData,
+          extData: {
+            batchAutoPickStrategy: DEFAULT_BATCH_AUTO_PICK_STRATEGY,
+            ...(editRecord.extData ?? {}),
+          },
           status: editRecord.status,
         })
       } else {
         form.resetFields()
-        form.setFieldsValue({ stockQty: 0, status: 1, unit: productMeta?.units[0] })
+        form.setFieldsValue({
+          stockQty: 0,
+          status: 1,
+          unit: productMeta?.units[0],
+          extData: { batchAutoPickStrategy: DEFAULT_BATCH_AUTO_PICK_STRATEGY },
+        })
       }
     }
   }, [open, editRecord, form])
@@ -96,6 +107,7 @@ export default function ProductFormModal({ open, editRecord, categories, product
     const currentExtData = form.getFieldValue('extData') || {}
     const shelfLifePresets = productMeta?.shelfLifePresets || {}
     form.setFieldValue('extData', {
+      batchAutoPickStrategy: currentExtData.batchAutoPickStrategy ?? DEFAULT_BATCH_AUTO_PICK_STRATEGY,
       ...currentExtData,
       teaType: categoryName,
       ...(currentExtData.shelfLife === undefined && shelfLifePresets[categoryName] !== undefined

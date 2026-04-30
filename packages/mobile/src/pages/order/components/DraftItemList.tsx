@@ -26,10 +26,12 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
         const totalQty = calcTotalQuantity(item.packageQty, item.looseQty, item.packageSize)
         const displayQty = item.quantity ?? totalQty
         const subtotal = displayQty * item.unitPrice
+        const lineBatchId = item.batchId ?? null
+        const lineKey = `${item.productId}-${lineBatchId ?? 'auto'}`
 
         return (
           <div
-            key={item.productId}
+            key={lineKey}
             className={cn(
               'flex items-center gap-3 rounded-xl border bg-card p-3 transition-all duration-300',
               highlightedProductId === item.productId
@@ -61,7 +63,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                       <button
                         onClick={() => {
                           const newPkg = roundQuantity(Math.max(0, (item.packageQty ?? 0) - 1))
-                          updateItem(item.productId, { packageQty: newPkg, quantity: roundQuantity(newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0)) })
+                          updateItem(item.productId, { packageQty: newPkg, quantity: roundQuantity(newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0)) }, lineBatchId)
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >−</button>
@@ -69,7 +71,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                       <button
                         onClick={() => {
                           const newPkg = roundQuantity((item.packageQty ?? 0) + 1)
-                          updateItem(item.productId, { packageQty: newPkg, quantity: roundQuantity(newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0)) })
+                          updateItem(item.productId, { packageQty: newPkg, quantity: roundQuantity(newPkg * (item.packageSize ?? 1) + (item.looseQty ?? 0)) }, lineBatchId)
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >＋</button>
@@ -80,7 +82,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                       <button
                         onClick={() => {
                           const newLoose = roundQuantity(Math.max(0, (item.looseQty ?? 0) - 1))
-                          updateItem(item.productId, { looseQty: newLoose, quantity: roundQuantity((item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose) })
+                          updateItem(item.productId, { looseQty: newLoose, quantity: roundQuantity((item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose) }, lineBatchId)
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >−</button>
@@ -88,7 +90,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                       <button
                         onClick={() => {
                           const newLoose = roundQuantity((item.looseQty ?? 0) + 1)
-                          updateItem(item.productId, { looseQty: newLoose, quantity: roundQuantity((item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose) })
+                          updateItem(item.productId, { looseQty: newLoose, quantity: roundQuantity((item.packageQty ?? 0) * (item.packageSize ?? 1) + newLoose) }, lineBatchId)
                         }}
                         className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                       >＋</button>
@@ -101,7 +103,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                       onClick={() => {
                           const qty = item.looseQty ?? item.quantity ?? 1
                           const nextQty = roundQuantity(Math.max(0.0001, qty - 1))
-                          updateItem(item.productId, { looseQty: nextQty, quantity: nextQty })
+                          updateItem(item.productId, { looseQty: nextQty, quantity: nextQty }, lineBatchId)
                       }}
                       className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                     >−</button>
@@ -110,7 +112,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                       onClick={() => {
                           const qty = item.looseQty ?? item.quantity ?? 0
                           const nextQty = roundQuantity(qty + 1)
-                          updateItem(item.productId, { looseQty: nextQty, quantity: nextQty })
+                          updateItem(item.productId, { looseQty: nextQty, quantity: nextQty }, lineBatchId)
                       }}
                       className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm tap-scale"
                     >＋</button>
@@ -129,6 +131,11 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                     [{formatQuantity(undefined, item.packageQty, item.looseQty, item.unit, item.packageUnit)}={displayQty}{item.unit || ''}]
                   </span>
                 )}
+                {item.batchNo && (
+                  <span className="ml-1.5 opacity-70">
+                    批次 {item.batchNo}{item.warehouseName ? ` · ${item.warehouseName}${item.locationName ? `/${item.locationName}` : ''}` : ''}
+                  </span>
+                )}
               </p>
             </div>
 
@@ -142,7 +149,7 @@ export function DraftItemList({ onEditItem, highlightedProductId }: DraftItemLis
                   <Pencil size={14} />
                 </button>
                 <button
-                  onClick={() => removeItem(item.productId)}
+                  onClick={() => removeItem(item.productId, lineBatchId)}
                   className="p-1 text-muted-foreground hover:text-red-400 transition-colors"
                   aria-label="删除商品"
                 >

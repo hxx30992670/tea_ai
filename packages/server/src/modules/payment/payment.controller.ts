@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Post, Query } from '@nestjs/common';
 import { ApiBearerAuth, ApiBody, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF } from '../../common/constants/roles';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { AuthUser } from '../../common/types/auth-user.type';
@@ -13,7 +14,7 @@ import { PaymentService } from './payment.service';
 export class PaymentController {
   constructor(private readonly paymentService: PaymentService) {}
 
-  @Roles('admin', 'manager')
+  @Roles(ROLE_ADMIN, ROLE_MANAGER, ROLE_STAFF)
   @ApiOperation({ summary: '新增收付款记录' })
   @ApiBody({ type: CreatePaymentDto })
   @ApiOkResponse({ description: '返回新建收付款记录' })
