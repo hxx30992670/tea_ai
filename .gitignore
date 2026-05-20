@@ -15,9 +15,12 @@ CLAUDE.md
 
 # Documentation
 docs/
+多端协同AI提词工具技术架构文档.md
+多端协同AI提词工具技术架构文档_V2_MVP.md
 
 # Prompt Center
 packages/prompt-center*/
+packages/teleprompter/
 .gitignore
 .idea
 promo
